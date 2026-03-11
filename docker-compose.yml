@@ -81,6 +81,22 @@ services:
       redis:
         condition: service_healthy
 
+  supervisor:
+    build: .
+    environment:
+      SERVICE_MODE: supervisor
+      DATABASE_URL: postgresql://agent:agent@postgres:5432/trading_agent
+      REDIS_URL: redis://redis:6379
+      PORT: 3001
+    env_file: .env
+    ports:
+      - "3001:3001"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
 volumes:
   pgdata:
   redisdata:

@@ -11,6 +11,7 @@ import {
   LogOut,
   Activity,
   Settings2,
+  Eye,
 } from 'lucide-react';
 import { clearAuthToken } from '../api/client';
 
@@ -24,6 +25,7 @@ const navItems = [
   { to: '/ai-chat', icon: MessageSquare, label: 'AI Chat' },
   { to: '/notifications', icon: Bell, label: 'Alerts' },
   { to: '/admin', icon: Settings2, label: 'Admin Panel' },
+  { to: '/supervisor', icon: Eye, label: 'Supervisor' },
 ];
 
 export function Layout() {

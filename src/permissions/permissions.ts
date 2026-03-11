@@ -31,6 +31,14 @@ const PERMISSIONS: Record<string, PermissionTier[]> = {
   'user.view-positions': ['admin', 'ops', 'user'],
   'user.view-trades': ['admin', 'ops', 'user'],
   'user.set-risk': ['admin', 'ops', 'user'],
+
+  // Supervisor
+  'supervisor.manage-agents': ['admin'],
+  'supervisor.override-risk': ['admin'],
+  'supervisor.manage-policies': ['admin'],
+  'supervisor.view-monitoring': ['admin', 'ops'],
+  'supervisor.emergency-halt': ['admin'],
+  'supervisor.deploy-strategy': ['admin'],
 };
 
 /**

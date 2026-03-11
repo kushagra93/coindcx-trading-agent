@@ -9,6 +9,7 @@ import { RiskPage } from './pages/RiskPage';
 import { AIChatPage } from './pages/AIChatPage';
 import { NotificationsPage } from './pages/NotificationsPage';
 import { AdminPage } from './pages/AdminPage';
+import { SupervisorPage } from './pages/SupervisorPage';
 import { LoginPage } from './pages/LoginPage';
 import { getAuthToken } from './api/client';
 import { AppRoutes } from './app/AppRoutes';
@@ -42,6 +43,7 @@ export default function App() {
           <Route path="/ai-chat" element={<AIChatPage />} />
           <Route path="/notifications" element={<NotificationsPage />} />
           <Route path="/admin" element={<AdminPage />} />
+          <Route path="/supervisor" element={<SupervisorPage />} />
         </Route>
       </Routes>
     </BrowserRouter>

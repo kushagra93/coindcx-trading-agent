@@ -9,6 +9,7 @@ import { configRoutes } from './routes/config.js';
 import { controlRoutes } from './routes/control.js';
 import { leaderboardRoutes } from './routes/leaderboard.js';
 import { adminRoutes } from './routes/admin.js';
+import { supervisorRoutes } from './routes/supervisor.js';
 
 const log = createChildLogger('api-server');
 
@@ -83,6 +84,7 @@ export async function createServer() {
   await app.register(controlRoutes);
   await app.register(leaderboardRoutes);
   await app.register(adminRoutes);
+  await app.register(supervisorRoutes);
 
   // Wallet routes
   app.get<{ Params: { chain: string } }>('/api/v1/wallet/address/:chain', async (request, reply) => {

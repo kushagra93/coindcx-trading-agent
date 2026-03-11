@@ -13,7 +13,7 @@ function envOrDefault(key: string, defaultValue: string): string {
   return process.env[key] ?? defaultValue;
 }
 
-export type ServiceMode = 'api' | 'data-ingestion' | 'signal-worker' | 'executor';
+export type ServiceMode = 'api' | 'data-ingestion' | 'signal-worker' | 'executor' | 'supervisor';
 
 export interface AppConfig {
   serviceMode: ServiceMode;
@@ -87,6 +87,13 @@ export interface AppConfig {
     maxPositionSizePct: number;
     circuitBreakerLossPct: number;
     circuitBreakerWindowHours: number;
+  };
+
+  supervisor: {
+    heartbeatIntervalMs: number;
+    deadAgentTimeoutMs: number;
+    maxAgentsPerUser: number;
+    eventBatchSize: number;
   };
 }
 
@@ -163,6 +170,13 @@ export function loadConfig(): AppConfig {
       maxPositionSizePct: parseFloat(envOrDefault('MAX_POSITION_SIZE_PCT', '25')),
       circuitBreakerLossPct: parseFloat(envOrDefault('CIRCUIT_BREAKER_LOSS_PCT', '10')),
       circuitBreakerWindowHours: parseFloat(envOrDefault('CIRCUIT_BREAKER_WINDOW_HOURS', '1')),
+    },
+
+    supervisor: {
+      heartbeatIntervalMs: parseInt(envOrDefault('SUPERVISOR_HEARTBEAT_INTERVAL_MS', '15000')),
+      deadAgentTimeoutMs: parseInt(envOrDefault('SUPERVISOR_DEAD_AGENT_TIMEOUT_MS', '60000')),
+      maxAgentsPerUser: parseInt(envOrDefault('SUPERVISOR_MAX_AGENTS_PER_USER', '5')),
+      eventBatchSize: parseInt(envOrDefault('SUPERVISOR_EVENT_BATCH_SIZE', '100')),
     },
   };
 }

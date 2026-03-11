@@ -29,6 +29,10 @@ async function main() {
       await startExecutorMode();
       break;
 
+    case 'supervisor':
+      await startSupervisorMode();
+      break;
+
     default:
       log.error({ mode: config.serviceMode }, 'Unknown service mode');
       process.exit(1);
@@ -80,6 +84,18 @@ async function startExecutorMode() {
     // 7. Update position
     log.debug('Executor cycle');
   }, 2_000); // 2 second cycle for trade execution
+}
+
+async function startSupervisorMode() {
+  log.info('Starting in Supervisor mode');
+
+  const { Supervisor } = await import('./supervisor/supervisor.js');
+  const supervisor = new Supervisor(config.redis.url, config.supervisor.deadAgentTimeoutMs);
+  await supervisor.start();
+
+  // Start API server with supervisor routes
+  await startServer();
+  log.info('Supervisor mode started — master agent controlling all user agents');
 }
 
 main().catch(err => {

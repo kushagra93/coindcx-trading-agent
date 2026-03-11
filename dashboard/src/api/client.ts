@@ -118,4 +118,64 @@ export const api = {
 
   // Health
   getHealth: () => request<any>('/health'),
+
+  // Supervisor
+  supervisor: {
+    // Agents
+    createAgent: (data: { userId: string; strategy: string; chain: string; config?: Record<string, unknown> }) =>
+      request<any>('/api/v1/supervisor/agents', {
+        method: 'POST',
+        body: JSON.stringify(data),
+      }),
+    listAgents: (filters?: { userId?: string; state?: string; chain?: string }) => {
+      const params = new URLSearchParams();
+      if (filters?.userId) params.set('userId', filters.userId);
+      if (filters?.state) params.set('state', filters.state);
+      if (filters?.chain) params.set('chain', filters.chain);
+      const qs = params.toString();
+      return request<any>(`/api/v1/supervisor/agents${qs ? `?${qs}` : ''}`);
+    },
+    getAgent: (agentId: string) => request<any>(`/api/v1/supervisor/agents/${agentId}`),
+    startAgent: (agentId: string) =>
+      request<any>(`/api/v1/supervisor/agents/${agentId}/start`, { method: 'POST' }),
+    stopAgent: (agentId: string) =>
+      request<any>(`/api/v1/supervisor/agents/${agentId}/stop`, { method: 'POST' }),
+    pauseAgent: (agentId: string) =>
+      request<any>(`/api/v1/supervisor/agents/${agentId}/pause`, { method: 'POST' }),
+    resumeAgent: (agentId: string) =>
+      request<any>(`/api/v1/supervisor/agents/${agentId}/resume`, { method: 'POST' }),
+    destroyAgent: (agentId: string) =>
+      request<any>(`/api/v1/supervisor/agents/${agentId}`, { method: 'DELETE' }),
+    forceClosePositions: (agentId: string) =>
+      request<any>(`/api/v1/supervisor/agents/${agentId}/force-close`, { method: 'POST' }),
+    overrideRisk: (agentId: string, overrides: Record<string, unknown>) =>
+      request<any>(`/api/v1/supervisor/agents/${agentId}/risk`, {
+        method: 'PUT',
+        body: JSON.stringify({ overrides }),
+      }),
+    pushStrategy: (agentId: string, strategy: Record<string, unknown>) =>
+      request<any>(`/api/v1/supervisor/agents/${agentId}/strategy`, {
+        method: 'POST',
+        body: JSON.stringify(strategy),
+      }),
+
+    // Global operations
+    emergencyHalt: () =>
+      request<any>('/api/v1/supervisor/emergency-halt', { method: 'POST' }),
+    resumeAll: () =>
+      request<any>('/api/v1/supervisor/resume-all', { method: 'POST' }),
+
+    // Policies
+    getPolicies: () => request<any>('/api/v1/supervisor/policies'),
+    updatePolicies: (updates: Record<string, unknown>) =>
+      request<any>('/api/v1/supervisor/policies', {
+        method: 'PUT',
+        body: JSON.stringify(updates),
+      }),
+
+    // Monitoring
+    getStats: () => request<any>('/api/v1/supervisor/stats'),
+    getEvents: (limit = 50, offset = 0) =>
+      request<any>(`/api/v1/supervisor/events?limit=${limit}&offset=${offset}`),
+  },
 };
