@@ -11,7 +11,7 @@ import { processMessage, type ChatMessage } from '../services/chatEngine';
 
 type Tab = 'portfolio' | 'signals' | 'chat';
 
-const chains = ['All', 'Solana', 'Base', 'Ethereum', 'Perps'] as const;
+const chains = ['All', 'Solana', 'Base', 'Ethereum', 'Arbitrum', 'Polygon', 'BSC', 'Optimism', 'Avalanche', 'Perps'] as const;
 
 const holdings = [
   { token: 'SOL', chain: 'Solana', balance: '24.5', usd: '$3,528', change: +5.2 },
@@ -27,6 +27,15 @@ const holdings = [
   { token: 'ETH', chain: 'Ethereum', balance: '1.2', usd: '$3,840', change: +2.1 },
   { token: 'PEPE', chain: 'Ethereum', balance: '80B', usd: '$720', change: -1.5 },
   { token: 'MOG', chain: 'Ethereum', balance: '5.2B', usd: '$416', change: +22.1 },
+  { token: 'ARB', chain: 'Arbitrum', balance: '1,200', usd: '$1,416', change: +4.2 },
+  { token: 'GMX', chain: 'Arbitrum', balance: '15', usd: '$531', change: +6.8 },
+  { token: 'PENDLE', chain: 'Arbitrum', balance: '180', usd: '$873', change: +9.3 },
+  { token: 'POL', chain: 'Polygon', balance: '2,500', usd: '$1,450', change: +3.1 },
+  { token: 'AAVE', chain: 'Polygon', balance: '8', usd: '$740', change: +2.5 },
+  { token: 'BNB', chain: 'BSC', balance: '2.5', usd: '$1,525', change: +2.8 },
+  { token: 'CAKE', chain: 'BSC', balance: '400', usd: '$980', change: +5.4 },
+  { token: 'OP', chain: 'Optimism', balance: '550', usd: '$1,182', change: +5.8 },
+  { token: 'AVAX', chain: 'Avalanche', balance: '20', usd: '$770', change: +3.5 },
   { token: 'TSLA-PERP', chain: 'Perps', balance: '0.5 contracts', usd: '$2,150', change: +3.8 },
   { token: 'NVDA-PERP', chain: 'Perps', balance: '1.2 contracts', usd: '$1,680', change: +5.1 },
   { token: 'AAPL-PERP', chain: 'Perps', balance: '2 contracts', usd: '$890', change: -1.2 },
@@ -49,6 +58,11 @@ const signals = [
   { token: 'NVDA-PERP', chain: 'Perps', signal: 'Strong Buy', reason: 'AI sector rotation + breakout', strength: 88 },
   { token: 'BONK', chain: 'Solana', signal: 'Hold', reason: 'Consolidating after 18% pump', strength: 55 },
   { token: 'MOG', chain: 'Ethereum', signal: 'Buy', reason: 'ETH meme rotation starting', strength: 71 },
+  { token: 'ARB', chain: 'Arbitrum', signal: 'Buy', reason: 'L2 rotation + Stylus launch', strength: 79 },
+  { token: 'PENDLE', chain: 'Arbitrum', signal: 'Strong Buy', reason: 'Yield narrative + TVL surge', strength: 91 },
+  { token: 'CAKE', chain: 'BSC', signal: 'Buy', reason: 'V3 migration + buyback program', strength: 74 },
+  { token: 'OP', chain: 'Optimism', signal: 'Buy', reason: 'Superchain expansion + airdrop', strength: 80 },
+  { token: 'AVAX', chain: 'Avalanche', signal: 'Buy', reason: 'Gaming subnet growth + low fees', strength: 76 },
 ];
 
 const leaderboard = [

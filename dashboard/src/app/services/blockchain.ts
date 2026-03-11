@@ -9,10 +9,38 @@
 
 // ─── Types ───────────────────────────────────────────────────────────
 
+export type EvmChain = 'ethereum' | 'base' | 'arbitrum' | 'polygon' | 'bsc' | 'optimism' | 'avalanche' | 'blast' | 'zksync' | 'fantom' | 'linea' | 'scroll' | 'mantle' | 'celo' | 'gnosis';
+export type Chain = 'solana' | EvmChain | 'perps';
+
+/** Per-chain config: DEX router, explorer, native token */
+export const CHAIN_CONFIG: Record<Chain, { name: string; dex: string; explorer: string; native: string; type: 'evm' | 'svm' | 'perps' }> = {
+  solana:    { name: 'Solana',    dex: 'Jupiter v6',     explorer: 'solscan.io',           native: 'SOL',   type: 'svm' },
+  ethereum:  { name: 'Ethereum',  dex: 'Uniswap V3',     explorer: 'etherscan.io',         native: 'ETH',   type: 'evm' },
+  base:      { name: 'Base',      dex: 'Aerodrome',      explorer: 'basescan.org',         native: 'ETH',   type: 'evm' },
+  arbitrum:  { name: 'Arbitrum',  dex: 'Camelot / GMX',  explorer: 'arbiscan.io',          native: 'ETH',   type: 'evm' },
+  polygon:   { name: 'Polygon',   dex: 'QuickSwap V3',   explorer: 'polygonscan.com',      native: 'POL',   type: 'evm' },
+  bsc:       { name: 'BNB Chain', dex: 'PancakeSwap V3', explorer: 'bscscan.com',          native: 'BNB',   type: 'evm' },
+  optimism:  { name: 'Optimism',  dex: 'Velodrome',      explorer: 'optimistic.etherscan.io', native: 'ETH', type: 'evm' },
+  avalanche: { name: 'Avalanche', dex: 'Trader Joe V2',  explorer: 'snowscan.xyz',         native: 'AVAX',  type: 'evm' },
+  blast:     { name: 'Blast',     dex: 'Thruster',       explorer: 'blastscan.io',         native: 'ETH',   type: 'evm' },
+  zksync:    { name: 'zkSync Era',dex: 'SyncSwap',       explorer: 'era.zksync.network',   native: 'ETH',   type: 'evm' },
+  fantom:    { name: 'Fantom',    dex: 'SpookySwap',     explorer: 'ftmscan.com',          native: 'FTM',   type: 'evm' },
+  linea:     { name: 'Linea',     dex: 'Lynex',          explorer: 'lineascan.build',      native: 'ETH',   type: 'evm' },
+  scroll:    { name: 'Scroll',    dex: 'Ambient',        explorer: 'scrollscan.com',       native: 'ETH',   type: 'evm' },
+  mantle:    { name: 'Mantle',    dex: 'Agni Finance',   explorer: 'mantlescan.xyz',       native: 'MNT',   type: 'evm' },
+  celo:      { name: 'Celo',      dex: 'Ubeswap',        explorer: 'celoscan.io',          native: 'CELO',  type: 'evm' },
+  gnosis:    { name: 'Gnosis',    dex: 'SushiSwap',      explorer: 'gnosisscan.io',        native: 'xDAI',  type: 'evm' },
+  perps:     { name: 'Perps',     dex: 'Hyperliquid',    explorer: 'hyperliquid.xyz',      native: 'USDC',  type: 'perps' },
+};
+
+export const EVM_CHAINS = Object.entries(CHAIN_CONFIG)
+  .filter(([, c]) => c.type === 'evm')
+  .map(([k]) => k as EvmChain);
+
 export interface TokenMetrics {
   symbol: string;
   name: string;
-  chain: 'solana' | 'base' | 'ethereum' | 'perps';
+  chain: Chain;
   price: number;
   priceChange5m: number;
   priceChange1h: number;
@@ -199,6 +227,125 @@ const TOKEN_DB: Record<string, TokenMetrics> = {
     ageMinutes: 14400, holders: 28000, topHolderPct: 2.8,
     lpLocked: true, lpLockPct: 93, rugScore: 81, ctScore: 77,
   },
+  // ── Arbitrum tokens ──
+  ARB: {
+    symbol: 'ARB', name: 'Arbitrum', chain: 'arbitrum',
+    price: 1.18, priceChange5m: +0.1, priceChange1h: +0.9, priceChange24h: +4.2,
+    volume24h: 320_000_000, marketCap: 3_800_000_000, liquidity: 45_000_000,
+    ageMinutes: 999999, holders: 850000, topHolderPct: 0.8,
+    lpLocked: true, lpLockPct: 100, rugScore: 97, ctScore: 80,
+  },
+  GMX: {
+    symbol: 'GMX', name: 'GMX', chain: 'arbitrum',
+    price: 35.40, priceChange5m: -0.2, priceChange1h: +1.5, priceChange24h: +6.8,
+    volume24h: 28_000_000, marketCap: 340_000_000, liquidity: 12_000_000,
+    ageMinutes: 999999, holders: 42000, topHolderPct: 2.1,
+    lpLocked: true, lpLockPct: 98, rugScore: 94, ctScore: 75,
+  },
+  MAGIC: {
+    symbol: 'MAGIC', name: 'Magic', chain: 'arbitrum',
+    price: 0.72, priceChange5m: +0.4, priceChange1h: +3.2, priceChange24h: +12.5,
+    volume24h: 8_500_000, marketCap: 210_000_000, liquidity: 3_200_000,
+    ageMinutes: 999999, holders: 35000, topHolderPct: 3.5,
+    lpLocked: true, lpLockPct: 95, rugScore: 88, ctScore: 71,
+  },
+  PENDLE: {
+    symbol: 'PENDLE', name: 'Pendle', chain: 'arbitrum',
+    price: 4.85, priceChange5m: +0.3, priceChange1h: +2.1, priceChange24h: +9.3,
+    volume24h: 42_000_000, marketCap: 780_000_000, liquidity: 8_500_000,
+    ageMinutes: 999999, holders: 28000, topHolderPct: 2.8,
+    lpLocked: true, lpLockPct: 97, rugScore: 91, ctScore: 82,
+  },
+  // ── Polygon tokens ──
+  POL: {
+    symbol: 'POL', name: 'Polygon', chain: 'polygon',
+    price: 0.58, priceChange5m: +0.05, priceChange1h: +0.6, priceChange24h: +3.1,
+    volume24h: 180_000_000, marketCap: 5_800_000_000, liquidity: 85_000_000,
+    ageMinutes: 999999, holders: 1200000, topHolderPct: 0.5,
+    lpLocked: true, lpLockPct: 100, rugScore: 98, ctScore: 72,
+  },
+  AAVE: {
+    symbol: 'AAVE', name: 'Aave', chain: 'polygon',
+    price: 92.50, priceChange5m: -0.1, priceChange1h: +0.8, priceChange24h: +2.5,
+    volume24h: 95_000_000, marketCap: 1_380_000_000, liquidity: 22_000_000,
+    ageMinutes: 999999, holders: 180000, topHolderPct: 1.2,
+    lpLocked: true, lpLockPct: 100, rugScore: 97, ctScore: 68,
+  },
+  QUICK: {
+    symbol: 'QUICK', name: 'QuickSwap', chain: 'polygon',
+    price: 0.042, priceChange5m: +0.2, priceChange1h: +1.8, priceChange24h: +8.7,
+    volume24h: 3_200_000, marketCap: 32_000_000, liquidity: 1_800_000,
+    ageMinutes: 999999, holders: 15000, topHolderPct: 4.2,
+    lpLocked: true, lpLockPct: 92, rugScore: 82, ctScore: 58,
+  },
+  // ── BNB Chain tokens ──
+  BNB: {
+    symbol: 'BNB', name: 'BNB', chain: 'bsc',
+    price: 610.20, priceChange5m: +0.04, priceChange1h: +0.5, priceChange24h: +2.8,
+    volume24h: 1_200_000_000, marketCap: 91_000_000_000, liquidity: 500_000_000,
+    ageMinutes: 999999, holders: 5000000, topHolderPct: 0.2,
+    lpLocked: true, lpLockPct: 100, rugScore: 99, ctScore: 85,
+  },
+  CAKE: {
+    symbol: 'CAKE', name: 'PancakeSwap', chain: 'bsc',
+    price: 2.45, priceChange5m: +0.1, priceChange1h: +1.2, priceChange24h: +5.4,
+    volume24h: 42_000_000, marketCap: 680_000_000, liquidity: 18_000_000,
+    ageMinutes: 999999, holders: 320000, topHolderPct: 1.5,
+    lpLocked: true, lpLockPct: 99, rugScore: 95, ctScore: 70,
+  },
+  BAKE: {
+    symbol: 'BAKE', name: 'BakeryToken', chain: 'bsc',
+    price: 0.28, priceChange5m: +0.3, priceChange1h: +2.5, priceChange24h: +11.2,
+    volume24h: 5_800_000, marketCap: 52_000_000, liquidity: 2_400_000,
+    ageMinutes: 999999, holders: 45000, topHolderPct: 3.8,
+    lpLocked: true, lpLockPct: 90, rugScore: 80, ctScore: 55,
+  },
+  // ── Optimism tokens ──
+  OP: {
+    symbol: 'OP', name: 'Optimism', chain: 'optimism',
+    price: 2.15, priceChange5m: +0.08, priceChange1h: +1.1, priceChange24h: +5.8,
+    volume24h: 145_000_000, marketCap: 2_600_000_000, liquidity: 32_000_000,
+    ageMinutes: 999999, holders: 420000, topHolderPct: 0.9,
+    lpLocked: true, lpLockPct: 100, rugScore: 97, ctScore: 78,
+  },
+  VELO: {
+    symbol: 'VELO', name: 'Velodrome', chain: 'optimism',
+    price: 0.085, priceChange5m: +0.2, priceChange1h: +1.8, priceChange24h: +7.2,
+    volume24h: 8_200_000, marketCap: 72_000_000, liquidity: 4_500_000,
+    ageMinutes: 999999, holders: 22000, topHolderPct: 3.1,
+    lpLocked: true, lpLockPct: 95, rugScore: 86, ctScore: 65,
+  },
+  // ── Avalanche tokens ──
+  AVAX: {
+    symbol: 'AVAX', name: 'Avalanche', chain: 'avalanche',
+    price: 38.50, priceChange5m: +0.06, priceChange1h: +0.7, priceChange24h: +3.5,
+    volume24h: 280_000_000, marketCap: 14_200_000_000, liquidity: 120_000_000,
+    ageMinutes: 999999, holders: 1500000, topHolderPct: 0.4,
+    lpLocked: true, lpLockPct: 100, rugScore: 98, ctScore: 76,
+  },
+  JOE: {
+    symbol: 'JOE', name: 'Trader Joe', chain: 'avalanche',
+    price: 0.42, priceChange5m: +0.15, priceChange1h: +2.3, priceChange24h: +9.8,
+    volume24h: 12_000_000, marketCap: 142_000_000, liquidity: 5_200_000,
+    ageMinutes: 999999, holders: 28000, topHolderPct: 2.5,
+    lpLocked: true, lpLockPct: 96, rugScore: 89, ctScore: 62,
+  },
+  // ── Blast tokens ──
+  BLAST: {
+    symbol: 'BLAST', name: 'Blast', chain: 'blast',
+    price: 0.012, priceChange5m: +0.5, priceChange1h: +4.2, priceChange24h: +18.5,
+    volume24h: 35_000_000, marketCap: 320_000_000, liquidity: 8_000_000,
+    ageMinutes: 43200, holders: 85000, topHolderPct: 2.2,
+    lpLocked: true, lpLockPct: 94, rugScore: 84, ctScore: 73,
+  },
+  // ── Fantom tokens ──
+  FTM: {
+    symbol: 'FTM', name: 'Fantom', chain: 'fantom',
+    price: 0.72, priceChange5m: +0.1, priceChange1h: +1.5, priceChange24h: +6.2,
+    volume24h: 85_000_000, marketCap: 2_000_000_000, liquidity: 28_000_000,
+    ageMinutes: 999999, holders: 650000, topHolderPct: 0.7,
+    lpLocked: true, lpLockPct: 100, rugScore: 96, ctScore: 64,
+  },
 };
 
 // US stock perps (separate pricing model)
@@ -235,8 +382,8 @@ const PERP_DB: Record<string, TokenMetrics> = {
 
 // ─── Contract Address → Token Name Lookup ─────────────────────────────
 
-const CONTRACT_DB: Record<string, { symbol: string; name: string; chain: 'solana' | 'base' | 'ethereum' }> = {
-  // Ethereum
+const CONTRACT_DB: Record<string, { symbol: string; name: string; chain: Chain }> = {
+  // ── Ethereum ──
   '0x6982508145454Ce325dDbE47a25d4ec3d2311933': { symbol: 'PEPE', name: 'Pepe', chain: 'ethereum' },
   '0xb131f4A55907B10d1F0A50d8ab8FA09EC342cd74': { symbol: 'MEME', name: 'Memecoin', chain: 'ethereum' },
   '0x4d224452801ACEd8B2F0aebE155379bb5D594381': { symbol: 'APE', name: 'ApeCoin', chain: 'ethereum' },
@@ -249,12 +396,46 @@ const CONTRACT_DB: Record<string, { symbol: string; name: string; chain: 'solana
   '0x514910771AF9Ca656af840dff83E8264EcF986CA': { symbol: 'LINK', name: 'Chainlink', chain: 'ethereum' },
   '0xaea46A60368A7bD060eec7DF8CBa43b7EF41Ad85': { symbol: 'FET', name: 'Fetch.ai', chain: 'ethereum' },
   '0xaaeE1A9723aaDB7afA2810263653A34bA2C21C7a': { symbol: 'MOG', name: 'Mog Coin', chain: 'ethereum' },
-  // Base
+  // ── Base ──
   '0x4ed4E862860beD51a9570b96d89aF5E1B0Efefed': { symbol: 'DEGEN', name: 'Degen', chain: 'base' },
   '0xAC1Bd2486aAf3B5C0fc3Fd868558b082a531B2B4': { symbol: 'TOSHI', name: 'Toshi', chain: 'base' },
   '0x532f27101965dd16442E59d40670FaF5eBB142E4': { symbol: 'BRETT', name: 'Brett', chain: 'base' },
   '0x940181a94A35A4569E4529A3CDfB74e38FD98631': { symbol: 'AERO', name: 'Aerodrome', chain: 'base' },
-  // Solana (base58)
+  // ── Arbitrum ──
+  '0x912CE59144191C1204E64559FE8253a0e49E6548': { symbol: 'ARB', name: 'Arbitrum', chain: 'arbitrum' },
+  '0xfc5A1A6EB076a2C7aD06eD22C90d7E710E35ad0a': { symbol: 'GMX', name: 'GMX', chain: 'arbitrum' },
+  '0x539bdE0d7Dbd336b79148AA742883198BBF60342': { symbol: 'MAGIC', name: 'Magic', chain: 'arbitrum' },
+  '0x18c11FD286C5EC11c3b683Caa813B77f5163A122': { symbol: 'GNS', name: 'Gains Network', chain: 'arbitrum' },
+  '0x6985884C4392D348587B19cb9eAAf157F13271cd': { symbol: 'ZRO', name: 'LayerZero', chain: 'arbitrum' },
+  '0x0c880f6761F1af8d9Aa9C466984b80DAb9a8c9e8': { symbol: 'PENDLE', name: 'Pendle', chain: 'arbitrum' },
+  // ── Polygon ──
+  '0x0d500B1d8E8eF31E21C99d1Db9A6444d3ADf1270': { symbol: 'WPOL', name: 'Wrapped POL', chain: 'polygon' },
+  '0xd6DF932A45C0f255f85145f286eA0b292B21C90B': { symbol: 'AAVE', name: 'Aave', chain: 'polygon' },
+  '0xa3Fa99A148fA48D14Ed51d610c367C61876997F1': { symbol: 'miMATIC', name: 'MAI Stablecoin', chain: 'polygon' },
+  '0xB7b31a6BC18e48888545CE79e83E06003bE70930': { symbol: 'APE', name: 'ApeCoin', chain: 'polygon' },
+  // ── BNB Chain (BSC) ──
+  '0xbb4CdB9CBd36B01bD1cBaEBF2De08d9173bc095c': { symbol: 'WBNB', name: 'Wrapped BNB', chain: 'bsc' },
+  '0x0E09FaBB73Bd3Ade0a17ECC321fD13a19e81cE82': { symbol: 'CAKE', name: 'PancakeSwap', chain: 'bsc' },
+  '0x2170Ed0880ac9A755fd29B2688956BD959F933F8': { symbol: 'ETH', name: 'Binance-Peg ETH', chain: 'bsc' },
+  '0x7130d2A12B9BCbFAe4f2634d864A1Ee1Ce3Ead9c': { symbol: 'BTCB', name: 'Binance-Peg BTC', chain: 'bsc' },
+  '0x1D2F0da169ceB9fC7B3144628dB156f3F6c60dBE': { symbol: 'XRP', name: 'Binance-Peg XRP', chain: 'bsc' },
+  // ── Optimism ──
+  '0x4200000000000000000000000000000000000042': { symbol: 'OP', name: 'Optimism', chain: 'optimism' },
+  '0x9560e827aF36c94D2Ac33a39bCE1Fe78631088Db': { symbol: 'VELO', name: 'Velodrome', chain: 'optimism' },
+  '0x8700dAec35aF8Ff88c16BdF0418774CB3D7599B4': { symbol: 'SNX', name: 'Synthetix', chain: 'optimism' },
+  // ── Avalanche ──
+  '0xB31f66AA3C1e785363F0875A1B74E27b85FD66c7': { symbol: 'WAVAX', name: 'Wrapped AVAX', chain: 'avalanche' },
+  '0x6e84a6216eA6dACC71eE8E6b0a5B7322EEbC0fDd': { symbol: 'JOE', name: 'Trader Joe', chain: 'avalanche' },
+  '0x152b9d0FdC40C096DE20232Db4820c70066dbbA5': { symbol: 'GMX', name: 'GMX', chain: 'avalanche' },
+  // ── Blast ──
+  '0xb1a5700fA2358173Fe465e6eA4Ff52E36e88E2ad': { symbol: 'BLAST', name: 'Blast', chain: 'blast' },
+  '0x4300000000000000000000000000000000000004': { symbol: 'WETH', name: 'Wrapped ETH', chain: 'blast' },
+  // ── Fantom ──
+  '0x21be370D5312f44cB42ce377BC9b8a0cEF1A4C83': { symbol: 'WFTM', name: 'Wrapped FTM', chain: 'fantom' },
+  '0x841FAD6EAe12c286d1Fd18d1d525DFfA75C7EFFE': { symbol: 'BOO', name: 'SpookyToken', chain: 'fantom' },
+  // ── zkSync Era ──
+  '0x5A7d6b2F92C77FAD6CCaBd7EE0624E64907Eaf3E': { symbol: 'ZK', name: 'zkSync', chain: 'zksync' },
+  // ── Solana (base58) ──
   'DezXAZ8z7PnrnRJjz3wXBoRgixCa6xjnB7YaB1pPB263': { symbol: 'BONK', name: 'Bonk', chain: 'solana' },
   'EKpQGSJtjMFqKZ9KQanSqYXRcF8fBopzLHYxdM65zcjm': { symbol: 'WIF', name: 'dogwifhat', chain: 'solana' },
   'HLwEJQVzs7SvMeeSY3gRTaWEGnCbELJJunRSGwbwNzjR': { symbol: 'MYRO', name: 'Myro', chain: 'solana' },
@@ -274,25 +455,60 @@ function resolveContractName(address: string): { symbol: string; name: string } 
 
 // ─── Contract Address Detection ──────────────────────────────────────
 
-/** Detect chain from contract address format */
-export function detectChainFromAddress(address: string): 'solana' | 'base' | 'ethereum' | null {
-  // Ethereum / Base: 0x-prefixed, 42 chars hex
-  if (/^0x[a-fA-F0-9]{40}$/.test(address)) {
-    // Heuristic: addresses starting with 0x00-0x3f → Base, rest → Ethereum
-    // In reality you'd query both chains; here we simulate
-    const prefix = parseInt(address.slice(2, 4), 16);
-    return prefix < 64 ? 'base' : 'ethereum';
+/** Check if an address is a valid EVM address (0x + 40 hex chars) */
+export function isEvmAddress(address: string): boolean {
+  return /^0x[a-fA-F0-9]{40}$/.test(address);
+}
+
+/** Check if an address is a valid Solana address (base58, 32-44 chars) */
+export function isSolanaAddress(address: string): boolean {
+  return /^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(address);
+}
+
+/** Detect chain from contract address — checks known DB first, then falls back to heuristic */
+export function detectChainFromAddress(address: string, hintChain?: Chain): Chain | null {
+  // Known contracts always win
+  const known = resolveContractName(address);
+  if (known) {
+    // resolveContractName only returns symbol/name; look up chain from CONTRACT_DB directly
+    for (const [addr, info] of Object.entries(CONTRACT_DB)) {
+      if (addr.toLowerCase() === address.toLowerCase()) return info.chain;
+    }
   }
-  // Solana: base58, 32-44 chars, no 0x prefix
-  if (/^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(address)) {
-    return 'solana';
-  }
+
+  // User-specified chain hint (e.g., "screen 0x... on arbitrum")
+  if (hintChain && CHAIN_CONFIG[hintChain]) return hintChain;
+
+  // EVM address → default to ethereum (user can override with "on <chain>")
+  if (isEvmAddress(address)) return 'ethereum';
+
+  // Solana
+  if (isSolanaAddress(address)) return 'solana';
+
   return null;
 }
 
+/** Parse "on <chain>" suffix from user text, e.g. "screen 0x... on arbitrum" */
+export function parseChainHint(text: string): Chain | null {
+  const match = text.match(/\bon\s+([\w-]+)\s*$/i);
+  if (!match) return null;
+  const hint = match[1].toLowerCase();
+  // Match against chain keys and display names
+  for (const [key, config] of Object.entries(CHAIN_CONFIG)) {
+    if (key === hint || config.name.toLowerCase() === hint) return key as Chain;
+  }
+  // Common aliases
+  const aliases: Record<string, Chain> = {
+    eth: 'ethereum', arb: 'arbitrum', poly: 'polygon', matic: 'polygon',
+    op: 'optimism', avax: 'avalanche', bnb: 'bsc', ftm: 'fantom',
+    zk: 'zksync', 'zksync': 'zksync',
+  };
+  return aliases[hint] ?? null;
+}
+
 /** Generate deterministic-looking metrics from a contract address (simulated RPC/API call) */
-export function screenByAddress(address: string): ScreeningResult {
-  const chain = detectChainFromAddress(address);
+export function screenByAddress(address: string, hintChain?: Chain): ScreeningResult {
+  const chain = detectChainFromAddress(address, hintChain);
   if (!chain) {
     return {
       token: {
@@ -543,13 +759,7 @@ function buildExitStrategies(isMeme: boolean, isPerp: boolean): ExitStrategy[] {
 }
 
 function getDex(chain: string): string {
-  switch (chain) {
-    case 'solana': return 'Jupiter v6';
-    case 'base': return 'Aerodrome';
-    case 'ethereum': return 'Uniswap V3';
-    case 'perps': return 'Hyperliquid';
-    default: return 'Best DEX';
-  }
+  return CHAIN_CONFIG[chain as Chain]?.dex ?? 'Best DEX';
 }
 
 const MEME_TOKENS = new Set(['FARTCOIN', 'POPCAT', 'MYRO', 'GIGA', 'BONK', 'WIF', 'MEW', 'MOG', 'DEGEN', 'TOSHI', 'BRETT', 'PEPE']);
@@ -691,4 +901,4 @@ export function formatPrice(n: number): string {
   return `$${n.toExponential(2)}`;
 }
 
-export { MEME_TOKENS, PERP_TOKENS, TOKEN_DB, PERP_DB, fmt };
+export { MEME_TOKENS, PERP_TOKENS, TOKEN_DB, PERP_DB, fmt, CONTRACT_DB };

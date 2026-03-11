@@ -22,9 +22,13 @@ import {
   formatPrice,
   MEME_TOKENS,
   PERP_TOKENS,
+  CHAIN_CONFIG,
+  EVM_CHAINS,
+  parseChainHint,
   type ScreeningResult,
   type Position,
   type TokenMetrics,
+  type Chain,
 } from './blockchain';
 
 // ─── Types ───────────────────────────────────────────────────────────
@@ -59,7 +63,7 @@ const ctx: ChatContext = {
 
 // ─── Token extraction ────────────────────────────────────────────────
 
-const ALL_TOKENS = /\b(sol|bonk|eth|wif|pepe|jup|aero|brett|btc|degen|toshi|fartcoin|popcat|myro|giga|mew|bome|mog|wen|tsla|nvda|aapl|amzn|msft|googl|meta)\b/i;
+const ALL_TOKENS = /\b(sol|bonk|eth|wif|pepe|jup|aero|brett|btc|degen|toshi|fartcoin|popcat|myro|giga|mew|bome|mog|wen|tsla|nvda|aapl|amzn|msft|googl|meta|arb|gmx|magic|pendle|pol|aave|quick|bnb|cake|bake|op|velo|avax|joe|blast|ftm|zk|snx)\b/i;
 
 // Contract address patterns
 const SOLANA_ADDR = /\b[1-9A-HJ-NP-Za-km-z]{32,44}\b/;
@@ -135,7 +139,8 @@ function detectIntent(text: string): Intent {
 function formatScreeningResult(result: ScreeningResult, contractAddress?: string): string {
   const t = result.token;
 
-  let resp = `SCREENING: ${t.symbol} (${t.chain.toUpperCase()})\n`;
+  const chainName = CHAIN_CONFIG[t.chain]?.name ?? t.chain.toUpperCase();
+  let resp = `SCREENING: ${t.symbol} (${chainName})\n`;
   if (t.name && t.name !== t.symbol && !t.name.includes('..')) {
     resp += `Name: ${t.name}\n`;
   }
@@ -200,8 +205,8 @@ function handleScreen(token: string): string {
   return formatScreeningResult(result);
 }
 
-function handleScreenByAddress(address: string): string {
-  const result = screenByAddress(address);
+function handleScreenByAddress(address: string, chainHint?: Chain): string {
+  const result = screenByAddress(address, chainHint);
   ctx.lastScreening = result;
   ctx.lastToken = result.token.symbol;
   return formatScreeningResult(result, address);
@@ -320,7 +325,8 @@ function handleSnipe(): string {
   const hotTokens = getHotSnipes();
 
   let resp = `MEME SNIPER ARMED\n\n`;
-  resp += `Scanning: Pump.fun, Raydium, Aerodrome, Uniswap V3\n\n`;
+  const evmDexes = EVM_CHAINS.slice(0, 5).map(c => CHAIN_CONFIG[c].dex).join(', ');
+  resp += `Scanning: Pump.fun, Raydium, ${evmDexes} + ${EVM_CHAINS.length - 5} more\n\n`;
   resp += `--- Screening Filters (War Agent) ---\n`;
   resp += `Min Age: 30 minutes\n`;
   resp += `Min Volume: $25K (24h)\n`;
@@ -468,7 +474,7 @@ function handleDca(token: string, text: string): string {
   resp += `Buy on: Every ${isMeme ? '5%' : isPerp ? '2%' : '3%'} dip\n`;
   resp += `Per buy: ${formatUsd(amount)}\n`;
   resp += `Max budget: ${formatUsd(amount * 10)}\n`;
-  resp += `Venue: ${isPerp ? 'Hyperliquid' : t.chain === 'solana' ? 'Jupiter v6' : t.chain === 'base' ? 'Aerodrome' : 'Uniswap V3'}\n`;
+  resp += `Venue: ${CHAIN_CONFIG[t.chain]?.dex ?? 'Best DEX'}\n`;
   resp += `MEV Protection: ON\n`;
 
   resp += `\n--- Exit (War Agent) ---\n`;
@@ -602,6 +608,7 @@ function handleHelp(): string {
     `--- Analysis ---\n` +
     `"screen MYRO" — Full safety check (age/vol/rug)\n` +
     `"screen 0x..." — Screen any EVM token by contract\n` +
+    `"screen 0x... on arbitrum" — Specify chain\n` +
     `"screen So1..." — Screen any Solana token by address\n` +
     `"analyze DEGEN" — Price action + fundamentals\n` +
     `"trending" — Hot tokens with CT scores\n\n` +
@@ -613,7 +620,9 @@ function handleHelp(): string {
     `"positions" — Open positions + P&L\n` +
     `"pnl" — Performance stats\n` +
     `"trailing FARTCOIN" — View/adjust exit strategy\n\n` +
-    `Chains: Solana, Base, Ethereum, Perps`;
+    `EVM: Ethereum, Base, Arbitrum, Polygon, BSC, Optimism, Avalanche, Blast, Fantom, zkSync + more\n` +
+    `Non-EVM: Solana | Perps: Hyperliquid\n` +
+    `Tip: Add "on <chain>" to specify chain for any EVM address`;
 }
 
 function handleUnknown(text: string): string {
@@ -628,7 +637,7 @@ function handleUnknown(text: string): string {
   return `I can help you trade. Try:\n\n` +
     `"buy FARTCOIN $200" — Buy memecoin\n` +
     `"screen POPCAT" — Safety check\n` +
-    `"screen 0x..." — Screen by contract address\n` +
+    `"screen 0x..." — Screen by contract address (any EVM chain)\n` +
     `"long TSLA 3x" — US stock perps\n` +
     `"snipe" — Arm meme sniper\n` +
     `"trending" — See what's hot\n` +
@@ -646,11 +655,14 @@ export function processMessage(text: string): ChatMessage {
 
   let response: string;
 
+  // Parse "on <chain>" hint from user text
+  const chainHint = parseChainHint(text) ?? undefined;
+
   // If user pasted a contract address, auto-screen it
   if (contractAddress && (intent === 'screen' || intent === 'unknown' || intent === 'analyze' || intent === 'buy')) {
     if (intent === 'buy') {
       // Screen first, then show buy path
-      const result = screenByAddress(contractAddress);
+      const result = screenByAddress(contractAddress, chainHint);
       ctx.lastScreening = result;
       ctx.lastToken = result.token.symbol;
       if (!result.passed && result.grade !== 'C') {
@@ -661,7 +673,7 @@ export function processMessage(text: string): ChatMessage {
           `\n\nPassed screening. Say "buy ${result.token.symbol} $200" to execute.`;
       }
     } else {
-      response = handleScreenByAddress(contractAddress);
+      response = handleScreenByAddress(contractAddress, chainHint);
     }
   } else switch (intent) {
     case 'screen':
