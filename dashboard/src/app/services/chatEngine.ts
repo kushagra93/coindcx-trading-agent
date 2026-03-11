@@ -63,16 +63,25 @@ const ctx: ChatContext = {
 
 // ─── Token extraction ────────────────────────────────────────────────
 
-const ALL_TOKENS = /\b(sol|bonk|eth|wif|pepe|jup|aero|brett|btc|degen|toshi|fartcoin|popcat|myro|giga|mew|bome|mog|wen|tsla|nvda|aapl|amzn|msft|googl|meta|arb|gmx|magic|pendle|pol|aave|quick|bnb|cake|bake|op|velo|avax|joe|blast|ftm|zk|snx)\b/i;
+const ALL_TOKENS = /\b(sol|bonk|eth|wif|pepe|jup|aero|brett|btc|degen|toshi|fartcoin|popcat|myro|giga|mew|bome|mog|wen|tsla|nvda|aapl|amzn|msft|googl|meta|arb|gmx|magic|pendle|pol|aave|quick|bnb|cake|bake|op|velo|avax|joe|blast|ftm|zk|snx|mon|kuru|moyaki|sui|cetus|turbos|navx|apt|thala|gui)\b/i;
 
 // Contract address patterns
 const SOLANA_ADDR = /\b[1-9A-HJ-NP-Za-km-z]{32,44}\b/;
+const MOVE_ADDR = /\b0x[a-fA-F0-9]{64}\b/;
+const MOVE_MODULE = /\b0x[a-fA-F0-9]{1,4}::\w+::\w+/;
 const EVM_ADDR = /\b0x[a-fA-F0-9]{40}\b/;
 
 function extractContractAddress(text: string): string | null {
+  // Move module paths (0x2::sui::SUI)
+  const moveModMatch = text.match(MOVE_MODULE);
+  if (moveModMatch) return moveModMatch[0];
+  // Move addresses (0x + 64 hex) — check before EVM (40 hex)
+  const moveMatch = text.match(MOVE_ADDR);
+  if (moveMatch) return moveMatch[0];
+  // EVM addresses (0x + 40 hex)
   const evmMatch = text.match(EVM_ADDR);
   if (evmMatch) return evmMatch[0];
-  // For Solana, avoid matching short token symbols that happen to be base58
+  // Solana (base58, avoid matching short token symbols)
   const solMatch = text.match(SOLANA_ADDR);
   if (solMatch && solMatch[0].length >= 32) return solMatch[0];
   return null;
@@ -610,6 +619,7 @@ function handleHelp(): string {
     `"screen 0x..." — Screen any EVM token by contract\n` +
     `"screen 0x... on arbitrum" — Specify chain\n` +
     `"screen So1..." — Screen any Solana token by address\n` +
+    `"screen 0x...64hex on sui" — Screen Sui/Aptos token\n` +
     `"analyze DEGEN" — Price action + fundamentals\n` +
     `"trending" — Hot tokens with CT scores\n\n` +
     `--- Strategies ---\n` +
@@ -620,9 +630,9 @@ function handleHelp(): string {
     `"positions" — Open positions + P&L\n` +
     `"pnl" — Performance stats\n` +
     `"trailing FARTCOIN" — View/adjust exit strategy\n\n` +
-    `EVM: Ethereum, Base, Arbitrum, Polygon, BSC, Optimism, Avalanche, Blast, Fantom, zkSync + more\n` +
-    `Non-EVM: Solana | Perps: Hyperliquid\n` +
-    `Tip: Add "on <chain>" to specify chain for any EVM address`;
+    `EVM: Ethereum, Base, Arbitrum, Polygon, BSC, Optimism, Avalanche, Blast, Fantom, zkSync, Monad + more\n` +
+    `Move: Sui, Aptos | Solana | Perps: Hyperliquid\n` +
+    `Tip: Add "on <chain>" to specify chain (e.g., "on arbitrum", "on sui", "on aptos")`;
 }
 
 function handleUnknown(text: string): string {
@@ -637,7 +647,7 @@ function handleUnknown(text: string): string {
   return `I can help you trade. Try:\n\n` +
     `"buy FARTCOIN $200" — Buy memecoin\n` +
     `"screen POPCAT" — Safety check\n` +
-    `"screen 0x..." — Screen by contract address (any EVM chain)\n` +
+    `"screen 0x..." — Screen by contract (EVM/Sui/Aptos)\n` +
     `"long TSLA 3x" — US stock perps\n` +
     `"snipe" — Arm meme sniper\n` +
     `"trending" — See what's hot\n` +

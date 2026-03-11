@@ -9,11 +9,12 @@
 
 // ─── Types ───────────────────────────────────────────────────────────
 
-export type EvmChain = 'ethereum' | 'base' | 'arbitrum' | 'polygon' | 'bsc' | 'optimism' | 'avalanche' | 'blast' | 'zksync' | 'fantom' | 'linea' | 'scroll' | 'mantle' | 'celo' | 'gnosis';
-export type Chain = 'solana' | EvmChain | 'perps';
+export type EvmChain = 'ethereum' | 'base' | 'arbitrum' | 'polygon' | 'bsc' | 'optimism' | 'avalanche' | 'blast' | 'zksync' | 'fantom' | 'linea' | 'scroll' | 'mantle' | 'celo' | 'gnosis' | 'monad';
+export type MoveChain = 'sui' | 'aptos';
+export type Chain = 'solana' | EvmChain | MoveChain | 'perps';
 
 /** Per-chain config: DEX router, explorer, native token */
-export const CHAIN_CONFIG: Record<Chain, { name: string; dex: string; explorer: string; native: string; type: 'evm' | 'svm' | 'perps' }> = {
+export const CHAIN_CONFIG: Record<Chain, { name: string; dex: string; explorer: string; native: string; type: 'evm' | 'svm' | 'move' | 'perps' }> = {
   solana:    { name: 'Solana',    dex: 'Jupiter v6',     explorer: 'solscan.io',           native: 'SOL',   type: 'svm' },
   ethereum:  { name: 'Ethereum',  dex: 'Uniswap V3',     explorer: 'etherscan.io',         native: 'ETH',   type: 'evm' },
   base:      { name: 'Base',      dex: 'Aerodrome',      explorer: 'basescan.org',         native: 'ETH',   type: 'evm' },
@@ -30,12 +31,19 @@ export const CHAIN_CONFIG: Record<Chain, { name: string; dex: string; explorer: 
   mantle:    { name: 'Mantle',    dex: 'Agni Finance',   explorer: 'mantlescan.xyz',       native: 'MNT',   type: 'evm' },
   celo:      { name: 'Celo',      dex: 'Ubeswap',        explorer: 'celoscan.io',          native: 'CELO',  type: 'evm' },
   gnosis:    { name: 'Gnosis',    dex: 'SushiSwap',      explorer: 'gnosisscan.io',        native: 'xDAI',  type: 'evm' },
+  monad:     { name: 'Monad',     dex: 'Kuru',            explorer: 'monadexplorer.com',    native: 'MON',   type: 'evm' },
+  sui:       { name: 'Sui',       dex: 'Cetus',           explorer: 'suiscan.xyz',          native: 'SUI',   type: 'move' },
+  aptos:     { name: 'Aptos',     dex: 'Liquidswap',      explorer: 'aptoscan.com',         native: 'APT',   type: 'move' },
   perps:     { name: 'Perps',     dex: 'Hyperliquid',    explorer: 'hyperliquid.xyz',      native: 'USDC',  type: 'perps' },
 };
 
 export const EVM_CHAINS = Object.entries(CHAIN_CONFIG)
   .filter(([, c]) => c.type === 'evm')
   .map(([k]) => k as EvmChain);
+
+export const MOVE_CHAINS = Object.entries(CHAIN_CONFIG)
+  .filter(([, c]) => c.type === 'move')
+  .map(([k]) => k as MoveChain);
 
 export interface TokenMetrics {
   symbol: string;
@@ -346,6 +354,79 @@ const TOKEN_DB: Record<string, TokenMetrics> = {
     ageMinutes: 999999, holders: 650000, topHolderPct: 0.7,
     lpLocked: true, lpLockPct: 100, rugScore: 96, ctScore: 64,
   },
+  // ── Monad tokens ──
+  MON: {
+    symbol: 'MON', name: 'Monad', chain: 'monad',
+    price: 2.85, priceChange5m: +0.3, priceChange1h: +2.8, priceChange24h: +15.2,
+    volume24h: 180_000_000, marketCap: 4_200_000_000, liquidity: 65_000_000,
+    ageMinutes: 999999, holders: 380000, topHolderPct: 1.2,
+    lpLocked: true, lpLockPct: 100, rugScore: 95, ctScore: 92,
+  },
+  KURU: {
+    symbol: 'KURU', name: 'Kuru', chain: 'monad',
+    price: 0.85, priceChange5m: +0.5, priceChange1h: +4.2, priceChange24h: +22.5,
+    volume24h: 28_000_000, marketCap: 120_000_000, liquidity: 8_500_000,
+    ageMinutes: 43200, holders: 42000, topHolderPct: 3.2,
+    lpLocked: true, lpLockPct: 95, rugScore: 85, ctScore: 88,
+  },
+  MOYAKI: {
+    symbol: 'MOYAKI', name: 'Moyaki', chain: 'monad',
+    price: 0.042, priceChange5m: +1.2, priceChange1h: +8.5, priceChange24h: +65.3,
+    volume24h: 12_000_000, marketCap: 42_000_000, liquidity: 3_200_000,
+    ageMinutes: 14400, holders: 18000, topHolderPct: 4.5,
+    lpLocked: true, lpLockPct: 90, rugScore: 78, ctScore: 85,
+  },
+  // ── Sui tokens ──
+  SUI: {
+    symbol: 'SUI', name: 'Sui', chain: 'sui',
+    price: 1.62, priceChange5m: +0.08, priceChange1h: +1.2, priceChange24h: +7.8,
+    volume24h: 420_000_000, marketCap: 5_200_000_000, liquidity: 95_000_000,
+    ageMinutes: 999999, holders: 920000, topHolderPct: 0.6,
+    lpLocked: true, lpLockPct: 100, rugScore: 97, ctScore: 84,
+  },
+  CETUS: {
+    symbol: 'CETUS', name: 'Cetus Protocol', chain: 'sui',
+    price: 0.18, priceChange5m: +0.2, priceChange1h: +3.1, priceChange24h: +14.5,
+    volume24h: 35_000_000, marketCap: 280_000_000, liquidity: 12_000_000,
+    ageMinutes: 999999, holders: 65000, topHolderPct: 2.8,
+    lpLocked: true, lpLockPct: 96, rugScore: 88, ctScore: 75,
+  },
+  TURBOS: {
+    symbol: 'TURBOS', name: 'Turbos Finance', chain: 'sui',
+    price: 0.025, priceChange5m: +0.4, priceChange1h: +5.2, priceChange24h: +28.3,
+    volume24h: 8_500_000, marketCap: 45_000_000, liquidity: 3_800_000,
+    ageMinutes: 86400, holders: 22000, topHolderPct: 4.1,
+    lpLocked: true, lpLockPct: 92, rugScore: 82, ctScore: 71,
+  },
+  NAVX: {
+    symbol: 'NAVX', name: 'NAVI Protocol', chain: 'sui',
+    price: 0.12, priceChange5m: +0.15, priceChange1h: +2.4, priceChange24h: +11.2,
+    volume24h: 15_000_000, marketCap: 95_000_000, liquidity: 5_500_000,
+    ageMinutes: 999999, holders: 35000, topHolderPct: 3.5,
+    lpLocked: true, lpLockPct: 94, rugScore: 86, ctScore: 69,
+  },
+  // ── Aptos tokens ──
+  APT: {
+    symbol: 'APT', name: 'Aptos', chain: 'aptos',
+    price: 9.20, priceChange5m: +0.05, priceChange1h: +0.9, priceChange24h: +4.8,
+    volume24h: 280_000_000, marketCap: 4_100_000_000, liquidity: 72_000_000,
+    ageMinutes: 999999, holders: 780000, topHolderPct: 0.8,
+    lpLocked: true, lpLockPct: 100, rugScore: 97, ctScore: 78,
+  },
+  THALA: {
+    symbol: 'THALA', name: 'Thala', chain: 'aptos',
+    price: 0.52, priceChange5m: +0.3, priceChange1h: +2.8, priceChange24h: +12.8,
+    volume24h: 12_000_000, marketCap: 85_000_000, liquidity: 4_200_000,
+    ageMinutes: 999999, holders: 18000, topHolderPct: 3.8,
+    lpLocked: true, lpLockPct: 93, rugScore: 84, ctScore: 66,
+  },
+  GUI: {
+    symbol: 'GUI', name: 'GUI Inu', chain: 'aptos',
+    price: 0.00085, priceChange5m: +0.8, priceChange1h: +6.5, priceChange24h: +45.2,
+    volume24h: 5_200_000, marketCap: 18_000_000, liquidity: 1_800_000,
+    ageMinutes: 21600, holders: 12000, topHolderPct: 5.2,
+    lpLocked: true, lpLockPct: 88, rugScore: 74, ctScore: 80,
+  },
 };
 
 // US stock perps (separate pricing model)
@@ -435,6 +516,20 @@ const CONTRACT_DB: Record<string, { symbol: string; name: string; chain: Chain }
   '0x841FAD6EAe12c286d1Fd18d1d525DFfA75C7EFFE': { symbol: 'BOO', name: 'SpookyToken', chain: 'fantom' },
   // ── zkSync Era ──
   '0x5A7d6b2F92C77FAD6CCaBd7EE0624E64907Eaf3E': { symbol: 'ZK', name: 'zkSync', chain: 'zksync' },
+  // ── Monad ──
+  '0x3a98e4cFfC26c70B4b43507bD2B4a2a4C8B6E4dA': { symbol: 'MON', name: 'Monad', chain: 'monad' },
+  '0x8bE7dB2F9C3Bf4a68cE1A2B5dF93D17E85cA21F7': { symbol: 'KURU', name: 'Kuru', chain: 'monad' },
+  '0xf1A9c7E2D3b4F56a89B0cE3d2F1a4c7E9D3B5f8A': { symbol: 'MOYAKI', name: 'Moyaki', chain: 'monad' },
+  // ── Sui (0x + 64 hex) ──
+  '0x2::sui::SUI': { symbol: 'SUI', name: 'Sui', chain: 'sui' },
+  '0x06864a6f921804860930db6ddbe2e16acdf8504495ea7481637a1c8b9a8fe54b': { symbol: 'CETUS', name: 'Cetus Protocol', chain: 'sui' },
+  '0x5d4b302506645c37ff133b98c4b50a5ae14841659738d6d733d59d0d217a93bf': { symbol: 'USDC', name: 'USD Coin (Sui)', chain: 'sui' },
+  '0x76cb819b01abed502bee8a702b4c2d547532c12f25001c9dea795a5e631c26f1': { symbol: 'NAVX', name: 'NAVI Protocol', chain: 'sui' },
+  '0x0b4bfc7e4b5e2a7e8c9d1f6a3b8e5c2d4f7a9e1b3c5d7f9a2b4c6d8e0f1a2b': { symbol: 'TURBOS', name: 'Turbos Finance', chain: 'sui' },
+  // ── Aptos (0x + 64 hex) ──
+  '0x1::aptos_coin::AptosCoin': { symbol: 'APT', name: 'Aptos', chain: 'aptos' },
+  '0x7fd500c11216f0fe3095d0c4b8aa4d64a4e2e04f83758462f2b127255643615': { symbol: 'THALA', name: 'Thala', chain: 'aptos' },
+  '0xe4ccb6d39136469f376242c31b34d10515c8eaaa38092f804db8e08a8f53c5b2': { symbol: 'GUI', name: 'GUI Inu', chain: 'aptos' },
   // ── Solana (base58) ──
   'DezXAZ8z7PnrnRJjz3wXBoRgixCa6xjnB7YaB1pPB263': { symbol: 'BONK', name: 'Bonk', chain: 'solana' },
   'EKpQGSJtjMFqKZ9KQanSqYXRcF8fBopzLHYxdM65zcjm': { symbol: 'WIF', name: 'dogwifhat', chain: 'solana' },
@@ -465,12 +560,16 @@ export function isSolanaAddress(address: string): boolean {
   return /^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(address);
 }
 
+/** Check if an address is a Sui/Aptos Move address (0x + 64 hex, or Move module paths like 0x2::sui::SUI) */
+export function isMoveAddress(address: string): boolean {
+  return /^0x[a-fA-F0-9]{64}$/.test(address) || /^0x[a-fA-F0-9]{1,4}::.+::.+$/.test(address);
+}
+
 /** Detect chain from contract address — checks known DB first, then falls back to heuristic */
 export function detectChainFromAddress(address: string, hintChain?: Chain): Chain | null {
   // Known contracts always win
   const known = resolveContractName(address);
   if (known) {
-    // resolveContractName only returns symbol/name; look up chain from CONTRACT_DB directly
     for (const [addr, info] of Object.entries(CONTRACT_DB)) {
       if (addr.toLowerCase() === address.toLowerCase()) return info.chain;
     }
@@ -479,10 +578,16 @@ export function detectChainFromAddress(address: string, hintChain?: Chain): Chai
   // User-specified chain hint (e.g., "screen 0x... on arbitrum")
   if (hintChain && CHAIN_CONFIG[hintChain]) return hintChain;
 
-  // EVM address → default to ethereum (user can override with "on <chain>")
+  // Move module paths (0x2::sui::SUI) → Sui/Aptos
+  if (/^0x[a-fA-F0-9]{1,4}::.+::.+$/.test(address)) return 'sui'; // default Move to Sui
+
+  // 0x + 64 hex → Move chain (Sui default, override with "on aptos")
+  if (/^0x[a-fA-F0-9]{64}$/.test(address)) return 'sui';
+
+  // 0x + 40 hex → EVM (default ethereum)
   if (isEvmAddress(address)) return 'ethereum';
 
-  // Solana
+  // Solana (base58)
   if (isSolanaAddress(address)) return 'solana';
 
   return null;
@@ -502,6 +607,7 @@ export function parseChainHint(text: string): Chain | null {
     eth: 'ethereum', arb: 'arbitrum', poly: 'polygon', matic: 'polygon',
     op: 'optimism', avax: 'avalanche', bnb: 'bsc', ftm: 'fantom',
     zk: 'zksync', 'zksync': 'zksync',
+    mon: 'monad', apt: 'aptos',
   };
   return aliases[hint] ?? null;
 }
@@ -520,7 +626,7 @@ export function screenByAddress(address: string, hintChain?: Chain): ScreeningRe
       passed: false, grade: 'F',
       reasons: ['Invalid contract address format'],
       warnings: [],
-      recommendation: 'SKIP — Not a valid Solana or EVM contract address.',
+      recommendation: 'SKIP — Not a valid contract address (EVM/Solana/Sui/Aptos).',
       dataSources: [],
       aiConfidence: 0,
       rugProbability: 100,
@@ -541,10 +647,13 @@ export function screenByAddress(address: string, hintChain?: Chain): ScreeningRe
 
   // Try to resolve actual token name from known contracts
   const knownToken = resolveContractName(address);
-  const shortAddr = chain === 'solana'
-    ? address.slice(0, 4) + '..' + address.slice(-4)
-    : '0x' + address.slice(2, 6) + '..' + address.slice(-4);
-  const symbol = knownToken?.symbol ?? address.slice(chain === 'solana' ? 0 : 2, chain === 'solana' ? 6 : 8).toUpperCase();
+  const isMoveModule = /^0x[a-fA-F0-9]{1,4}::.+::.+$/.test(address);
+  const shortAddr = isMoveModule
+    ? address
+    : chain === 'solana'
+      ? address.slice(0, 4) + '..' + address.slice(-4)
+      : '0x' + address.slice(2, 6) + '..' + address.slice(-4);
+  const symbol = knownToken?.symbol ?? (isMoveModule ? address.split('::').pop()! : address.slice(chain === 'solana' ? 0 : 2, chain === 'solana' ? 6 : 8).toUpperCase());
 
   const ageMinutes = rand(5, 14400);
   const volume24h = randf(500, 8_000_000);

@@ -11,7 +11,7 @@ import { processMessage, type ChatMessage } from '../services/chatEngine';
 
 type Tab = 'portfolio' | 'signals' | 'chat';
 
-const chains = ['All', 'Solana', 'Base', 'Ethereum', 'Arbitrum', 'Polygon', 'BSC', 'Optimism', 'Avalanche', 'Perps'] as const;
+const chains = ['All', 'Solana', 'Base', 'Ethereum', 'Arbitrum', 'Polygon', 'BSC', 'Optimism', 'Avalanche', 'Monad', 'Sui', 'Aptos'] as const;
 
 const holdings = [
   { token: 'SOL', chain: 'Solana', balance: '24.5', usd: '$3,528', change: +5.2 },
@@ -36,9 +36,21 @@ const holdings = [
   { token: 'CAKE', chain: 'BSC', balance: '400', usd: '$980', change: +5.4 },
   { token: 'OP', chain: 'Optimism', balance: '550', usd: '$1,182', change: +5.8 },
   { token: 'AVAX', chain: 'Avalanche', balance: '20', usd: '$770', change: +3.5 },
-  { token: 'TSLA-PERP', chain: 'Perps', balance: '0.5 contracts', usd: '$2,150', change: +3.8 },
-  { token: 'NVDA-PERP', chain: 'Perps', balance: '1.2 contracts', usd: '$1,680', change: +5.1 },
-  { token: 'AAPL-PERP', chain: 'Perps', balance: '2 contracts', usd: '$890', change: -1.2 },
+  { token: 'MON', chain: 'Monad', balance: '850', usd: '$2,422', change: +15.2 },
+  { token: 'KURU', chain: 'Monad', balance: '1,200', usd: '$1,020', change: +22.5 },
+  { token: 'MOYAKI', chain: 'Monad', balance: '15K', usd: '$630', change: +65.3 },
+  { token: 'SUI', chain: 'Sui', balance: '1,500', usd: '$2,430', change: +7.8 },
+  { token: 'CETUS', chain: 'Sui', balance: '5,000', usd: '$900', change: +14.5 },
+  { token: 'NAVX', chain: 'Sui', balance: '3,200', usd: '$384', change: +11.2 },
+  { token: 'APT', chain: 'Aptos', balance: '200', usd: '$1,840', change: +4.8 },
+  { token: 'THALA', chain: 'Aptos', balance: '1,500', usd: '$780', change: +12.8 },
+];
+
+const perpHoldings = [
+  { token: 'TSLA-PERP', side: 'Long', leverage: '3x', size: '$2,150', entry: '$430.20', pnl: '+$82', pnlPct: +3.8 },
+  { token: 'NVDA-PERP', side: 'Long', leverage: '2x', size: '$1,680', entry: '$140.10', pnl: '+$86', pnlPct: +5.1 },
+  { token: 'AAPL-PERP', side: 'Short', leverage: '2x', size: '$890', entry: '$178.50', pnl: '-$11', pnlPct: -1.2 },
+  { token: 'AMZN-PERP', side: 'Long', leverage: '2x', size: '$1,240', entry: '$185.30', pnl: '+$29', pnlPct: +2.3 },
 ];
 
 const recentTrades = [
@@ -53,9 +65,7 @@ const signals = [
   { token: 'FARTCOIN', chain: 'Solana', signal: 'Strong Buy', reason: 'Volume 10x + CT trending #1', strength: 96 },
   { token: 'POPCAT', chain: 'Solana', signal: 'Strong Buy', reason: 'Breaking ATH, whale accumulation', strength: 93 },
   { token: 'DEGEN', chain: 'Base', signal: 'Buy', reason: 'Base chain TVL rising + airdrop hype', strength: 82 },
-  { token: 'TSLA-PERP', chain: 'Perps', signal: 'Buy', reason: 'Earnings beat + momentum', strength: 78 },
   { token: 'MYRO', chain: 'Solana', signal: 'Buy', reason: 'Low cap gem, RSI 28 oversold bounce', strength: 75 },
-  { token: 'NVDA-PERP', chain: 'Perps', signal: 'Strong Buy', reason: 'AI sector rotation + breakout', strength: 88 },
   { token: 'BONK', chain: 'Solana', signal: 'Hold', reason: 'Consolidating after 18% pump', strength: 55 },
   { token: 'MOG', chain: 'Ethereum', signal: 'Buy', reason: 'ETH meme rotation starting', strength: 71 },
   { token: 'ARB', chain: 'Arbitrum', signal: 'Buy', reason: 'L2 rotation + Stylus launch', strength: 79 },
@@ -63,6 +73,13 @@ const signals = [
   { token: 'CAKE', chain: 'BSC', signal: 'Buy', reason: 'V3 migration + buyback program', strength: 74 },
   { token: 'OP', chain: 'Optimism', signal: 'Buy', reason: 'Superchain expansion + airdrop', strength: 80 },
   { token: 'AVAX', chain: 'Avalanche', signal: 'Buy', reason: 'Gaming subnet growth + low fees', strength: 76 },
+  { token: 'MON', chain: 'Monad', signal: 'Strong Buy', reason: '10K TPS EVM L1 + massive hype cycle', strength: 94 },
+  { token: 'KURU', chain: 'Monad', signal: 'Buy', reason: 'Leading Monad DEX + volume surge', strength: 82 },
+  { token: 'SUI', chain: 'Sui', signal: 'Buy', reason: 'Move VM leader + DeFi TVL growth', strength: 83 },
+  { token: 'CETUS', chain: 'Sui', signal: 'Buy', reason: 'Top Sui DEX + concentrated liquidity', strength: 77 },
+  { token: 'APT', chain: 'Aptos', signal: 'Buy', reason: 'Move ecosystem revival + institutional interest', strength: 75 },
+  { token: 'TSLA-PERP', chain: 'Perps', signal: 'Buy', reason: 'Earnings beat + momentum', strength: 78 },
+  { token: 'NVDA-PERP', chain: 'Perps', signal: 'Strong Buy', reason: 'AI sector rotation + breakout', strength: 88 },
 ];
 
 const leaderboard = [
@@ -139,6 +156,8 @@ export function MainScreen() {
   const [signalSection, setSignalSection] = useState<'signals' | 'leaderboard' | 'strategies'>('signals');
 
   const filtered = chainFilter === 'All' ? holdings : holdings.filter(h => h.chain === chainFilter);
+  const perpTotal = perpHoldings.reduce((s, p) => s + parseFloat(p.size.replace(/[$,]/g, '')), 0);
+  const perpPnl = perpHoldings.reduce((s, p) => s + parseFloat(p.pnl.replace(/[$+,]/g, '')), 0);
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
@@ -222,14 +241,14 @@ export function MainScreen() {
         {/* ══════ PORTFOLIO TAB ══════ */}
         {tab === 'portfolio' && (
           <div style={{ padding: `0 ${mobile.screenPadding}px`, paddingBottom: 16 }}>
-            {/* Chain pills */}
-            <div style={{ display: 'flex', gap: 5, marginBottom: 10 }}>
+            {/* Chain pills (scrollable) */}
+            <div style={{ display: 'flex', gap: 5, marginBottom: 10, overflowX: 'auto', WebkitOverflowScrolling: 'touch', scrollbarWidth: 'none' }}>
               {chains.map(c => (
                 <button key={c} onClick={() => setChainFilter(c)} style={{
                   padding: '4px 10px', borderRadius: 16, border: 'none', fontSize: 11, fontWeight: 500,
                   background: chainFilter === c ? '#3b82f6' : '#1e293b',
                   color: chainFilter === c ? '#fff' : '#94a3b8',
-                  cursor: 'pointer',
+                  cursor: 'pointer', whiteSpace: 'nowrap', flexShrink: 0,
                 }}>
                   {c}
                 </button>
@@ -263,6 +282,47 @@ export function MainScreen() {
                 </MobileCard>
               ))}
             </div>
+
+            {/* ── US Stock Perps ── */}
+            {(chainFilter === 'All') && (
+              <>
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginTop: 14, marginBottom: 6 }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                    <span style={{ fontSize: 13, fontWeight: 600 }}>US Stock Perps</span>
+                    <span style={{ fontSize: 9, padding: '1px 6px', borderRadius: 4, background: 'rgba(168,85,247,0.15)', color: '#a855f7', fontWeight: 600 }}>Hyperliquid</span>
+                  </div>
+                  <div style={{ fontSize: 11, color: perpPnl >= 0 ? '#22c55e' : '#ef4444', fontWeight: 600 }}>
+                    {perpPnl >= 0 ? '+' : ''}${perpPnl.toFixed(0)} P&L
+                  </div>
+                </div>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+                  {perpHoldings.map(p => (
+                    <MobileCard key={p.token} style={{ padding: '8px 12px' }}>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                          <div style={{
+                            width: 28, height: 28, borderRadius: 7,
+                            background: p.side === 'Long' ? 'rgba(34,197,94,0.12)' : 'rgba(239,68,68,0.12)',
+                            display: 'flex', alignItems: 'center', justifyContent: 'center',
+                            fontSize: 8, fontWeight: 700, color: p.side === 'Long' ? '#22c55e' : '#ef4444',
+                          }}>{p.side === 'Long' ? 'LONG' : 'SHRT'}</div>
+                          <div>
+                            <div style={{ fontWeight: 600, fontSize: 12 }}>{p.token.replace('-PERP', '')}</div>
+                            <div style={{ fontSize: 9, color: '#64748b' }}>{p.side} {p.leverage} · Entry {p.entry}</div>
+                          </div>
+                        </div>
+                        <div style={{ textAlign: 'right' }}>
+                          <div style={{ fontWeight: 600, fontSize: 12 }}>{p.size}</div>
+                          <div style={{ fontSize: 9, color: p.pnlPct >= 0 ? '#22c55e' : '#ef4444', fontWeight: 600 }}>
+                            {p.pnl} ({p.pnlPct >= 0 ? '+' : ''}{p.pnlPct}%)
+                          </div>
+                        </div>
+                      </div>
+                    </MobileCard>
+                  ))}
+                </div>
+              </>
+            )}
 
             {/* Recent Trades */}
             <div style={{ fontSize: 13, fontWeight: 600, marginTop: 14, marginBottom: 6 }}>Recent Trades</div>
@@ -421,7 +481,7 @@ export function MainScreen() {
             )}
 
             {/* Address detected badge */}
-            {input.trim() && (/^0x[a-fA-F0-9]{40}$/.test(input.trim()) || /^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(input.trim())) && (
+            {input.trim() && (/^0x[a-fA-F0-9]{40}$/.test(input.trim()) || /^0x[a-fA-F0-9]{64}$/.test(input.trim()) || /^0x\w+::\w+::\w+$/.test(input.trim()) || /^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(input.trim())) && (
               <div style={{
                 display: 'flex', alignItems: 'center', gap: 4,
                 padding: '3px 8px', fontSize: 10, fontWeight: 600,
