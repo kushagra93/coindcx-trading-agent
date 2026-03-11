@@ -18,6 +18,20 @@ const COPY_TRADE_PROFIT_SHARE = 0.10; // 10%
 const reservations = new Map<string, FeeReservation>();
 const accumulatedFees = new Map<string, number>(); // key: `${chain}:${token}` -> usd value
 
+// Builders code fee tracking (Hyperliquid referral rebates)
+interface BuilderFeeRecord {
+  tradeId: string;
+  volumeUsd: number;
+  feeBps: number;
+  feeUsd: number;
+  builderCode: string;
+  timestamp: Date;
+}
+
+const builderFees: BuilderFeeRecord[] = [];
+let totalBuilderFeeUsd = 0;
+let totalBuilderVolumeUsd = 0;
+
 /**
  * Calculate fee rate based on user's AUM.
  */
@@ -180,4 +194,73 @@ export function getPendingSettlements(chain: Chain, token: string): FeeReservati
   return Array.from(reservations.values()).filter(
     r => r.chain === chain && r.token === token && r.status === 'reserved'
   );
+}
+
+// ===== Builder Fee Tracking (Hyperliquid Referral Program) =====
+
+/**
+ * Record a builders code fee for a Hyperliquid perp trade.
+ */
+export function recordBuilderFee(
+  tradeId: string,
+  volumeUsd: number,
+  feeBps: number,
+  builderCode: string
+): void {
+  const feeUsd = (volumeUsd * feeBps) / 10000;
+
+  builderFees.push({
+    tradeId,
+    volumeUsd,
+    feeBps,
+    feeUsd,
+    builderCode,
+    timestamp: new Date(),
+  });
+
+  totalBuilderFeeUsd += feeUsd;
+  totalBuilderVolumeUsd += volumeUsd;
+
+  log.info({
+    tradeId,
+    volumeUsd,
+    feeBps,
+    feeUsd,
+    builderCode,
+    totalBuilderFeeUsd,
+  }, 'Builder fee recorded');
+}
+
+/**
+ * Get builders code fee summary.
+ */
+export function getBuilderFeeSummary(): {
+  totalFeeUsd: number;
+  totalVolumeUsd: number;
+  tradeCount: number;
+  builderCode: string;
+  recentFees: BuilderFeeRecord[];
+} {
+  return {
+    totalFeeUsd: totalBuilderFeeUsd,
+    totalVolumeUsd: totalBuilderVolumeUsd,
+    tradeCount: builderFees.length,
+    builderCode: config.hyperliquid.builderCode,
+    recentFees: builderFees.slice(-50),
+  };
+}
+
+/**
+ * Get total accumulated platform fees (all chains).
+ */
+export function getTotalAccumulatedFees(): { byChainToken: Record<string, number>; totalUsd: number } {
+  const byChainToken: Record<string, number> = {};
+  let totalUsd = 0;
+
+  for (const [key, value] of accumulatedFees.entries()) {
+    byChainToken[key] = value;
+    totalUsd += value;
+  }
+
+  return { byChainToken, totalUsd };
 }

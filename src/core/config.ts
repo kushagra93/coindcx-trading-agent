@@ -50,6 +50,8 @@ export interface AppConfig {
 
   hyperliquid: {
     mainnet: boolean;
+    builderCode: string;
+    builderFeeBps: number;
   };
 
   dex: {
@@ -124,6 +126,8 @@ export function loadConfig(): AppConfig {
 
     hyperliquid: {
       mainnet: envOrDefault('HYPERLIQUID_MAINNET', 'false').toLowerCase() === 'true',
+      builderCode: envOrDefault('HYPERLIQUID_BUILDER_CODE', '0xCoinDCXAgent'),
+      builderFeeBps: parseInt(envOrDefault('HYPERLIQUID_BUILDER_FEE_BPS', '5')),
     },
 
     dex: {

@@ -4,6 +4,7 @@ import type { TradeIntent, TradeResult, Quote, QuoteParams } from '../core/types
 import type { OrderExecutor } from './types.js';
 import type { EncryptedKey } from '../wallet/types.js';
 import { decryptKey } from '../wallet/key-manager.js';
+import { recordBuilderFee } from './fee-manager.js';
 
 const log = createChildLogger('hyperliquid-executor');
 
@@ -144,9 +145,11 @@ export class HyperliquidExecutor implements OrderExecutor {
         price: roundedPrice,
       }, 'Placing Hyperliquid order');
 
-      // Build order action
-      // Note: Full Hyperliquid SDK signing would go here
-      // For now, use the exchange API with EIP-712 signing
+      // Build order action with builders code for fee sharing
+      // Hyperliquid builders program: attach builder address for referral rebates
+      const builderCode = config.hyperliquid.builderCode;
+      const builderFeeBps = config.hyperliquid.builderFeeBps;
+
       const orderAction = {
         type: 'order',
         orders: [{
@@ -158,7 +161,16 @@ export class HyperliquidExecutor implements OrderExecutor {
           t: { limit: { tif: 'Ioc' } }, // immediate or cancel for market-like behavior
         }],
         grouping: 'na',
+        builder: builderCode
+          ? { b: builderCode, f: builderFeeBps }
+          : undefined,
       };
+
+      log.info({
+        intentId: intent.id,
+        builder: builderCode,
+        builderFeeBps,
+      }, 'Attaching builders code to order');
 
       // Sign with EIP-712 (Hyperliquid uses EVM signing)
       const wallet = new ethers.Wallet(privateKey);
@@ -209,6 +221,12 @@ export class HyperliquidExecutor implements OrderExecutor {
           avgPx: filled.avgPx,
           totalSz: filled.totalSz,
         }, 'Hyperliquid order filled');
+
+        // Record builder fee for this trade
+        const filledVolumeUsd = parseFloat(filled.totalSz) * parseFloat(filled.avgPx);
+        if (builderCode) {
+          recordBuilderFee(intent.id, filledVolumeUsd, builderFeeBps, builderCode);
+        }
 
         return {
           success: true,

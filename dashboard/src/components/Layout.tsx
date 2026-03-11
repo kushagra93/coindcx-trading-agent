@@ -10,6 +10,7 @@ import {
   MessageSquare,
   LogOut,
   Activity,
+  Settings2,
 } from 'lucide-react';
 import { clearAuthToken } from '../api/client';
 
@@ -22,6 +23,7 @@ const navItems = [
   { to: '/risk', icon: Shield, label: 'Risk' },
   { to: '/ai-chat', icon: MessageSquare, label: 'AI Chat' },
   { to: '/notifications', icon: Bell, label: 'Alerts' },
+  { to: '/admin', icon: Settings2, label: 'Admin Panel' },
 ];
 
 export function Layout() {
