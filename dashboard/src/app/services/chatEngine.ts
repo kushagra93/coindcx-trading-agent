@@ -136,6 +136,9 @@ function formatScreeningResult(result: ScreeningResult, contractAddress?: string
   const t = result.token;
 
   let resp = `SCREENING: ${t.symbol} (${t.chain.toUpperCase()})\n`;
+  if (t.name && t.name !== t.symbol && !t.name.includes('..')) {
+    resp += `Name: ${t.name}\n`;
+  }
   if (contractAddress) {
     const short = contractAddress.length > 16
       ? contractAddress.slice(0, 6) + '...' + contractAddress.slice(-4)

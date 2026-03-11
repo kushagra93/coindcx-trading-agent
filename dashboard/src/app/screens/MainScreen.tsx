@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect } from 'react';
-import { Send, Shield, TrendingUp, Zap, Users, Search, ChevronDown, ChevronUp, Copy } from 'lucide-react';
+import { Send, Shield, TrendingUp, Zap, Users, Search, ChevronDown, ChevronUp, Copy, ClipboardPaste } from 'lucide-react';
 import { useApp } from '../context/AppContext';
 import { MobileCard } from '../components/MobileCard';
 import { ChatBubble } from '../components/ChatBubble';
@@ -376,7 +376,7 @@ export function MainScreen() {
               paddingBottom: 6,
             }}>
               {messages.map(m => (
-                <ChatBubble key={m.id} role={m.role} text={m.text} />
+                <ChatBubble key={m.id} role={m.role} text={m.text} onAction={send} />
               ))}
               {isTyping && (
                 <div style={{ display: 'flex', justifyContent: 'flex-start', marginBottom: 8 }}>
@@ -406,16 +406,42 @@ export function MainScreen() {
               </div>
             )}
 
+            {/* Address detected badge */}
+            {input.trim() && (/^0x[a-fA-F0-9]{40}$/.test(input.trim()) || /^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(input.trim())) && (
+              <div style={{
+                display: 'flex', alignItems: 'center', gap: 4,
+                padding: '3px 8px', fontSize: 10, fontWeight: 600,
+                color: '#3b82f6', background: 'rgba(59,130,246,0.1)',
+                borderRadius: 6, marginBottom: 2, width: 'fit-content',
+              }}>
+                <Search size={10} />
+                Contract address detected — will auto-screen
+              </div>
+            )}
+
             {/* Input */}
             <div style={{
               display: 'flex', gap: 6, padding: '6px 0 4px',
               borderTop: '1px solid #1e293b', flexShrink: 0,
             }}>
+              {/* Paste from clipboard */}
+              <button onClick={async () => {
+                try {
+                  const text = await navigator.clipboard.readText();
+                  if (text) { setInput(text.trim()); }
+                } catch { /* clipboard permission denied */ }
+              }} style={{
+                width: 40, height: 40, borderRadius: 10, border: '1px solid #334155',
+                background: 'none', display: 'flex', alignItems: 'center',
+                justifyContent: 'center', cursor: 'pointer', flexShrink: 0,
+              }}>
+                <ClipboardPaste size={15} color="#64748b" />
+              </button>
               <input
                 value={input}
                 onChange={e => setInput(e.target.value)}
                 onKeyDown={e => e.key === 'Enter' && send(input)}
-                placeholder="screen MYRO, buy FARTCOIN $200..."
+                placeholder="Paste address or type command..."
                 style={{
                   flex: 1, background: '#1e293b', border: 'none', borderRadius: 10,
                   padding: '9px 12px', color: '#fff', fontSize: 13, outline: 'none',

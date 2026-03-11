@@ -233,7 +233,46 @@ const PERP_DB: Record<string, TokenMetrics> = {
   },
 };
 
-// ─── Contract Address Lookup (simulated on-chain fetch) ──────────────
+// ─── Contract Address → Token Name Lookup ─────────────────────────────
+
+const CONTRACT_DB: Record<string, { symbol: string; name: string; chain: 'solana' | 'base' | 'ethereum' }> = {
+  // Ethereum
+  '0x6982508145454Ce325dDbE47a25d4ec3d2311933': { symbol: 'PEPE', name: 'Pepe', chain: 'ethereum' },
+  '0xb131f4A55907B10d1F0A50d8ab8FA09EC342cd74': { symbol: 'MEME', name: 'Memecoin', chain: 'ethereum' },
+  '0x4d224452801ACEd8B2F0aebE155379bb5D594381': { symbol: 'APE', name: 'ApeCoin', chain: 'ethereum' },
+  '0x95aD61b0a150d79219dCF64E1E6Cc01f0B64C4cE': { symbol: 'SHIB', name: 'Shiba Inu', chain: 'ethereum' },
+  '0x6B175474E89094C44Da98b954EedeAC495271d0F': { symbol: 'DAI', name: 'Dai Stablecoin', chain: 'ethereum' },
+  '0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48': { symbol: 'USDC', name: 'USD Coin', chain: 'ethereum' },
+  '0xdAC17F958D2ee523a2206206994597C13D831ec7': { symbol: 'USDT', name: 'Tether USD', chain: 'ethereum' },
+  '0x2260FAC5E5542a773Aa44fBCfeDf7C193bc2C599': { symbol: 'WBTC', name: 'Wrapped Bitcoin', chain: 'ethereum' },
+  '0x1f9840a85d5aF5bf1D1762F925BDADdC4201F984': { symbol: 'UNI', name: 'Uniswap', chain: 'ethereum' },
+  '0x514910771AF9Ca656af840dff83E8264EcF986CA': { symbol: 'LINK', name: 'Chainlink', chain: 'ethereum' },
+  '0xaea46A60368A7bD060eec7DF8CBa43b7EF41Ad85': { symbol: 'FET', name: 'Fetch.ai', chain: 'ethereum' },
+  '0xaaeE1A9723aaDB7afA2810263653A34bA2C21C7a': { symbol: 'MOG', name: 'Mog Coin', chain: 'ethereum' },
+  // Base
+  '0x4ed4E862860beD51a9570b96d89aF5E1B0Efefed': { symbol: 'DEGEN', name: 'Degen', chain: 'base' },
+  '0xAC1Bd2486aAf3B5C0fc3Fd868558b082a531B2B4': { symbol: 'TOSHI', name: 'Toshi', chain: 'base' },
+  '0x532f27101965dd16442E59d40670FaF5eBB142E4': { symbol: 'BRETT', name: 'Brett', chain: 'base' },
+  '0x940181a94A35A4569E4529A3CDfB74e38FD98631': { symbol: 'AERO', name: 'Aerodrome', chain: 'base' },
+  // Solana (base58)
+  'DezXAZ8z7PnrnRJjz3wXBoRgixCa6xjnB7YaB1pPB263': { symbol: 'BONK', name: 'Bonk', chain: 'solana' },
+  'EKpQGSJtjMFqKZ9KQanSqYXRcF8fBopzLHYxdM65zcjm': { symbol: 'WIF', name: 'dogwifhat', chain: 'solana' },
+  'HLwEJQVzs7SvMeeSY3gRTaWEGnCbELJJunRSGwbwNzjR': { symbol: 'MYRO', name: 'Myro', chain: 'solana' },
+  '7GCihgDB8fe6KNjn2MYtkzZcRjQy3t9GHdC8uHYmW2hr': { symbol: 'POPCAT', name: 'Popcat', chain: 'solana' },
+  '9BB6NFEcjBCtnNLFko2FqVQBq8HHM13kCyYcdQbgpump': { symbol: 'FARTCOIN', name: 'Fartcoin', chain: 'solana' },
+  'MEW1gQWJ3nEXg2qgERiKu7FAFj79PHvQVREQUzScPP5': { symbol: 'MEW', name: 'cat in a dogs world', chain: 'solana' },
+};
+
+/** Look up a token name from a known contract address, or simulate an on-chain fetch */
+function resolveContractName(address: string): { symbol: string; name: string } | null {
+  // Exact match in known DB (case-insensitive for EVM)
+  for (const [addr, info] of Object.entries(CONTRACT_DB)) {
+    if (addr.toLowerCase() === address.toLowerCase()) return info;
+  }
+  return null;
+}
+
+// ─── Contract Address Detection ──────────────────────────────────────
 
 /** Detect chain from contract address format */
 export function detectChainFromAddress(address: string): 'solana' | 'base' | 'ethereum' | null {
@@ -272,17 +311,24 @@ export function screenByAddress(address: string): ScreeningResult {
     };
   }
 
+  // If known contract maps to a token in our DB, use real metrics
+  const knownInfo = resolveContractName(address);
+  if (knownInfo && TOKEN_DB[knownInfo.symbol]) {
+    return screenTokenMetrics(TOKEN_DB[knownInfo.symbol]);
+  }
+
   // Derive deterministic pseudo-random values from the address hash
   const hash = Array.from(address).reduce((h, c) => ((h << 5) - h + c.charCodeAt(0)) | 0, 0);
   const abs = Math.abs(hash);
   const rand = (min: number, max: number) => min + (abs % (max - min + 1));
   const randf = (min: number, max: number) => min + ((abs % 10000) / 10000) * (max - min);
 
-  // Derive a readable symbol from the address
+  // Try to resolve actual token name from known contracts
+  const knownToken = resolveContractName(address);
   const shortAddr = chain === 'solana'
     ? address.slice(0, 4) + '..' + address.slice(-4)
     : '0x' + address.slice(2, 6) + '..' + address.slice(-4);
-  const symbol = address.slice(chain === 'solana' ? 0 : 2, chain === 'solana' ? 6 : 8).toUpperCase();
+  const symbol = knownToken?.symbol ?? address.slice(chain === 'solana' ? 0 : 2, chain === 'solana' ? 6 : 8).toUpperCase();
 
   const ageMinutes = rand(5, 14400);
   const volume24h = randf(500, 8_000_000);
@@ -298,8 +344,8 @@ export function screenByAddress(address: string): ScreeningResult {
 
   const token: TokenMetrics = {
     symbol,
-    name: `${shortAddr}`,
-    chain,
+    name: knownToken?.name ?? `${shortAddr}`,
+    chain: knownToken?.chain ?? chain,
     price,
     priceChange5m: randf(-15, 25),
     priceChange1h: randf(-30, 80),
