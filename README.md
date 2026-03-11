@@ -39,10 +39,10 @@ coindcx-trading-agent/
 ## Features
 
 ### AI Trading Agent (Chat Interface)
-- **Natural language trading** — "buy FARTCOIN $200", "screen POPCAT", "long TSLA 3x"
+- **Natural language trading** — "buy FARTCOIN $200", "screen POPCAT", "long TSLA 3x", "screen MON"
 - **16+ intent types** — buy, sell, screen, analyze, snipe, DCA, copy, trending, positions, P&L
-- **Contract address screening** — paste any EVM (0x...) or Solana (base58) address to auto-screen
-- **Token name resolution** — 20+ known contracts auto-resolve (PEPE, SHIB, UNI, BONK, WIF, etc.)
+- **Contract address screening** — paste any EVM (0x...), Solana (base58), Sui/Aptos (0x + 64 hex), or Move module path to auto-screen
+- **Token name resolution** — 40+ known contracts auto-resolve across all supported chains
 
 ### On-Chain Screening (War Agent)
 - **6-factor scoring** — Age, Volume, Liquidity, Holder concentration, LP Lock, RugCheck score
@@ -50,21 +50,37 @@ coindcx-trading-agent/
 - **AI Confidence & Rug Probability** — composite scores from multi-source data
 - **Grade system** — A through F with actionable recommendations
 
-### Multi-Chain Execution
+### Multi-Chain Execution (21 Chains)
 | Chain | DEX | Assets |
 |-------|-----|--------|
 | Solana | Jupiter v6 | Memecoins (FARTCOIN, POPCAT, WIF, BONK, MYRO) |
 | Base | Aerodrome | Base tokens (DEGEN, BRETT, TOSHI, AERO) |
 | Ethereum | Uniswap V3 | ETH, PEPE, MOG, blue chips |
+| Arbitrum | Camelot / GMX | ARB, GMX, PENDLE, DeFi |
+| Polygon | QuickSwap | POL, AAVE, QI |
+| BSC | PancakeSwap | BNB, CAKE |
+| Optimism | Velodrome | OP, VELO |
+| Avalanche | Trader Joe | AVAX, JOE |
+| Monad | Kuru DEX | MON, KURU, MOYAKI |
+| Sui | Cetus | SUI, CETUS, TURBOS, NAVX |
+| Aptos | Liquidswap | APT, THALA, GUI |
 | Perps | Hyperliquid | US stocks (TSLA, NVDA, AAPL, AMZN) |
+
+*Also supports: Blast, zkSync, Fantom, Linea, Scroll, Mantle, Celo, Gnosis*
 
 ### Risk Management (Auto Exit Strategies)
 - **Meme coins**: Micro SL (-25%/30s) + Ladder exit (sell 40% at 2.5x) + Trailing (-30%)
 - **Blue chips**: SL (-5%) + TP (+20%) + Trailing (-8%)
 - **Perps**: SL (-8%) + TP (+15%) + Trailing (-6%)
 
+### US Stock Perps (Hyperliquid)
+- **Dedicated perps section** — separated from crypto holdings with LONG/SHRT badges
+- **Leverage display** — 2x/3x leverage with entry price and P&L per position
+- **Supported stocks** — TSLA, NVDA, AAPL, AMZN with auto exit strategies
+
 ### Mobile UI
 - **3-tab unified layout** — Portfolio | Signals | Chat
+- **12 chain filters** — scrollable chain pills (Solana, Base, Ethereum, Arbitrum, Polygon, BSC, Optimism, Avalanche, Monad, Sui, Aptos)
 - **Phone frame simulator** — 375x812 desktop preview with notch
 - **Paste & copy** — clipboard paste button for addresses, copy buttons on results
 - **Buy buttons** — one-tap $50/$200/$500 buy after screening
@@ -172,7 +188,7 @@ The dashboard is a standalone React 19 + Vite app under `dashboard/`. Key files:
 
 - **Backend**: TypeScript, Fastify, Drizzle ORM, PostgreSQL, Redis, Pino
 - **Dashboard**: React 19, Vite, TypeScript, Recharts, Lucide Icons
-- **Blockchain**: @solana/web3.js, ethers.js, Jupiter v6 API, Hyperliquid SDK
+- **Blockchain**: @solana/web3.js, ethers.js, Jupiter v6 API, Hyperliquid SDK, Sui/Aptos Move VM
 - **Security**: AWS KMS for key management, scoped permissions, audit logging
 - **Infra**: Docker, Kubernetes, docker-compose for local dev
 
