@@ -1,0 +1,121 @@
+const API_BASE = import.meta.env.VITE_API_BASE ?? 'http://localhost:3000';
+
+let authToken: string | null = localStorage.getItem('auth_token');
+
+export function setAuthToken(token: string) {
+  authToken = token;
+  localStorage.setItem('auth_token', token);
+}
+
+export function clearAuthToken() {
+  authToken = null;
+  localStorage.removeItem('auth_token');
+}
+
+export function getAuthToken(): string | null {
+  return authToken;
+}
+
+async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
+  const headers: Record<string, string> = {
+    'Content-Type': 'application/json',
+    ...(options.headers as Record<string, string> ?? {}),
+  };
+
+  if (authToken) {
+    headers['Authorization'] = `Bearer ${authToken}`;
+  }
+
+  const res = await fetch(`${API_BASE}${path}`, {
+    ...options,
+    headers,
+  });
+
+  if (res.status === 401) {
+    clearAuthToken();
+    window.location.href = '/login';
+    throw new Error('Unauthorized');
+  }
+
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}));
+    throw new Error(body.error ?? `HTTP ${res.status}`);
+  }
+
+  return res.json();
+}
+
+export const api = {
+  // Portfolio
+  getPortfolio: () => request<any>('/api/v1/portfolio'),
+  getPositions: () => request<any>('/api/v1/positions'),
+  getPosition: (id: string) => request<any>(`/api/v1/positions/${id}`),
+  getTrades: (page = 1, limit = 20) => request<any>(`/api/v1/trades?page=${page}&limit=${limit}`),
+
+  // Leaderboard
+  getLeaderboard: () => request<any>('/api/v1/leaderboard'),
+  getTrader: (id: string) => request<any>(`/api/v1/leaderboard/${id}`),
+  copyTrader: (leaderId: string, budgetUsd: number) =>
+    request<any>(`/api/v1/copy/${leaderId}`, {
+      method: 'POST',
+      body: JSON.stringify({ budgetUsd }),
+    }),
+  stopCopy: (leaderId: string) =>
+    request<any>(`/api/v1/copy/${leaderId}`, { method: 'DELETE' }),
+
+  // Strategies
+  getTemplates: () => request<any>('/api/v1/templates'),
+  getStrategies: () => request<any>('/api/v1/strategies'),
+  createStrategy: (data: any) =>
+    request<any>('/api/v1/strategies', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    }),
+  updateStrategy: (id: string, data: any) =>
+    request<any>(`/api/v1/strategies/${id}`, {
+      method: 'PUT',
+      body: JSON.stringify(data),
+    }),
+  deleteStrategy: (id: string) =>
+    request<any>(`/api/v1/strategies/${id}`, { method: 'DELETE' }),
+
+  // Risk
+  getRisk: () => request<any>('/api/v1/risk'),
+  updateRisk: (data: any) =>
+    request<any>('/api/v1/risk', {
+      method: 'PUT',
+      body: JSON.stringify(data),
+    }),
+
+  // Wallet
+  getWalletAddress: (chain: string) => request<any>(`/api/v1/wallet/address/${chain}`),
+  withdraw: (data: { chain: string; token: string; amount: string }) =>
+    request<any>('/api/v1/wallet/withdraw', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    }),
+
+  // Agent
+  startAgent: () => request<any>('/api/v1/agent/start', { method: 'POST' }),
+  stopAgent: () => request<any>('/api/v1/agent/stop', { method: 'POST' }),
+  emergencyStop: () => request<any>('/api/v1/agent/emergency-stop', { method: 'POST' }),
+  getAgentStatus: () => request<any>('/api/v1/agent/status'),
+
+  // AI
+  chat: (message: string, conversationId?: string) =>
+    request<any>('/api/v1/ai/chat', {
+      method: 'POST',
+      body: JSON.stringify({ message, conversationId }),
+    }),
+
+  // Notifications
+  getNotifications: () => request<any>('/api/v1/notifications'),
+  updateNotificationSettings: (data: any) =>
+    request<any>('/api/v1/notifications/settings', {
+      method: 'PUT',
+      body: JSON.stringify(data),
+    }),
+
+  // Health
+  getHealth: () => request<any>('/health'),
+};
