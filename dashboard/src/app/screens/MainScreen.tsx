@@ -11,7 +11,7 @@ import { processMessage, type ChatMessage } from '../services/chatEngine';
 
 type Tab = 'portfolio' | 'signals' | 'chat';
 
-const chains = ['All', 'Solana', 'Base', 'Ethereum', 'Arbitrum', 'Polygon', 'BSC', 'Optimism', 'Avalanche', 'Monad', 'Sui', 'Aptos'] as const;
+const chains = ['All', 'Solana', 'Base', 'Ethereum', 'Arbitrum', 'Polygon', 'BSC', 'Optimism', 'Avalanche', 'Monad', 'Sui', 'Aptos', 'MegaETH'] as const;
 
 const holdings = [
   { token: 'SOL', chain: 'Solana', balance: '24.5', usd: '$3,528', change: +5.2 },
@@ -44,6 +44,9 @@ const holdings = [
   { token: 'NAVX', chain: 'Sui', balance: '3,200', usd: '$384', change: +11.2 },
   { token: 'APT', chain: 'Aptos', balance: '200', usd: '$1,840', change: +4.8 },
   { token: 'THALA', chain: 'Aptos', balance: '1,500', usd: '$780', change: +12.8 },
+  { token: 'MEGA', chain: 'MegaETH', balance: '2,800', usd: '$5,180', change: +32.4 },
+  { token: 'GTE', chain: 'MegaETH', balance: '12,000', usd: '$5,040', change: +18.7 },
+  { token: 'CRAB', chain: 'MegaETH', balance: '4.2M', usd: '$5,040', change: +245.3 },
 ];
 
 const perpHoldings = [
@@ -78,6 +81,9 @@ const signals = [
   { token: 'SUI', chain: 'Sui', signal: 'Buy', reason: 'Move VM leader + DeFi TVL growth', strength: 83 },
   { token: 'CETUS', chain: 'Sui', signal: 'Buy', reason: 'Top Sui DEX + concentrated liquidity', strength: 77 },
   { token: 'APT', chain: 'Aptos', signal: 'Buy', reason: 'Move ecosystem revival + institutional interest', strength: 75 },
+  { token: 'MEGA', chain: 'MegaETH', signal: 'Strong Buy', reason: 'Real-time EVM L2 + 100K TPS hype', strength: 95 },
+  { token: 'GTE', chain: 'MegaETH', signal: 'Buy', reason: 'Leading MegaETH DEX + volume surge', strength: 81 },
+  { token: 'CRAB', chain: 'MegaETH', signal: 'Buy', reason: 'Top MegaETH meme + community growth', strength: 73 },
   { token: 'TSLA-PERP', chain: 'Perps', signal: 'Buy', reason: 'Earnings beat + momentum', strength: 78 },
   { token: 'NVDA-PERP', chain: 'Perps', signal: 'Strong Buy', reason: 'AI sector rotation + breakout', strength: 88 },
 ];

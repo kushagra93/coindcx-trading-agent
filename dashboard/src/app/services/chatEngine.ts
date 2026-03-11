@@ -63,7 +63,7 @@ const ctx: ChatContext = {
 
 // ─── Token extraction ────────────────────────────────────────────────
 
-const ALL_TOKENS = /\b(sol|bonk|eth|wif|pepe|jup|aero|brett|btc|degen|toshi|fartcoin|popcat|myro|giga|mew|bome|mog|wen|tsla|nvda|aapl|amzn|msft|googl|meta|arb|gmx|magic|pendle|pol|aave|quick|bnb|cake|bake|op|velo|avax|joe|blast|ftm|zk|snx|mon|kuru|moyaki|sui|cetus|turbos|navx|apt|thala|gui)\b/i;
+const ALL_TOKENS = /\b(sol|bonk|eth|wif|pepe|jup|aero|brett|btc|degen|toshi|fartcoin|popcat|myro|giga|mew|bome|mog|wen|tsla|nvda|aapl|amzn|msft|googl|meta|arb|gmx|magic|pendle|pol|aave|quick|bnb|cake|bake|op|velo|avax|joe|blast|ftm|zk|snx|mon|kuru|moyaki|sui|cetus|turbos|navx|apt|thala|gui|mega|gte|crab)\b/i;
 
 // Contract address patterns
 const SOLANA_ADDR = /\b[1-9A-HJ-NP-Za-km-z]{32,44}\b/;

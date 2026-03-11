@@ -9,7 +9,7 @@
 
 // ─── Types ───────────────────────────────────────────────────────────
 
-export type EvmChain = 'ethereum' | 'base' | 'arbitrum' | 'polygon' | 'bsc' | 'optimism' | 'avalanche' | 'blast' | 'zksync' | 'fantom' | 'linea' | 'scroll' | 'mantle' | 'celo' | 'gnosis' | 'monad';
+export type EvmChain = 'ethereum' | 'base' | 'arbitrum' | 'polygon' | 'bsc' | 'optimism' | 'avalanche' | 'blast' | 'zksync' | 'fantom' | 'linea' | 'scroll' | 'mantle' | 'celo' | 'gnosis' | 'monad' | 'megaeth';
 export type MoveChain = 'sui' | 'aptos';
 export type Chain = 'solana' | EvmChain | MoveChain | 'perps';
 
@@ -32,6 +32,7 @@ export const CHAIN_CONFIG: Record<Chain, { name: string; dex: string; explorer: 
   celo:      { name: 'Celo',      dex: 'Ubeswap',        explorer: 'celoscan.io',          native: 'CELO',  type: 'evm' },
   gnosis:    { name: 'Gnosis',    dex: 'SushiSwap',      explorer: 'gnosisscan.io',        native: 'xDAI',  type: 'evm' },
   monad:     { name: 'Monad',     dex: 'Kuru',            explorer: 'monadexplorer.com',    native: 'MON',   type: 'evm' },
+  megaeth:   { name: 'MegaETH',  dex: 'GTE',             explorer: 'megaexplorer.xyz',     native: 'ETH',   type: 'evm' },
   sui:       { name: 'Sui',       dex: 'Cetus',           explorer: 'suiscan.xyz',          native: 'SUI',   type: 'move' },
   aptos:     { name: 'Aptos',     dex: 'Liquidswap',      explorer: 'aptoscan.com',         native: 'APT',   type: 'move' },
   perps:     { name: 'Perps',     dex: 'Hyperliquid',    explorer: 'hyperliquid.xyz',      native: 'USDC',  type: 'perps' },
@@ -427,6 +428,28 @@ const TOKEN_DB: Record<string, TokenMetrics> = {
     ageMinutes: 21600, holders: 12000, topHolderPct: 5.2,
     lpLocked: true, lpLockPct: 88, rugScore: 74, ctScore: 80,
   },
+  // ── MegaETH (Real-time EVM L2) ──
+  MEGA: {
+    symbol: 'MEGA', name: 'MegaETH', chain: 'megaeth',
+    price: 1.85, priceChange5m: +0.6, priceChange1h: +3.2, priceChange24h: +18.5,
+    volume24h: 95_000_000, marketCap: 2_800_000_000, liquidity: 42_000_000,
+    ageMinutes: 518400, holders: 290000, topHolderPct: 1.8,
+    lpLocked: true, lpLockPct: 100, rugScore: 96, ctScore: 94,
+  },
+  GTE: {
+    symbol: 'GTE', name: 'GTE DEX', chain: 'megaeth',
+    price: 0.42, priceChange5m: +1.1, priceChange1h: +5.8, priceChange24h: +32.4,
+    volume24h: 28_000_000, marketCap: 180_000_000, liquidity: 15_000_000,
+    ageMinutes: 86400, holders: 45000, topHolderPct: 4.1,
+    lpLocked: true, lpLockPct: 92, rugScore: 88, ctScore: 85,
+  },
+  CRAB: {
+    symbol: 'CRAB', name: 'MegaCrab', chain: 'megaeth',
+    price: 0.0012, priceChange5m: +2.5, priceChange1h: +12.8, priceChange24h: +85.3,
+    volume24h: 8_500_000, marketCap: 12_000_000, liquidity: 2_200_000,
+    ageMinutes: 14400, holders: 18000, topHolderPct: 6.8,
+    lpLocked: true, lpLockPct: 85, rugScore: 72, ctScore: 78,
+  },
 };
 
 // US stock perps (separate pricing model)
@@ -530,6 +553,10 @@ const CONTRACT_DB: Record<string, { symbol: string; name: string; chain: Chain }
   '0x1::aptos_coin::AptosCoin': { symbol: 'APT', name: 'Aptos', chain: 'aptos' },
   '0x7fd500c11216f0fe3095d0c4b8aa4d64a4e2e04f83758462f2b127255643615': { symbol: 'THALA', name: 'Thala', chain: 'aptos' },
   '0xe4ccb6d39136469f376242c31b34d10515c8eaaa38092f804db8e08a8f53c5b2': { symbol: 'GUI', name: 'GUI Inu', chain: 'aptos' },
+  // ── MegaETH (EVM) ──
+  '0x4d65676145544800000000000000000000000001': { symbol: 'MEGA', name: 'MegaETH', chain: 'megaeth' },
+  '0x4d65676145544800000000000000000000000002': { symbol: 'GTE', name: 'GTE DEX', chain: 'megaeth' },
+  '0x4d65676145544800000000000000000000000003': { symbol: 'CRAB', name: 'MegaCrab', chain: 'megaeth' },
   // ── Solana (base58) ──
   'DezXAZ8z7PnrnRJjz3wXBoRgixCa6xjnB7YaB1pPB263': { symbol: 'BONK', name: 'Bonk', chain: 'solana' },
   'EKpQGSJtjMFqKZ9KQanSqYXRcF8fBopzLHYxdM65zcjm': { symbol: 'WIF', name: 'dogwifhat', chain: 'solana' },
@@ -607,7 +634,7 @@ export function parseChainHint(text: string): Chain | null {
     eth: 'ethereum', arb: 'arbitrum', poly: 'polygon', matic: 'polygon',
     op: 'optimism', avax: 'avalanche', bnb: 'bsc', ftm: 'fantom',
     zk: 'zksync', 'zksync': 'zksync',
-    mon: 'monad', apt: 'aptos',
+    mon: 'monad', apt: 'aptos', mega: 'megaeth',
   };
   return aliases[hint] ?? null;
 }
