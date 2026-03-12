@@ -129,11 +129,9 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Text(
+            _buildMarkdownText(
               msg.text,
-              style: CoinDCXTypography.bodyMedium.copyWith(
-                color: msg.isUser ? colors.actionForegroundPrimary : colors.generalForegroundPrimary,
-              ),
+              msg.isUser ? colors.actionForegroundPrimary : colors.generalForegroundPrimary,
             ),
             if (msg.cards != null && msg.cards!.isNotEmpty) ...[
               const SizedBox(height: CoinDCXSpacing.xs),
@@ -575,6 +573,34 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
     if (value >= 1e6) return '\$${(value / 1e6).toStringAsFixed(1)}M';
     if (value >= 1e3) return '\$${(value / 1e3).toStringAsFixed(0)}K';
     return '\$${value.toStringAsFixed(0)}';
+  }
+
+  Widget _buildMarkdownText(String text, Color baseColor) {
+    final spans = <InlineSpan>[];
+    final boldRegex = RegExp(r'\*\*(.+?)\*\*');
+    int lastEnd = 0;
+
+    for (final match in boldRegex.allMatches(text)) {
+      if (match.start > lastEnd) {
+        spans.add(TextSpan(
+          text: text.substring(lastEnd, match.start),
+          style: CoinDCXTypography.bodyMedium.copyWith(color: baseColor),
+        ));
+      }
+      spans.add(TextSpan(
+        text: match.group(1),
+        style: CoinDCXTypography.bodyMedium.copyWith(color: baseColor, fontWeight: FontWeight.w700),
+      ));
+      lastEnd = match.end;
+    }
+    if (lastEnd < text.length) {
+      spans.add(TextSpan(
+        text: text.substring(lastEnd),
+        style: CoinDCXTypography.bodyMedium.copyWith(color: baseColor),
+      ));
+    }
+
+    return RichText(text: TextSpan(children: spans));
   }
 
   Widget _buildTypingIndicator(CoinDCXColorScheme colors) {
