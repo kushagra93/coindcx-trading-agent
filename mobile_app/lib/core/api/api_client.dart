@@ -4,7 +4,7 @@ import 'package:http/http.dart' as http;
 class ApiClient {
   // For development: localhost when running on simulator
   // Change to your machine's IP for physical device testing
-  static const String _baseUrl = 'http://localhost:4000';
+  static const String _baseUrl = 'http://localhost:3000';
 
   final http.Client _client;
 

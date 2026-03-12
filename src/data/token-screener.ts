@@ -304,12 +304,137 @@ export async function fetchGoPlus(contractAddress: string, chain: string): Promi
   }
 }
 
+// ─── Birdeye (Solana token holder distribution) ──────────────────────
+
+const BIRDEYE_BASE = 'https://public-api.birdeye.so';
+
+export async function fetchBirdeyeHolders(mintAddress: string): Promise<{
+  holderCount: number;
+  topHolderPct: number;
+  top10HolderPct: number;
+  distribution: Array<{ range: string; count: number; pct: number }>;
+} | null> {
+  const apiKey = process.env.BIRDEYE_API_KEY;
+  if (!apiKey) return null;
+
+  try {
+    const res = await fetch(`${BIRDEYE_BASE}/defi/v3/token/holder?address=${mintAddress}`, {
+      headers: { 'X-API-KEY': apiKey, 'x-chain': 'solana' },
+    });
+    if (!res.ok) return null;
+    const data = await res.json() as {
+      data?: {
+        total?: number;
+        items?: Array<{ owner: string; balance: number; percentage: number }>;
+      };
+    };
+
+    const items = data.data?.items ?? [];
+    const total = data.data?.total ?? items.length;
+    const top10Pct = items.slice(0, 10).reduce((sum, h) => sum + (h.percentage ?? 0), 0);
+
+    return {
+      holderCount: total,
+      topHolderPct: items[0]?.percentage ?? 0,
+      top10HolderPct: top10Pct,
+      distribution: [],
+    };
+  } catch (e) {
+    log.warn({ err: e, mintAddress }, 'Birdeye holder fetch failed');
+    return null;
+  }
+}
+
+export async function fetchBirdeyeOverview(mintAddress: string): Promise<{
+  trade24hCount: number;
+  uniqueWallets24h: number;
+  buyPressure: number;
+} | null> {
+  const apiKey = process.env.BIRDEYE_API_KEY;
+  if (!apiKey) return null;
+
+  try {
+    const res = await fetch(`${BIRDEYE_BASE}/defi/token_overview?address=${mintAddress}`, {
+      headers: { 'X-API-KEY': apiKey, 'x-chain': 'solana' },
+    });
+    if (!res.ok) return null;
+    const data = await res.json() as {
+      data?: {
+        trade24h?: number;
+        uniqueWallet24h?: number;
+        buy24h?: number;
+        sell24h?: number;
+      };
+    };
+
+    const d = data.data;
+    if (!d) return null;
+
+    const buys = d.buy24h ?? 0;
+    const sells = d.sell24h ?? 0;
+    const total = buys + sells;
+
+    return {
+      trade24hCount: d.trade24h ?? 0,
+      uniqueWallets24h: d.uniqueWallet24h ?? 0,
+      buyPressure: total > 0 ? Math.round((buys / total) * 100) : 50,
+    };
+  } catch (e) {
+    log.warn({ err: e, mintAddress }, 'Birdeye overview failed');
+    return null;
+  }
+}
+
+// ─── Helius (Solana token holders via DAS) ────────────────────────────
+
+export async function fetchHeliusHolders(mintAddress: string): Promise<{
+  holderCount: number;
+  topHolders: Array<{ address: string; pct: number }>;
+} | null> {
+  const apiKey = process.env.HELIUS_API_KEY;
+  if (!apiKey) return null;
+
+  try {
+    const res = await fetch(`https://mainnet.helius-rpc.com/?api-key=${apiKey}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        jsonrpc: '2.0',
+        id: 1,
+        method: 'getTokenAccounts',
+        params: { mint: mintAddress, limit: 20 },
+      }),
+    });
+    if (!res.ok) return null;
+    const data = await res.json() as {
+      result?: {
+        total?: number;
+        token_accounts?: Array<{ owner: string; amount: number }>;
+      };
+    };
+
+    const accounts = data.result?.token_accounts ?? [];
+    const total = data.result?.total ?? accounts.length;
+    const totalSupply = accounts.reduce((s, a) => s + a.amount, 0);
+
+    const topHolders = accounts.slice(0, 10).map(a => ({
+      address: a.owner,
+      pct: totalSupply > 0 ? Math.round((a.amount / totalSupply) * 10000) / 100 : 0,
+    }));
+
+    return { holderCount: total, topHolders };
+  } catch (e) {
+    log.warn({ err: e, mintAddress }, 'Helius holder fetch failed');
+    return null;
+  }
+}
+
 // ─── Unified Screening ────────────────────────────────────────────────
 
 const metricsCache = new LRUCache<string, TokenMetrics>({ max: 500, ttl: 60_000 });
 
 async function enrichWithSecurity(metrics: TokenMetrics, contractAddress: string | null): Promise<TokenMetrics> {
-  const enriched = { ...metrics };
+  const enriched = { ...metrics } as any;
 
   const volScore = Math.min(50, (metrics.volume24h / 100_000) * 10);
   const momentumScore = Math.min(50, Math.max(0, metrics.priceChange24h));
@@ -318,13 +443,39 @@ async function enrichWithSecurity(metrics: TokenMetrics, contractAddress: string
   if (!contractAddress) return enriched;
 
   if (metrics.chain === 'solana') {
-    const rugData = await fetchRugCheck(contractAddress);
+    // Fire all Solana data sources in parallel
+    const [rugData, birdeyeHolders, birdeyeOverview, heliusHolders] = await Promise.all([
+      fetchRugCheck(contractAddress),
+      fetchBirdeyeHolders(contractAddress),
+      fetchBirdeyeOverview(contractAddress),
+      fetchHeliusHolders(contractAddress),
+    ]);
+
     if (rugData) {
       enriched.rugScore = rugData.rugScore;
       enriched.topHolderPct = rugData.topHolderPct;
       enriched.lpLocked = rugData.lpLocked;
       enriched.lpLockPct = rugData.lpLockPct;
       if (rugData.holders > 0) enriched.holders = rugData.holders;
+    }
+
+    // Birdeye provides more accurate holder counts
+    if (birdeyeHolders) {
+      enriched.holders = birdeyeHolders.holderCount;
+      enriched.topHolderPct = birdeyeHolders.topHolderPct || enriched.topHolderPct;
+      enriched.top10HolderPct = birdeyeHolders.top10HolderPct;
+    }
+
+    if (birdeyeOverview) {
+      enriched.trade24hCount = birdeyeOverview.trade24hCount;
+      enriched.uniqueWallets24h = birdeyeOverview.uniqueWallets24h;
+      enriched.buyPressure = birdeyeOverview.buyPressure;
+    }
+
+    // Helius gives us raw top holder addresses
+    if (heliusHolders) {
+      if (!birdeyeHolders) enriched.holders = heliusHolders.holderCount;
+      enriched.topHolders = heliusHolders.topHolders;
     }
   } else {
     const goplusData = await fetchGoPlus(contractAddress, metrics.chain);

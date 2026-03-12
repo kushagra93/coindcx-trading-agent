@@ -7,8 +7,12 @@ import {
   type TokenMetrics,
   type ScreeningResult,
 } from '../../data/token-screener.js';
+import { chatCompletion, isLLMAvailable, type LLMMessage } from '../../data/llm.js';
+import { createChildLogger } from '../../core/logger.js';
 
-// ─── Intent detection (ported from dashboard chatEngine) ──────────────
+const log = createChildLogger('chat');
+
+// ─── Intent detection (regex fast-path, LLM fallback) ────────────────
 
 type Intent =
   | 'buy' | 'sell' | 'long' | 'short'
@@ -38,7 +42,7 @@ function detectIntent(text: string): Intent {
   if (t.includes('position') || t.includes('holding')) return 'positions';
   if (t.includes('p&l') || t.includes('pnl') || t.includes('profit') || t.includes('performance')) return 'pnl';
   if (t.includes('portfolio') || t.includes('balance') || t.includes('wallet')) return 'portfolio';
-  if (t.includes('trend') || t.includes('hot') || t.includes('recommend') || t.includes('suggest')) return 'trending';
+  if (t.includes('trend') || t.includes('hot') || t.includes('recommend') || t.includes('suggest') || t.includes('top') || t.includes('popular')) return 'trending';
   if (t.includes('help') || t.includes('what can')) return 'help';
   return 'unknown';
 }
@@ -64,7 +68,8 @@ function extractAmount(text: string): number {
   return 200;
 }
 
-function formatUsd(n: number): string {
+function formatUsd(n: number | undefined): string {
+  if (!n) return '—';
   if (n >= 1_000_000_000) return `$${(n / 1_000_000_000).toFixed(2)}B`;
   if (n >= 1_000_000) return `$${(n / 1_000_000).toFixed(2)}M`;
   if (n >= 1_000) return `$${(n / 1_000).toFixed(1)}K`;
@@ -93,9 +98,76 @@ type ChatCard =
   | { type: 'trending'; data: TokenMetrics[] }
   | { type: 'trade_preview'; data: { symbol: string; amount: number; price: number; chain: string } };
 
+// ─── LLM-powered response generation ─────────────────────────────────
+
+const SYSTEM_PROMPT = `You are a crypto trading assistant for CoinDCX's Web3 platform. You help users discover, screen, and trade tokens.
+
+You speak in a concise, knowledgeable tone — like a smart degen friend who also understands risk.
+
+Rules:
+- Keep responses SHORT (2-4 sentences max)
+- Use simple language, avoid jargon unless the user uses it first
+- Always mention key numbers: price, 24h change, volume, safety score
+- If a token looks risky, warn clearly but don't be preachy
+- Use bold (**text**) for token names and key figures
+- Never make up data — only reference what's provided in the context
+- Don't use emojis excessively, 1-2 max per message`;
+
+async function generateLLMResponse(
+  userMessage: string,
+  context: string,
+  conversationHistory: LLMMessage[],
+): Promise<string> {
+  if (!isLLMAvailable()) return context;
+
+  try {
+    const messages: LLMMessage[] = [
+      { role: 'system', content: SYSTEM_PROMPT },
+      ...conversationHistory.slice(-6),
+      {
+        role: 'user',
+        content: `User asked: "${userMessage}"\n\nHere is the data I fetched:\n${context}\n\nRespond naturally to the user based on this data. Be concise.`,
+      },
+    ];
+
+    const response = await chatCompletion(messages, { temperature: 0.7, maxTokens: 512 });
+    return response || context;
+  } catch (err) {
+    log.warn({ err }, 'LLM generation failed, falling back to template');
+    return context;
+  }
+}
+
+// ─── Data formatters for LLM context ─────────────────────────────────
+
+function screeningToContext(result: ScreeningResult): string {
+  const t = result.token;
+  return `Token: ${t.symbol} (${t.chain})
+Price: ${formatPrice(t.price)} | 24h change: ${t.priceChange24h > 0 ? '+' : ''}${t.priceChange24h.toFixed(1)}%
+Volume 24h: ${formatUsd(t.volume24h)} | Liquidity: ${formatUsd(t.liquidity)}
+Market Cap: ${formatUsd(t.marketCap)}
+Safety Score: ${t.rugScore}/100 | Grade: ${result.grade}
+${result.passed ? 'PASSED safety checks' : 'FAILED safety checks'}
+Recommendation: ${result.recommendation}
+Reasons: ${result.reasons.join(', ')}`;
+}
+
+function tokenToContext(m: TokenMetrics): string {
+  return `Token: ${m.symbol} (${m.chain})
+Price: ${formatPrice(m.price)} | 24h: ${m.priceChange24h > 0 ? '+' : ''}${m.priceChange24h.toFixed(1)}%
+Volume: ${formatUsd(m.volume24h)} | Liquidity: ${formatUsd(m.liquidity)}
+Market Cap: ${formatUsd(m.marketCap)}`;
+}
+
+function trendingToContext(tokens: TokenMetrics[]): string {
+  return `Trending tokens:\n${tokens.slice(0, 8).map((t, i) =>
+    `${i + 1}. ${t.symbol} (${t.chain}): ${formatPrice(t.price)} | 24h: ${t.priceChange24h > 0 ? '+' : ''}${t.priceChange24h.toFixed(1)}% | Vol: ${formatUsd(t.volume24h)} | MCap: ${formatUsd(t.marketCap)}`
+  ).join('\n')}`;
+}
+
 // ─── Handlers ─────────────────────────────────────────────────────────
 
-async function handleScreen(token: string): Promise<ChatResponse> {
+async function handleScreen(token: string, userMsg: string, history: LLMMessage[]): Promise<ChatResponse> {
   const result = await screenBySymbol(token);
   if (!result) {
     return {
@@ -104,23 +176,20 @@ async function handleScreen(token: string): Promise<ChatResponse> {
     };
   }
 
-  const t = result.token;
-  let text = `**${t.symbol}** (${t.chain}) — Grade ${result.grade}\n`;
-  text += `Price: ${formatPrice(t.price)} | 24h: ${t.priceChange24h > 0 ? '+' : ''}${t.priceChange24h.toFixed(1)}%\n`;
-  text += `Volume: ${formatUsd(t.volume24h)} | Liquidity: ${formatUsd(t.liquidity)}\n`;
-  text += `Safety: ${t.rugScore}/100 | ${result.recommendation}`;
+  const context = screeningToContext(result);
+  const text = await generateLLMResponse(userMsg, context, history);
 
   return {
     text, intent: 'screen',
     cards: [{ type: 'screening', data: result }],
     suggestions: result.passed
-      ? [`buy ${t.symbol} $200`, `analyze ${t.symbol}`, `dca ${t.symbol}`]
-      : [`analyze ${t.symbol}`, 'trending'],
-    token: t.symbol,
+      ? [`buy ${result.token.symbol} $200`, `analyze ${result.token.symbol}`, `dca ${result.token.symbol}`]
+      : [`analyze ${result.token.symbol}`, 'trending'],
+    token: result.token.symbol,
   };
 }
 
-async function handleScreenAddress(address: string): Promise<ChatResponse> {
+async function handleScreenAddress(address: string, userMsg: string, history: LLMMessage[]): Promise<ChatResponse> {
   const result = await screenByAddress(address);
   if (!result) {
     return {
@@ -128,17 +197,18 @@ async function handleScreenAddress(address: string): Promise<ChatResponse> {
       intent: 'screen', cards: [], suggestions: ['trending', 'help'],
     };
   }
-  const t = result.token;
+  const context = screeningToContext(result);
+  const text = await generateLLMResponse(userMsg, context, history);
+
   return {
-    text: `**${t.symbol}** (${t.chain}) — Grade ${result.grade}\nPrice: ${formatPrice(t.price)} | Safety: ${t.rugScore}/100\n${result.recommendation}`,
-    intent: 'screen',
+    text, intent: 'screen',
     cards: [{ type: 'screening', data: result }],
-    suggestions: result.passed ? [`buy ${t.symbol} $200`, `analyze ${t.symbol}`] : ['trending'],
-    token: t.symbol,
+    suggestions: result.passed ? [`buy ${result.token.symbol} $200`, `analyze ${result.token.symbol}`] : ['trending'],
+    token: result.token.symbol,
   };
 }
 
-async function handlePrice(token: string): Promise<ChatResponse> {
+async function handlePrice(token: string, userMsg: string, history: LLMMessage[]): Promise<ChatResponse> {
   const metrics = await getTokenBySymbol(token);
   if (!metrics) {
     return {
@@ -146,27 +216,28 @@ async function handlePrice(token: string): Promise<ChatResponse> {
       intent: 'price', cards: [], suggestions: ['sol price', 'eth price', 'trending'],
     };
   }
+  const context = tokenToContext(metrics);
+  const text = await generateLLMResponse(userMsg, context, history);
+
   return {
-    text: `**${metrics.symbol}**: ${formatPrice(metrics.price)}\n24h: ${metrics.priceChange24h > 0 ? '+' : ''}${metrics.priceChange24h.toFixed(1)}% | Vol: ${formatUsd(metrics.volume24h)}`,
-    intent: 'price',
+    text, intent: 'price',
     cards: [{ type: 'token_price', data: metrics }],
     suggestions: [`screen ${metrics.symbol}`, `buy ${metrics.symbol} $200`, `analyze ${metrics.symbol}`],
     token: metrics.symbol,
   };
 }
 
-async function handleAnalyze(token: string): Promise<ChatResponse> {
+async function handleAnalyze(token: string, userMsg: string, history: LLMMessage[]): Promise<ChatResponse> {
   const metrics = await getTokenBySymbol(token);
   if (!metrics) {
     return { text: `Token "${token}" not found.`, intent: 'analyze', cards: [], suggestions: ['trending'] };
   }
 
   const screening = await screenBySymbol(token);
-  let text = `**${metrics.symbol}** Analysis\n`;
-  text += `Price: ${formatPrice(metrics.price)} | MCap: ${formatUsd(metrics.marketCap)}\n`;
-  text += `24h: ${metrics.priceChange24h > 0 ? '+' : ''}${metrics.priceChange24h.toFixed(1)}% | Vol: ${formatUsd(metrics.volume24h)}\n`;
-  text += `Liquidity: ${formatUsd(metrics.liquidity)} | Safety: ${metrics.rugScore}/100`;
-  if (screening) text += `\nGrade: ${screening.grade} — ${screening.recommendation}`;
+  let context = tokenToContext(metrics);
+  if (screening) context += `\n${screeningToContext(screening)}`;
+
+  const text = await generateLLMResponse(userMsg, context, history);
 
   const cards: ChatCard[] = [{ type: 'token_price', data: metrics }];
   if (screening) cards.push({ type: 'screening', data: screening });
@@ -178,8 +249,8 @@ async function handleAnalyze(token: string): Promise<ChatResponse> {
   };
 }
 
-async function handleBuy(token: string, text: string): Promise<ChatResponse> {
-  const amount = extractAmount(text);
+async function handleBuy(token: string, userMsg: string, history: LLMMessage[]): Promise<ChatResponse> {
+  const amount = extractAmount(userMsg);
   const metrics = await getTokenBySymbol(token);
   if (!metrics) {
     return { text: `Token "${token}" not found.`, intent: 'buy', cards: [], suggestions: ['trending'] };
@@ -187,34 +258,35 @@ async function handleBuy(token: string, text: string): Promise<ChatResponse> {
 
   const screening = await screenBySymbol(token);
   if (screening && !screening.passed && screening.grade !== 'C') {
+    const context = `User wants to buy ${token} but it FAILED safety screening.\nGrade: ${screening.grade}\nReasons: ${screening.reasons.join(', ')}`;
+    const text = await generateLLMResponse(userMsg, context, history);
     return {
-      text: `**Buy blocked**: ${token} failed safety screening (Grade ${screening.grade}).\n${screening.reasons.join(', ')}`,
-      intent: 'buy',
+      text, intent: 'buy',
       cards: screening ? [{ type: 'screening', data: screening }] : [],
-      suggestions: [`screen ${token}`, `buy ${token} force`, 'trending'],
+      suggestions: [`screen ${token}`, 'trending'],
       token,
     };
   }
 
+  const context = `Trade preview: Buy $${amount} of ${token} at ${formatPrice(metrics.price)} on ${metrics.chain}.\nSafety grade: ${screening?.grade ?? 'unknown'}`;
+  const text = await generateLLMResponse(userMsg, context, history);
+
   return {
-    text: `**Trade Preview**: Buy ${formatUsd(amount)} of ${token} at ${formatPrice(metrics.price)}\nChain: ${metrics.chain} | Safety: Grade ${screening?.grade ?? '?'}`,
-    intent: 'buy',
+    text, intent: 'buy',
     cards: [{ type: 'trade_preview', data: { symbol: token, amount, price: metrics.price, chain: metrics.chain as string } }],
     suggestions: [`confirm buy ${token} ${formatUsd(amount)}`, 'cancel', `screen ${token}`],
     token,
   };
 }
 
-async function handleTrending(): Promise<ChatResponse> {
+async function handleTrending(userMsg: string, history: LLMMessage[]): Promise<ChatResponse> {
   const tokens = await fetchTrending();
   if (tokens.length === 0) {
-    return { text: 'Could not fetch trending tokens right now.', intent: 'trending', cards: [], suggestions: ['screen SOL', 'screen ETH'] };
+    return { text: 'Could not fetch trending tokens right now. Try again in a moment.', intent: 'trending', cards: [], suggestions: ['screen SOL', 'screen ETH'] };
   }
 
-  let text = `**Trending Tokens**\n`;
-  tokens.slice(0, 5).forEach(t => {
-    text += `${t.symbol} (${t.chain}): ${formatPrice(t.price)} | 24h: ${t.priceChange24h > 0 ? '+' : ''}${t.priceChange24h.toFixed(1)}%\n`;
-  });
+  const context = trendingToContext(tokens);
+  const text = await generateLLMResponse(userMsg, context, history);
 
   return {
     text, intent: 'trending',
@@ -223,63 +295,96 @@ async function handleTrending(): Promise<ChatResponse> {
   };
 }
 
+async function handleGeneralQuestion(userMsg: string, history: LLMMessage[]): Promise<ChatResponse> {
+  if (!isLLMAvailable()) {
+    return {
+      text: 'I can help you discover and trade tokens. Try "trending", "screen SOL", or "buy ETH $200".',
+      intent: 'unknown', cards: [], suggestions: ['trending', 'screen SOL', 'help'],
+    };
+  }
+
+  const context = 'No specific token data was requested. The user asked a general question about crypto or the platform.';
+  const text = await generateLLMResponse(userMsg, context, history);
+  return { text, intent: 'unknown', cards: [], suggestions: ['trending', 'screen SOL', 'help'] };
+}
+
 function handleHelp(): ChatResponse {
   return {
-    text: `**Available Commands**\n"screen SOL" — Safety check\n"buy ETH $200" — Buy token\n"analyze PEPE" — Full analysis\n"trending" — Hot tokens\n"sol price" — Quick price check\nOr paste any contract address to screen it.`,
+    text: `Here's what I can do:\n\n• **"screen SOL"** — Safety and rug check\n• **"buy ETH $200"** — Buy a token\n• **"analyze PEPE"** — Full analysis with safety score\n• **"trending"** — See what's hot right now\n• **"SOL price"** — Quick price check\n• Paste any contract address to screen it\n\nOr just ask me anything about crypto!`,
     intent: 'help', cards: [],
     suggestions: ['screen SOL', 'trending', 'buy ETH $200'],
   };
 }
 
-// ─── Main chat processor ─────────────────────────────────────────────
+// ─── Conversation memory (in-memory per session) ─────────────────────
 
+const conversations = new Map<string, LLMMessage[]>();
 let lastToken: string | null = null;
 
-export async function processChat(message: string): Promise<ChatResponse> {
+// ─── Main chat processor ─────────────────────────────────────────────
+
+export async function processChat(message: string, conversationId?: string): Promise<ChatResponse> {
+  const convId = conversationId ?? 'default';
+  if (!conversations.has(convId)) conversations.set(convId, []);
+  const history = conversations.get(convId)!;
+
   const intent = detectIntent(message);
   const token = extractToken(message) ?? lastToken;
   const contractAddress = extractContractAddress(message);
 
-  if (contractAddress) {
-    const resp = await handleScreenAddress(contractAddress);
-    if (resp.token) lastToken = resp.token;
-    return resp;
-  }
+  history.push({ role: 'user', content: message });
 
   let resp: ChatResponse;
 
-  switch (intent) {
-    case 'screen':
-      resp = token ? await handleScreen(token) : { text: 'Which token? Say "screen SOL" or paste a contract address.', intent: 'screen', cards: [], suggestions: ['screen SOL', 'screen ETH', 'screen PEPE'] };
-      break;
-    case 'price':
-    case 'unknown':
-      if (token) {
-        resp = intent === 'price' ? await handlePrice(token) : await handleAnalyze(token);
-      } else {
-        resp = { text: 'I can help you discover and trade tokens. Try "trending", "screen SOL", or "buy ETH $200".', intent: 'unknown', cards: [], suggestions: ['trending', 'screen SOL', 'help'] };
-      }
-      break;
-    case 'buy':
-      resp = token ? await handleBuy(token, message) : { text: 'Which token? Say "buy SOL $200".', intent: 'buy', cards: [], suggestions: ['buy SOL $200', 'buy ETH $500'] };
-      break;
-    case 'analyze':
-      resp = token ? await handleAnalyze(token) : { text: 'Which token? Say "analyze SOL".', intent: 'analyze', cards: [], suggestions: ['analyze SOL', 'analyze ETH'] };
-      break;
-    case 'trending':
-    case 'hot':
-      resp = await handleTrending();
-      break;
-    case 'help':
-      resp = handleHelp();
-      break;
-    default:
-      resp = token
-        ? await handleAnalyze(token)
-        : { text: 'Try "trending", "screen SOL", or "help" to see all commands.', intent: 'unknown', cards: [], suggestions: ['trending', 'screen SOL', 'help'] };
+  if (contractAddress) {
+    resp = await handleScreenAddress(contractAddress, message, history);
+  } else {
+    switch (intent) {
+      case 'screen':
+        resp = token
+          ? await handleScreen(token, message, history)
+          : { text: 'Which token do you want me to check? Try "screen SOL" or paste a contract address.', intent: 'screen', cards: [], suggestions: ['screen SOL', 'screen ETH', 'screen PEPE'] };
+        break;
+      case 'price':
+        resp = token
+          ? await handlePrice(token, message, history)
+          : { text: 'Which token? Try "SOL price" or "ETH price".', intent: 'price', cards: [], suggestions: ['sol price', 'eth price'] };
+        break;
+      case 'buy':
+        resp = token
+          ? await handleBuy(token, message, history)
+          : { text: 'Which token do you want to buy? Try "buy SOL $200".', intent: 'buy', cards: [], suggestions: ['buy SOL $200', 'buy ETH $500'] };
+        break;
+      case 'analyze':
+        resp = token
+          ? await handleAnalyze(token, message, history)
+          : { text: 'Which token should I analyze? Try "analyze SOL".', intent: 'analyze', cards: [], suggestions: ['analyze SOL', 'analyze ETH'] };
+        break;
+      case 'trending':
+      case 'hot':
+        resp = await handleTrending(message, history);
+        break;
+      case 'help':
+        resp = handleHelp();
+        break;
+      case 'unknown':
+      default:
+        if (token) {
+          resp = await handleAnalyze(token, message, history);
+        } else {
+          resp = await handleGeneralQuestion(message, history);
+        }
+    }
   }
 
   if (resp.token) lastToken = resp.token;
+  history.push({ role: 'assistant', content: resp.text });
+
+  // Keep history bounded
+  if (history.length > 20) {
+    conversations.set(convId, history.slice(-12));
+  }
+
   return resp;
 }
 
@@ -289,7 +394,7 @@ export async function chatRoutes(app: FastifyInstance) {
   app.post<{
     Body: { message: string; conversationId?: string };
   }>('/api/v1/chat', async (request, reply) => {
-    const { message } = request.body ?? {};
+    const { message, conversationId } = request.body ?? {};
     if (!message || typeof message !== 'string' || message.trim().length === 0) {
       reply.code(400).send({ error: 'message is required' });
       return;
@@ -299,7 +404,7 @@ export async function chatRoutes(app: FastifyInstance) {
       return;
     }
 
-    const response = await processChat(message.trim());
+    const response = await processChat(message.trim(), conversationId);
     return response;
   });
 }

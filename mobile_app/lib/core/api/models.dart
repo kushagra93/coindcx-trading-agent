@@ -32,13 +32,16 @@ class TokenMetrics {
       symbol: json['symbol'] as String? ?? '',
       name: json['name'] as String? ?? '',
       chain: json['chain'] as String? ?? '',
-      priceUsd: (json['priceUsd'] as num?)?.toDouble() ?? 0.0,
+      priceUsd: (json['priceUsd'] as num?)?.toDouble()
+          ?? (json['price'] as num?)?.toDouble()
+          ?? 0.0,
       priceChange24h: (json['priceChange24h'] as num?)?.toDouble(),
       volume24h: (json['volume24h'] as num?)?.toDouble(),
       liquidity: (json['liquidity'] as num?)?.toDouble(),
       marketCap: (json['marketCap'] as num?)?.toDouble(),
       fdv: (json['fdv'] as num?)?.toDouble(),
-      pairAgeHours: json['pairAgeHours'] as int?,
+      pairAgeHours: (json['pairAgeHours'] as num?)?.toInt()
+          ?? (json['ageMinutes'] != null ? ((json['ageMinutes'] as num).toDouble() / 60).round() : null),
       address: json['address'] as String?,
       imageUrl: json['imageUrl'] as String?,
     );
@@ -61,40 +64,73 @@ class ScreeningResult {
   });
 
   factory ScreeningResult.fromJson(Map<String, dynamic> json) {
+    // Backend sends `token` (not `metrics`) and `grade` (not `verdict`)
+    final tokenData = json['metrics'] as Map<String, dynamic>?
+        ?? json['token'] as Map<String, dynamic>?
+        ?? {};
+    final grade = json['verdict'] as String?
+        ?? json['grade'] as String?
+        ?? '';
+    final rugScore = (json['score'] as num?)?.toInt()
+        ?? (tokenData['rugScore'] as num?)?.toInt()
+        ?? 0;
+    final reasons = (json['flags'] as List<dynamic>?)?.cast<String>()
+        ?? (json['reasons'] as List<dynamic>?)?.cast<String>()
+        ?? [];
+
     return ScreeningResult(
-      metrics: TokenMetrics.fromJson(json['metrics'] as Map<String, dynamic>? ?? {}),
-      verdict: json['verdict'] as String? ?? '',
-      score: json['score'] as int? ?? 0,
-      flags: (json['flags'] as List<dynamic>?)?.cast<String>() ?? [],
+      metrics: TokenMetrics.fromJson(tokenData),
+      verdict: grade,
+      score: rugScore,
+      flags: reasons,
       security: json['security'] as Map<String, dynamic>?,
     );
   }
 
-  bool get isSafe => verdict == 'SAFE' || verdict == 'MODERATE';
-  bool get isDangerous => verdict == 'DANGEROUS';
+  bool get isSafe => verdict == 'A' || verdict == 'B' || verdict == 'SAFE' || verdict == 'MODERATE';
+  bool get isDangerous => verdict == 'F' || verdict == 'DANGEROUS';
 }
 
 class ChatMessage {
   final String text;
   final bool isUser;
   final List<ChatCard>? cards;
+  final List<String>? suggestions;
   final DateTime timestamp;
 
   const ChatMessage({
     required this.text,
     required this.isUser,
     this.cards,
+    this.suggestions,
     required this.timestamp,
   });
 
   factory ChatMessage.fromApiResponse(Map<String, dynamic> json) {
-    final cards = (json['cards'] as List<dynamic>?)
-        ?.map((c) => ChatCard.fromJson(c as Map<String, dynamic>))
-        .toList();
+    final rawCards = json['cards'] as List<dynamic>?;
+    final cards = rawCards?.map((c) {
+      final cardMap = c as Map<String, dynamic>;
+      final type = cardMap['type'] as String? ?? '';
+      final data = cardMap['data'];
+      // Backend sends data as the direct payload (list for trending, map for others)
+      Map<String, dynamic> flatData;
+      if (data is Map<String, dynamic>) {
+        flatData = data;
+      } else if (data is List) {
+        flatData = {'items': data};
+      } else {
+        flatData = {};
+      }
+      return ChatCard(type: type, title: cardMap['title'] as String?, data: flatData);
+    }).toList();
+
+    final suggestions = (json['suggestions'] as List<dynamic>?)?.cast<String>();
+
     return ChatMessage(
-      text: json['message'] as String? ?? '',
+      text: json['text'] as String? ?? json['message'] as String? ?? '',
       isUser: false,
       cards: cards,
+      suggestions: suggestions,
       timestamp: DateTime.now(),
     );
   }
