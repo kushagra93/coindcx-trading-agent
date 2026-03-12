@@ -124,12 +124,12 @@ class PortfolioScreen extends ConsumerWidget {
           style: CoinDCXTypography.heading3.copyWith(color: colors.generalForegroundPrimary),
         ),
         const SizedBox(height: CoinDCXSpacing.sm),
-        ...positions.map((p) => _buildPositionCard(p, colors)),
+        ...positions.map((p) => _buildPositionCard(context, p, colors)),
       ],
     );
   }
 
-  Widget _buildPositionCard(TradeRecord position, CoinDCXColorScheme colors) {
+  Widget _buildPositionCard(BuildContext context, TradeRecord position, CoinDCXColorScheme colors) {
     return Container(
       margin: const EdgeInsets.only(bottom: CoinDCXSpacing.xs),
       padding: const EdgeInsets.all(CoinDCXSpacing.md),
@@ -181,9 +181,23 @@ class PortfolioScreen extends ConsumerWidget {
                 style: CoinDCXTypography.numberMd.copyWith(color: colors.generalForegroundPrimary),
               ),
               Text(
-                '${position.amount} @ \$${position.price.toStringAsFixed(4)}',
+                '${position.amount.toStringAsFixed(4)} @ \$${position.price.toStringAsFixed(4)}',
                 style: CoinDCXTypography.caption.copyWith(color: colors.generalForegroundTertiary),
               ),
+              if (position.side == 'buy') ...[
+                const SizedBox(height: CoinDCXSpacing.xxs),
+                GestureDetector(
+                  onTap: () => Navigator.pushNamed(context, '/chat'),
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(horizontal: CoinDCXSpacing.sm, vertical: CoinDCXSpacing.xxxs),
+                    decoration: BoxDecoration(
+                      color: colors.negativeBackgroundSecondary,
+                      borderRadius: BorderRadius.circular(CoinDCXSpacing.radiusFull),
+                    ),
+                    child: Text('Sell', style: CoinDCXTypography.caption.copyWith(color: colors.negativeBackgroundPrimary, fontWeight: FontWeight.w600)),
+                  ),
+                ),
+              ],
             ],
           ),
         ],

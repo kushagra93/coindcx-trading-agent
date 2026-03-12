@@ -322,6 +322,42 @@ async function handleConfirmBuy(token: string, userMsg: string, history: LLMMess
   }
 }
 
+async function handleSell(token: string, userMsg: string, history: LLMMessage[]): Promise<ChatResponse> {
+  const amount = extractAmount(userMsg);
+  const metrics = await getTokenBySymbol(token);
+  if (!metrics) {
+    return { text: `Token "${token}" not found.`, intent: 'sell', cards: [], suggestions: ['portfolio', 'trending'] };
+  }
+
+  try {
+    const tradeRes = await fetch(`http://localhost:${process.env.PORT ?? 3000}/api/v1/trade/execute`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ symbol: token, side: 'sell', amountUsd: amount }),
+    });
+    const tradeData = await tradeRes.json() as any;
+
+    if (!tradeRes.ok) {
+      return {
+        text: `Sell failed: ${tradeData.error ?? 'Unknown error'}`,
+        intent: 'sell', cards: [], suggestions: ['portfolio'],
+      };
+    }
+
+    const context = `Sell EXECUTED.\nSold $${amount} of ${token} at ${formatPrice(metrics.price)} on ${metrics.chain}.\nTrade ID: ${tradeData.trade?.id}\nStatus: ${tradeData.trade?.status}`;
+    const text = await generateLLMResponse(userMsg, context, history);
+
+    return {
+      text, intent: 'sell',
+      cards: [{ type: 'trade_executed', data: tradeData.trade } as any],
+      suggestions: ['portfolio', 'trending'],
+      token,
+    };
+  } catch {
+    return { text: 'Could not execute sell. Try again.', intent: 'sell', cards: [], suggestions: ['portfolio'] };
+  }
+}
+
 async function handleTrending(userMsg: string, history: LLMMessage[]): Promise<ChatResponse> {
   const tokens = await fetchTrending();
   if (tokens.length === 0) {
@@ -403,6 +439,11 @@ export async function processChat(message: string, conversationId?: string): Pro
         resp = token
           ? await handleBuy(token, message, history)
           : { text: 'Which token do you want to buy? Try "buy SOL $200".', intent: 'buy', cards: [], suggestions: ['buy SOL $200', 'buy ETH $500'] };
+        break;
+      case 'sell':
+        resp = token
+          ? await handleSell(token, message, history)
+          : { text: 'Which token do you want to sell? Try "sell SOL $100".', intent: 'sell', cards: [], suggestions: ['portfolio', 'sell SOL $100'] };
         break;
       case 'analyze':
         resp = token

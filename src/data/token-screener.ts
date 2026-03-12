@@ -181,30 +181,38 @@ export async function lookupByAddress(address: string): Promise<{ metrics: Token
 }
 
 export async function fetchTrending(): Promise<TokenMetrics[]> {
-  try {
-    const res = await fetch(`${DEXSCREENER_BASE}/token-boosts/top/v1`);
-    if (!res.ok) return [];
-    const data = await res.json() as Array<{ tokenAddress: string; chainId: string; description?: string; amount?: number }>;
+  // Fetch known popular tokens in parallel, filter for green 24h, sort by volume
+  const symbols = Object.keys(KNOWN_TOKEN_ADDRESSES);
 
-    const results: TokenMetrics[] = [];
-    const seen = new Set<string>();
+  const fetches = symbols.map(async (sym) => {
+    try {
+      const addr = KNOWN_TOKEN_ADDRESSES[sym];
+      const res = await fetch(`${DEXSCREENER_BASE}/latest/dex/tokens/${addr}`);
+      if (!res.ok) return null;
+      const data = await res.json() as { pairs?: DexScreenerPair[] };
+      if (!data.pairs || data.pairs.length === 0) return null;
+      return pairToMetrics(pickBestPair(data.pairs, sym), sym);
+    } catch { return null; }
+  });
 
-    for (const item of data.slice(0, 15)) {
-      if (seen.has(item.tokenAddress)) continue;
-      seen.add(item.tokenAddress);
+  const results = (await Promise.all(fetches)).filter((t): t is TokenMetrics => t !== null);
 
-      try {
-        const lookup = await lookupByAddress(item.tokenAddress);
-        if (lookup) results.push(lookup.metrics);
-      } catch { /* skip failed lookups */ }
+  // Only show tokens that are green on 24h and have meaningful volume
+  const greenTokens = results
+    .filter(t => t.priceChange24h > 0 && t.volume24h > 10_000)
+    .sort((a, b) => b.volume24h - a.volume24h);
 
-      if (results.length >= 10) break;
-    }
-    return results;
-  } catch (e) {
-    log.warn({ err: e }, 'Trending fetch failed');
-    return [];
-  }
+  // If not enough green tokens, also include top volume tokens regardless of color
+  if (greenTokens.length >= 5) return greenTokens.slice(0, 15);
+
+  const byVolume = results
+    .sort((a, b) => b.volume24h - a.volume24h)
+    .slice(0, 15);
+
+  // Green first, then rest by volume
+  const seen = new Set(greenTokens.map(t => t.symbol));
+  const combined = [...greenTokens, ...byVolume.filter(t => !seen.has(t.symbol))];
+  return combined.slice(0, 15);
 }
 
 // ─── RugCheck (Solana) ────────────────────────────────────────────────
