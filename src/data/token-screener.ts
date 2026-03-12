@@ -219,7 +219,59 @@ export async function lookupByAddress(address: string): Promise<{ metrics: Token
   }
 }
 
-export async function fetchTrending(): Promise<TokenMetrics[]> {
+async function fetchBirdeyeTrending(): Promise<TokenMetrics[]> {
+  const apiKey = process.env.BIRDEYE_API_KEY;
+  if (!apiKey) return [];
+
+  try {
+    const res = await fetch(
+      `${BIRDEYE_BASE}/defi/token_trending?sort_by=rank&sort_type=asc&offset=0&limit=20`,
+      { headers: { 'X-API-KEY': apiKey, 'x-chain': 'solana' } },
+    );
+    if (!res.ok) return [];
+    const data = await res.json() as {
+      data?: {
+        tokens?: Array<{
+          address: string; symbol: string; name: string; logoURI?: string;
+          price: number; marketcap?: number; fdv?: number;
+          volume24hUSD?: number; price24hChangePercent?: number;
+          liquidity?: number; rank?: number;
+        }>;
+      };
+    };
+
+    const items = data.data?.tokens ?? [];
+    return items
+      .filter(t => (t.marketcap ?? t.fdv ?? 0) >= 100_000)
+      .map(t => ({
+        symbol: t.symbol,
+        name: t.name,
+        chain: 'solana' as Chain | string,
+        address: t.address,
+        imageUrl: t.logoURI ?? undefined,
+        price: t.price,
+        priceChange5m: 0,
+        priceChange1h: 0,
+        priceChange6h: 0,
+        priceChange24h: t.price24hChangePercent ?? 0,
+        volume24h: t.volume24hUSD ?? 0,
+        marketCap: t.marketcap ?? t.fdv ?? 0,
+        liquidity: t.liquidity ?? 0,
+        ageMinutes: 999999,
+        holders: 0,
+        topHolderPct: 0,
+        lpLocked: false,
+        lpLockPct: 0,
+        rugScore: 50,
+        ctScore: 50,
+      }));
+  } catch (e) {
+    log.warn({ err: e }, 'Birdeye trending fetch failed');
+    return [];
+  }
+}
+
+async function fetchDexScreenerBoosted(): Promise<TokenMetrics[]> {
   try {
     const res = await fetch(`${DEXSCREENER_BASE}/token-boosts/top/v1`);
     if (!res.ok) return [];
@@ -228,41 +280,126 @@ export async function fetchTrending(): Promise<TokenMetrics[]> {
       icon?: string; header?: string; description?: string;
     }>;
 
-    const results: TokenMetrics[] = [];
     const seen = new Set<string>();
-
-    const items = boostItems.slice(0, 30).filter(item => {
+    const items = boostItems.filter(item => {
       if (seen.has(item.tokenAddress)) return false;
       seen.add(item.tokenAddress);
       return true;
     });
 
-    const fetches = items.map(async (item) => {
-      try {
-        const lookup = await lookupByAddress(item.tokenAddress);
-        if (lookup) {
-          const m = lookup.metrics;
-          m.boosts = item.amount ?? 0;
-          if (item.icon && !m.imageUrl) m.imageUrl = item.icon;
-          return m;
-        }
-      } catch { /* skip */ }
-      return null;
-    });
+    const boostMap = new Map<string, { amount: number; icon?: string }>();
+    for (const item of items) {
+      boostMap.set(item.tokenAddress.toLowerCase(), { amount: item.amount ?? 0, icon: item.icon });
+    }
 
-    const fetched = await Promise.all(fetches);
-    for (const m of fetched) {
-      if (m && m.marketCap >= 100_000) {
+    // Batch lookup by chain — single request per chain instead of N individual ones
+    const byChain = new Map<string, string[]>();
+    for (const item of items) {
+      const chain = item.chainId;
+      if (!byChain.has(chain)) byChain.set(chain, []);
+      byChain.get(chain)!.push(item.tokenAddress);
+    }
+
+    const allPairs: DexScreenerPair[] = [];
+    for (const [chain, addrs] of byChain) {
+      try {
+        const batchUrl = `${DEXSCREENER_BASE}/tokens/v1/${chain}/${addrs.join(',')}`;
+        const batchRes = await fetch(batchUrl);
+        if (batchRes.ok) {
+          const pairs = await batchRes.json() as DexScreenerPair[];
+          if (Array.isArray(pairs)) allPairs.push(...pairs);
+        }
+      } catch (e) {
+        log.warn({ err: e, chain }, 'Batch token lookup failed');
+      }
+    }
+
+    const pairsByToken = new Map<string, DexScreenerPair[]>();
+    for (const pair of allPairs) {
+      const addr = pair.baseToken.address.toLowerCase();
+      if (!pairsByToken.has(addr)) pairsByToken.set(addr, []);
+      pairsByToken.get(addr)!.push(pair);
+    }
+
+    const results: TokenMetrics[] = [];
+    for (const [addr, pairs] of pairsByToken) {
+      const best = pickBestPair(pairs);
+      const m = pairToMetrics(best);
+      const boost = boostMap.get(addr);
+      if (boost) {
+        m.boosts = boost.amount;
+        if (boost.icon && !m.imageUrl) m.imageUrl = boost.icon;
+      }
+      if (m.marketCap >= 100_000) {
         results.push(m);
-        if (results.length >= 20) break;
       }
     }
 
     return results;
   } catch (e) {
-    log.warn({ err: e }, 'Trending fetch failed');
+    log.warn({ err: e }, 'DexScreener boosted fetch failed');
     return [];
   }
+}
+
+export async function fetchTrending(): Promise<TokenMetrics[]> {
+  // Fetch from both Birdeye trending (algorithmic) and DexScreener boosts (paid) in parallel
+  const [birdeyeTokens, dexTokens] = await Promise.all([
+    fetchBirdeyeTrending(),
+    fetchDexScreenerBoosted(),
+  ]);
+
+  // Merge, deduplicate by address, prefer DexScreener data (has richer multi-timeframe metrics)
+  const merged = new Map<string, TokenMetrics>();
+  for (const t of birdeyeTokens) {
+    if (t.address) merged.set(t.address.toLowerCase(), t);
+  }
+  for (const t of dexTokens) {
+    if (t.address) merged.set(t.address.toLowerCase(), t);
+  }
+
+  // Birdeye tokens lack 5m/1h/6h data — enrich via DexScreener batch lookup
+  const needsEnrich = Array.from(merged.values()).filter(
+    t => t.priceChange5m === 0 && t.priceChange1h === 0 && t.priceChange6h === 0
+      && t.address
+  );
+  if (needsEnrich.length > 0) {
+    const addrs = needsEnrich.map(t => t.address!);
+    try {
+      const batchUrl = `${DEXSCREENER_BASE}/tokens/v1/solana/${addrs.join(',')}`;
+      const batchRes = await fetch(batchUrl);
+      if (batchRes.ok) {
+        const pairs = await batchRes.json() as DexScreenerPair[];
+        const pairsByAddr = new Map<string, DexScreenerPair[]>();
+        for (const p of (Array.isArray(pairs) ? pairs : [])) {
+          const a = p.baseToken.address.toLowerCase();
+          if (!pairsByAddr.has(a)) pairsByAddr.set(a, []);
+          pairsByAddr.get(a)!.push(p);
+        }
+        for (const t of needsEnrich) {
+          const tokenPairs = pairsByAddr.get(t.address!.toLowerCase());
+          if (tokenPairs && tokenPairs.length > 0) {
+            const best = pickBestPair(tokenPairs);
+            t.priceChange5m = best.priceChange?.m5 ?? 0;
+            t.priceChange1h = best.priceChange?.h1 ?? 0;
+            t.priceChange6h = best.priceChange?.h6 ?? 0;
+            t.priceChange24h = best.priceChange?.h24 ?? t.priceChange24h;
+            if (!t.imageUrl && best.info?.imageUrl) t.imageUrl = best.info.imageUrl;
+            t.txnsBuys24h = best.txns?.h24?.buys ?? 0;
+            t.txnsSells24h = best.txns?.h24?.sells ?? 0;
+            const ageMs = best.pairCreatedAt ? Date.now() - best.pairCreatedAt : 0;
+            if (ageMs > 0) t.ageMinutes = Math.floor(ageMs / 60_000);
+          }
+        }
+      }
+    } catch (e) {
+      log.warn({ err: e }, 'Birdeye enrichment via DexScreener failed');
+    }
+  }
+
+  const results = Array.from(merged.values());
+  results.sort((a, b) => b.volume24h - a.volume24h);
+  return results.slice(0, 30);
 }
 
 export async function fetchGainers(): Promise<TokenMetrics[]> {
