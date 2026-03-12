@@ -459,7 +459,7 @@ export async function fetchRugCheck(mintAddress: string): Promise<RugCheckFullRe
     const lpBurnedPct = data.markets?.[0]?.lp?.lpBurnedPct ?? 0;
 
     return {
-      rugScore: Math.max(0, Math.min(100, Math.round(data.score / 10))),
+      rugScore: Math.max(0, Math.min(100, 100 - Math.round(data.score / 10))),
       topHolderPct: topHolders[0]?.pct ?? 0,
       top10HolderPct: Math.round(top10Pct * 100) / 100,
       lpLocked: lpLockedPct > 0,
@@ -771,23 +771,59 @@ export function screenToken(metrics: TokenMetrics): ScreeningResult {
   const warnings: string[] = [];
   const reasons: string[] = [];
   const dataSources: ScreeningResult['dataSources'] = [];
-  let score = 100;
+  const audit: TokenAudit | undefined = (metrics as any)._audit;
+  let score = 0;
 
-  if (metrics.rugScore < 30) { reasons.push(`Low safety score: ${metrics.rugScore}/100`); score -= 30; }
-  else if (metrics.rugScore < 60) { warnings.push(`Moderate safety score: ${metrics.rugScore}/100`); score -= 10; }
+  // ── Safety score (rugScore is 0-100 where 100 = safest) ──
+  const hasSecurityData = metrics.rugScore !== 50;
+  if (hasSecurityData) {
+    if (metrics.rugScore >= 80) { score += 30; }
+    else if (metrics.rugScore >= 50) { score += 20; warnings.push(`Moderate safety: ${metrics.rugScore}/100`); }
+    else if (metrics.rugScore >= 20) { score += 5; reasons.push(`Low safety score: ${metrics.rugScore}/100`); }
+    else { reasons.push(`Very low safety score: ${metrics.rugScore}/100`); }
+  } else {
+    score += 10;
+    warnings.push('No security data available');
+  }
 
-  if (metrics.liquidity < 10_000) { reasons.push(`Very low liquidity: $${metrics.liquidity.toLocaleString()}`); score -= 25; }
-  else if (metrics.liquidity < 50_000) { warnings.push(`Low liquidity: $${metrics.liquidity.toLocaleString()}`); score -= 10; }
+  // ── Audit data (if available from RugCheck/GoPlus) ──
+  if (audit) {
+    if (audit.rugged) { reasons.push('Token flagged as RUGGED'); score -= 50; }
+    if (audit.noMint) score += 5; else { warnings.push('Mint authority active — supply can increase'); score -= 5; }
+    if (audit.noFreeze) score += 5; else { warnings.push('Freeze authority active — wallets can be frozen'); score -= 5; }
+    if (audit.burnt > 50) score += 5;
+    else if (audit.burnt === 0) warnings.push('LP not burnt');
+    if (audit.insidersDetected > 0) { reasons.push(`${audit.insidersDetected} insider(s) detected`); score -= 10; }
+    if (audit.top10HolderPct > 50) { reasons.push(`Top 10 holders own ${audit.top10HolderPct.toFixed(1)}%`); score -= 15; }
+    else if (audit.top10HolderPct > 30) { warnings.push(`Top 10 holders own ${audit.top10HolderPct.toFixed(1)}%`); score -= 5; }
+  }
 
-  if (metrics.volume24h < 5_000) { warnings.push(`Low volume: $${metrics.volume24h.toLocaleString()}`); score -= 10; }
+  // ── Liquidity ──
+  if (metrics.liquidity >= 100_000) score += 15;
+  else if (metrics.liquidity >= 50_000) score += 10;
+  else if (metrics.liquidity >= 10_000) { score += 5; warnings.push(`Low liquidity: $${metrics.liquidity.toLocaleString()}`); }
+  else { reasons.push(`Very low liquidity: $${metrics.liquidity.toLocaleString()}`); }
 
-  if (metrics.topHolderPct > 20) { reasons.push(`Top holder owns ${metrics.topHolderPct.toFixed(1)}%`); score -= 20; }
-  else if (metrics.topHolderPct > 10) { warnings.push(`Top holder owns ${metrics.topHolderPct.toFixed(1)}%`); score -= 5; }
+  // ── Volume ──
+  if (metrics.volume24h >= 100_000) score += 10;
+  else if (metrics.volume24h >= 10_000) score += 5;
+  else { warnings.push(`Low volume: $${metrics.volume24h.toLocaleString()}`); }
 
-  if (!metrics.lpLocked && metrics.lpLockPct === 0) { warnings.push('LP not locked'); score -= 10; }
+  // ── Holder concentration (non-audit path) ──
+  if (!audit) {
+    if (metrics.topHolderPct > 20) { reasons.push(`Top holder owns ${metrics.topHolderPct.toFixed(1)}%`); score -= 10; }
+    else if (metrics.topHolderPct > 10) { warnings.push(`Top holder owns ${metrics.topHolderPct.toFixed(1)}%`); }
+  }
 
-  if (metrics.ageMinutes < 60) { warnings.push(`Very new token: ${metrics.ageMinutes}min old`); score -= 15; }
+  // ── LP lock ──
+  if (metrics.lpLocked || metrics.lpLockPct > 0) score += 5;
+  else if (hasSecurityData) warnings.push('LP not locked');
 
+  // ── Age ──
+  if (metrics.ageMinutes < 60) { warnings.push(`Very new token: ${metrics.ageMinutes}min old`); score -= 5; }
+  else if (metrics.ageMinutes > 60 * 24 * 7) score += 5;
+
+  // ── Data sources ──
   dataSources.push({
     name: 'DexScreener',
     value: `$${metrics.price.toFixed(6)} | Vol $${(metrics.volume24h / 1000).toFixed(0)}K`,
@@ -795,18 +831,18 @@ export function screenToken(metrics: TokenMetrics): ScreeningResult {
   });
   dataSources.push({
     name: metrics.chain === 'solana' ? 'RugCheck' : 'GoPlus',
-    value: `Score ${metrics.rugScore}/100`,
-    verdict: metrics.rugScore >= 60 ? 'safe' : metrics.rugScore >= 30 ? 'warn' : 'danger',
+    value: hasSecurityData ? `Safety ${metrics.rugScore}/100` : 'No data',
+    verdict: !hasSecurityData ? 'warn' : metrics.rugScore >= 60 ? 'safe' : metrics.rugScore >= 30 ? 'warn' : 'danger',
   });
 
   score = Math.max(0, Math.min(100, score));
 
-  const grade = score >= 80 ? 'A' : score >= 60 ? 'B' : score >= 40 ? 'C' : score >= 20 ? 'D' : 'F';
-  const passed = score >= 40;
+  const grade = score >= 70 ? 'A' : score >= 50 ? 'B' : score >= 35 ? 'C' : score >= 15 ? 'D' : 'F';
+  const passed = score >= 35;
 
   let recommendation: string;
   if (grade === 'A') recommendation = `${metrics.symbol} looks solid. Good liquidity, safety checks pass.`;
-  else if (grade === 'B') recommendation = `${metrics.symbol} is reasonable but has some minor flags. Proceed with caution.`;
+  else if (grade === 'B') recommendation = `${metrics.symbol} is reasonable but has minor flags. Proceed with caution.`;
   else if (grade === 'C') recommendation = `${metrics.symbol} has notable risks. Consider smaller position size.`;
   else recommendation = `${metrics.symbol} has significant red flags. High risk of loss.`;
 
@@ -814,13 +850,13 @@ export function screenToken(metrics: TokenMetrics): ScreeningResult {
     token: metrics,
     grade,
     aiConfidence: score,
-    rugProbability: Math.max(0, 100 - metrics.rugScore),
+    rugProbability: hasSecurityData ? Math.max(0, 100 - metrics.rugScore) : 50,
     passed,
     recommendation,
     warnings,
     reasons,
     dataSources,
-    audit: (metrics as any)._audit ?? undefined,
+    audit,
   };
 }
 
