@@ -130,7 +130,7 @@ export interface TradeRecord {
 
 // ─── Token Database (simulated live data) ────────────────────────────
 
-const TOKEN_DB: Record<string, TokenMetrics> = {
+export const TOKEN_DB: Record<string, TokenMetrics> = {
   FARTCOIN: {
     symbol: 'FARTCOIN', name: 'Fartcoin', chain: 'solana',
     price: 0.0041, priceChange5m: +2.3, priceChange1h: +18.5, priceChange24h: +142.5,
@@ -453,7 +453,7 @@ const TOKEN_DB: Record<string, TokenMetrics> = {
 };
 
 // US stock perps (separate pricing model)
-const PERP_DB: Record<string, TokenMetrics> = {
+export const PERP_DB: Record<string, TokenMetrics> = {
   'TSLA': {
     symbol: 'TSLA-PERP', name: 'Tesla Perpetual', chain: 'perps',
     price: 430.20, priceChange5m: +0.12, priceChange1h: +0.8, priceChange24h: +3.8,
@@ -1088,4 +1088,4 @@ export function formatPrice(n: number): string {
   return `$${n.toExponential(2)}`;
 }
 
-export { MEME_TOKENS, PERP_TOKENS, TOKEN_DB, PERP_DB, fmt, CONTRACT_DB, screenTokenMetrics };
+export { MEME_TOKENS, PERP_TOKENS, fmt, CONTRACT_DB, screenTokenMetrics };

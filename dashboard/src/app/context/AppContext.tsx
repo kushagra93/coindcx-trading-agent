@@ -1,27 +1,12 @@
 import { createContext, useContext, useState, type ReactNode } from 'react';
 
-interface Portfolio {
-  totalValue: number;
-  todayPnl: number;
-  todayPnlPct: number;
-  activeStrategies: number;
-}
-
 interface AppState {
   agentStatus: 'running' | 'stopped' | 'setting_up';
-  portfolio: Portfolio;
   isOnboarded: boolean;
   setOnboarded: (v: boolean) => void;
   setAgentStatus: (s: 'running' | 'stopped' | 'setting_up') => void;
   toggleAgent: () => void;
 }
-
-const defaultPortfolio: Portfolio = {
-  totalValue: 9500,
-  todayPnl: 652.22,
-  todayPnlPct: 6.87,
-  activeStrategies: 3,
-};
 
 const AppContext = createContext<AppState | null>(null);
 
@@ -47,7 +32,6 @@ export function AppProvider({ children }: { children: ReactNode }) {
     <AppContext.Provider
       value={{
         agentStatus,
-        portfolio: defaultPortfolio,
         isOnboarded,
         setOnboarded,
         setAgentStatus,

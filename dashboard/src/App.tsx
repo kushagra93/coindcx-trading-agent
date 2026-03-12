@@ -1,5 +1,6 @@
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { Layout } from './components/Layout';
+import { TradingDataProvider } from './app/context/TradingDataContext';
 import { DashboardPage } from './pages/DashboardPage';
 import { PositionsPage } from './pages/PositionsPage';
 import { StrategiesPage } from './pages/StrategiesPage';
@@ -23,30 +24,32 @@ function ProtectedRoute({ children }: { children: React.ReactNode }) {
 
 export default function App() {
   return (
-    <BrowserRouter>
-      <Routes>
-        <Route path="/login" element={<LoginPage />} />
-        <Route path="/app/*" element={<AppRoutes />} />
-        <Route path="/" element={<Navigate to="/app/home" replace />} />
-        <Route
-          element={
-            <ProtectedRoute>
-              <Layout />
-            </ProtectedRoute>
-          }
-        >
-          <Route path="/dashboard" element={<DashboardPage />} />
-          <Route path="/positions" element={<PositionsPage />} />
-          <Route path="/strategies" element={<StrategiesPage />} />
-          <Route path="/leaderboard" element={<LeaderboardPage />} />
-          <Route path="/wallet" element={<WalletPage />} />
-          <Route path="/risk" element={<RiskPage />} />
-          <Route path="/ai-chat" element={<AIChatPage />} />
-          <Route path="/notifications" element={<NotificationsPage />} />
-          <Route path="/admin" element={<AdminPage />} />
-          <Route path="/supervisor" element={<SupervisorPage />} />
-        </Route>
-      </Routes>
-    </BrowserRouter>
+    <TradingDataProvider>
+      <BrowserRouter>
+        <Routes>
+          <Route path="/login" element={<LoginPage />} />
+          <Route path="/app/*" element={<AppRoutes />} />
+          <Route path="/" element={<Navigate to="/app/home" replace />} />
+          <Route
+            element={
+              <ProtectedRoute>
+                <Layout />
+              </ProtectedRoute>
+            }
+          >
+            <Route path="/dashboard" element={<DashboardPage />} />
+            <Route path="/positions" element={<PositionsPage />} />
+            <Route path="/strategies" element={<StrategiesPage />} />
+            <Route path="/leaderboard" element={<LeaderboardPage />} />
+            <Route path="/wallet" element={<WalletPage />} />
+            <Route path="/risk" element={<RiskPage />} />
+            <Route path="/ai-chat" element={<AIChatPage />} />
+            <Route path="/notifications" element={<NotificationsPage />} />
+            <Route path="/admin" element={<AdminPage />} />
+            <Route path="/supervisor" element={<SupervisorPage />} />
+          </Route>
+        </Routes>
+      </BrowserRouter>
+    </TradingDataProvider>
   );
 }
