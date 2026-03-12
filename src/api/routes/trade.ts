@@ -113,10 +113,22 @@ export async function tradeRoutes(app: FastifyInstance) {
     const totalInvested = trades.filter(t => t.side === 'buy').reduce((s, t) => s + t.amountUsd, 0);
     const totalSold = trades.filter(t => t.side === 'sell').reduce((s, t) => s + t.amountUsd, 0);
 
+    // Map trades to positions format the Flutter app expects
+    const positionsList = trades.map(t => ({
+      id: t.id,
+      symbol: t.symbol,
+      side: t.side,
+      amount: t.quantity,
+      price: t.price,
+      status: t.status,
+      chain: t.chain,
+    }));
+
     return {
       totalTrades: trades.length,
       totalInvested,
       totalSold,
+      positions: positionsList,
       trades: trades.slice(0, 50),
     };
   });

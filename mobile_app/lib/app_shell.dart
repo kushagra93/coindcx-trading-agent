@@ -1,17 +1,19 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'core/theme/app_theme.dart';
+import 'core/providers/api_providers.dart';
 import 'features/discovery/presentation/discovery_screen.dart';
 import 'features/chat/presentation/chat_screen.dart';
 import 'features/portfolio/presentation/portfolio_screen.dart';
 
-class AppShell extends StatefulWidget {
+class AppShell extends ConsumerStatefulWidget {
   const AppShell({super.key});
 
   @override
-  State<AppShell> createState() => _AppShellState();
+  ConsumerState<AppShell> createState() => _AppShellState();
 }
 
-class _AppShellState extends State<AppShell> {
+class _AppShellState extends ConsumerState<AppShell> {
   int _currentIndex = 0;
 
   final _screens = const [
@@ -19,6 +21,13 @@ class _AppShellState extends State<AppShell> {
     ChatScreen(),
     PortfolioScreen(),
   ];
+
+  void _onTabTap(int i) {
+    setState(() => _currentIndex = i);
+    if (i == 2) {
+      ref.invalidate(portfolioProvider);
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -35,7 +44,7 @@ class _AppShellState extends State<AppShell> {
         ),
         child: BottomNavigationBar(
           currentIndex: _currentIndex,
-          onTap: (i) => setState(() => _currentIndex = i),
+          onTap: _onTabTap,
           items: const [
             BottomNavigationBarItem(
               icon: Icon(Icons.explore_rounded),

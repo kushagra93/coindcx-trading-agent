@@ -16,6 +16,7 @@ const log = createChildLogger('chat');
 
 type Intent =
   | 'buy' | 'sell' | 'long' | 'short'
+  | 'confirm_buy' | 'confirm_sell'
   | 'screen' | 'analyze'
   | 'snipe' | 'dca'
   | 'positions' | 'pnl' | 'portfolio'
@@ -29,6 +30,8 @@ const EVM_ADDR = /\b0x[a-fA-F0-9]{40}\b/;
 
 function detectIntent(text: string): Intent {
   const t = text.toLowerCase();
+  if (t.includes('confirm buy') || t.includes('confirm purchase') || (t.includes('confirm') && t.includes('buy'))) return 'confirm_buy';
+  if (t.includes('confirm sell')) return 'confirm_sell';
   if (t.includes('screen') || t.includes('safe') || t.includes('rug') || t.includes('check')) return 'screen';
   if (t.includes('price') || t.match(/\b(how much|what.*(cost|worth))\b/)) return 'price';
   if (t.includes('snipe') || t.includes('new token') || t.includes('launch')) return 'snipe';
@@ -279,6 +282,46 @@ async function handleBuy(token: string, userMsg: string, history: LLMMessage[]):
   };
 }
 
+async function handleConfirmBuy(token: string, userMsg: string, history: LLMMessage[]): Promise<ChatResponse> {
+  const amount = extractAmount(userMsg);
+  const metrics = await getTokenBySymbol(token);
+  if (!metrics) {
+    return { text: `Token "${token}" not found.`, intent: 'confirm_buy', cards: [], suggestions: ['trending'] };
+  }
+
+  // Execute the trade via the trade endpoint logic (in-process)
+  try {
+    const tradeRes = await fetch(`http://localhost:${process.env.PORT ?? 3000}/api/v1/trade/execute`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ symbol: token, side: 'buy', amountUsd: amount }),
+    });
+    const tradeData = await tradeRes.json() as any;
+
+    if (!tradeRes.ok) {
+      return {
+        text: `Trade failed: ${tradeData.error ?? 'Unknown error'}`,
+        intent: 'confirm_buy', cards: [], suggestions: ['trending', `screen ${token}`],
+      };
+    }
+
+    const context = `Trade EXECUTED successfully.\nBought $${amount} of ${token} at ${formatPrice(metrics.price)} on ${metrics.chain}.\nTrade ID: ${tradeData.trade?.id}\nStatus: ${tradeData.trade?.status}\nQuantity: ${tradeData.trade?.quantity?.toFixed(6)} ${token}`;
+    const text = await generateLLMResponse(userMsg, context, history);
+
+    return {
+      text, intent: 'confirm_buy',
+      cards: [{ type: 'trade_executed', data: tradeData.trade } as any],
+      suggestions: ['portfolio', `screen ${token}`, 'trending'],
+      token,
+    };
+  } catch (err) {
+    return {
+      text: `Could not execute trade. Backend might be unavailable.`,
+      intent: 'confirm_buy', cards: [], suggestions: ['trending'],
+    };
+  }
+}
+
 async function handleTrending(userMsg: string, history: LLMMessage[]): Promise<ChatResponse> {
   const tokens = await fetchTrending();
   if (tokens.length === 0) {
@@ -340,6 +383,12 @@ export async function processChat(message: string, conversationId?: string): Pro
     resp = await handleScreenAddress(contractAddress, message, history);
   } else {
     switch (intent) {
+      case 'confirm_buy':
+      case 'confirm_sell':
+        resp = token
+          ? await handleConfirmBuy(token, message, history)
+          : { text: 'Which token? Try "confirm buy SOL $200".', intent: 'confirm_buy', cards: [], suggestions: ['buy SOL $200'] };
+        break;
       case 'screen':
         resp = token
           ? await handleScreen(token, message, history)

@@ -176,6 +176,8 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
         return _buildTokenPriceCard(card.data, colors);
       case 'trade_preview':
         return _buildTradePreviewCard(card.data, colors);
+      case 'trade_executed':
+        return _buildTradeExecutedCard(card.data, colors);
       default:
         return const SizedBox.shrink();
     }
@@ -391,6 +393,66 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
           const SizedBox(height: CoinDCXSpacing.xs),
           _kvRow('Token', symbol, colors),
           _kvRow('Amount', '\$${amount.toStringAsFixed(2)}', colors),
+          _kvRow('Price', _formatPrice(price), colors),
+          _kvRow('Chain', chain, colors),
+          const SizedBox(height: CoinDCXSpacing.sm),
+          SizedBox(
+            width: double.infinity,
+            child: ElevatedButton(
+              onPressed: () {
+                _controller.text = 'confirm buy $symbol \$${amount.toStringAsFixed(0)}';
+                _sendMessage();
+              },
+              style: ElevatedButton.styleFrom(
+                backgroundColor: colors.positiveBackgroundPrimary,
+                minimumSize: const Size(double.infinity, 40),
+              ),
+              child: Text('Confirm Buy', style: CoinDCXTypography.buttonMd.copyWith(color: Colors.white)),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildTradeExecutedCard(Map<String, dynamic> data, CoinDCXColorScheme colors) {
+    final symbol = data['symbol'] as String? ?? '';
+    final quantity = (data['quantity'] as num?)?.toDouble() ?? 0;
+    final price = (data['price'] as num?)?.toDouble() ?? 0;
+    final status = data['status'] as String? ?? '';
+    final chain = data['chain'] as String? ?? '';
+
+    return Container(
+      width: double.infinity,
+      margin: const EdgeInsets.only(top: CoinDCXSpacing.xs),
+      padding: const EdgeInsets.all(CoinDCXSpacing.sm),
+      decoration: BoxDecoration(
+        color: colors.positiveBackgroundSecondary,
+        borderRadius: BorderRadius.circular(CoinDCXSpacing.radiusSm),
+        border: Border.all(color: colors.positiveBackgroundPrimary.withValues(alpha: 0.3)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Icon(Icons.check_circle_rounded, size: 16, color: colors.positiveBackgroundPrimary),
+              const SizedBox(width: CoinDCXSpacing.xxs),
+              Text('Trade Executed', style: CoinDCXTypography.buttonSm.copyWith(color: colors.positiveBackgroundPrimary)),
+              const Spacer(),
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: CoinDCXSpacing.xs, vertical: 2),
+                decoration: BoxDecoration(
+                  color: colors.positiveBackgroundPrimary.withValues(alpha: 0.15),
+                  borderRadius: BorderRadius.circular(CoinDCXSpacing.radiusFull),
+                ),
+                child: Text(status.toUpperCase(), style: CoinDCXTypography.caption.copyWith(color: colors.positiveBackgroundPrimary, fontSize: 9)),
+              ),
+            ],
+          ),
+          const SizedBox(height: CoinDCXSpacing.xs),
+          _kvRow('Token', symbol, colors),
+          _kvRow('Quantity', quantity.toStringAsFixed(6), colors),
           _kvRow('Price', _formatPrice(price), colors),
           _kvRow('Chain', chain, colors),
         ],
