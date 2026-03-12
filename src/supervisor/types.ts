@@ -1,4 +1,5 @@
 import type { Chain, StrategyType, StrategyConfig, RiskSettings, RiskLevel } from '../core/types.js';
+import type { AgentTier, Jurisdiction } from '../security/types.js';
 
 // ===== Agent Lifecycle =====
 
@@ -8,7 +9,9 @@ export type AgentLifecycleState =
   | 'paused'
   | 'stopped'
   | 'error'
-  | 'destroying';
+  | 'destroying'
+  | 'hibernating'
+  | 'archived';
 
 // ===== Supervisor → Agent Commands =====
 
@@ -22,7 +25,13 @@ export type SupervisorCommandType =
   | 'update-risk'
   | 'force-close-positions'
   | 'strategy-update'
-  | 'heartbeat-request';
+  | 'heartbeat-request'
+  | 'approve-trade'
+  | 'reject-trade'
+  | 'hibernate'
+  | 'wake'
+  | 'rotate-keys'
+  | 'compliance-check';
 
 export interface SupervisorCommand {
   id: string;
@@ -48,7 +57,14 @@ export type AgentEventType =
   | 'circuit-breaker-tripped'
   | 'config-updated'
   | 'command-ack'
-  | 'command-rejected';
+  | 'command-rejected'
+  | 'trade-approved'
+  | 'trade-rejected'
+  | 'fee-recorded'
+  | 'compliance-passed'
+  | 'compliance-failed'
+  | 'agent-hibernated'
+  | 'agent-woken';
 
 export interface AgentEvent {
   id: string;
@@ -57,6 +73,7 @@ export interface AgentEvent {
   userId: string;
   payload: Record<string, unknown>;
   timestamp: number;
+  corr_id?: string;
 }
 
 // ===== Heartbeat =====
@@ -134,6 +151,18 @@ export interface ManagedAgent {
   lastHeartbeat: number | null;
   lastCommandId: string | null;
   metrics: AgentMetrics;
+  /** Agent tier in the multi-tier hierarchy */
+  tier?: AgentTier;
+  /** Jurisdiction for broker agents */
+  jurisdiction?: Jurisdiction;
+  /** Trust chain certificate ID */
+  certificateId?: string;
+  /** Hibernation state tracking */
+  hibernationState?: 'active' | 'idle' | 'on-demand' | 'deep-archive';
+  /** Last activity timestamp (for hibernation sweep) */
+  lastActiveAt?: number;
+  /** Parent agent ID in the hierarchy */
+  parentAgentId?: string;
 }
 
 // ===== Aggregate Stats =====
@@ -166,11 +195,20 @@ export const REDIS_STREAMS = {
   SUPERVISOR_COMMANDS: 'stream:supervisor:commands',
   AGENT_EVENTS: 'stream:agent:events',
   AGENT_HEARTBEATS: 'stream:agent:heartbeats',
+  TRADE_APPROVALS: 'stream:master:approvals',
+  MARKET_DATA: 'stream:market:data',
+  FEE_LEDGER: 'stream:master:fees',
+  COMPLIANCE_RESULTS: 'stream:compliance:results',
   agentCommands: (id: string) => `stream:agent:${id}:commands`,
+  brokerCommands: (jurisdiction: string) => `stream:broker:${jurisdiction}:commands`,
+  helperTasks: (type: string) => `stream:helper:${type}:tasks`,
+  helperResults: (type: string) => `stream:helper:${type}:results`,
 } as const;
 
 export const REDIS_CHANNELS = {
   EMERGENCY: 'channel:emergency',
   POLICY_UPDATE: 'channel:policy:update',
   STRATEGY_UPDATE: 'channel:strategy:update',
+  MARKET_TICK: 'channel:market:tick',
+  TRADE_SIGNAL: 'channel:trade:signal',
 } as const;

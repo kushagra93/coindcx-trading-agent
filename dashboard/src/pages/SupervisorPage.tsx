@@ -1,7 +1,8 @@
 import { useState } from 'react';
 import {
   Eye, Users, Play, Pause, Square, Trash2, AlertTriangle, Shield,
-  Activity, Zap, Settings, FileText, ChevronDown,
+  Activity, Zap, Settings, FileText, ChevronDown, Globe, GitBranch,
+  Cpu, Moon, Lock, ArrowRightLeft,
 } from 'lucide-react';
 import { Badge } from '../components/Badge';
 
@@ -78,7 +79,7 @@ const stateColor: Record<AgentState, 'green' | 'yellow' | 'gray' | 'red' | 'blue
 
 // ─── Component ───────────────────────────────────────────────
 
-type Tab = 'agents' | 'policies' | 'events' | 'audit';
+type Tab = 'agents' | 'brokers' | 'policies' | 'events' | 'lifecycle' | 'helpers' | 'hibernation' | 'security' | 'audit';
 
 export function SupervisorPage() {
   const [tab, setTab] = useState<Tab>('agents');
@@ -219,21 +220,26 @@ export function SupervisorPage() {
       </div>
 
       {/* Tabs */}
-      <div style={{ display: 'flex', gap: 4, marginBottom: 16, borderBottom: '1px solid #1e293b', paddingBottom: 1 }}>
+      <div style={{ display: 'flex', gap: 2, marginBottom: 16, borderBottom: '1px solid #1e293b', paddingBottom: 1, flexWrap: 'wrap' }}>
         {([
           { key: 'agents' as Tab, label: 'Agents', icon: Users },
+          { key: 'brokers' as Tab, label: 'Brokers', icon: Globe },
           { key: 'policies' as Tab, label: 'Policies', icon: Shield },
           { key: 'events' as Tab, label: 'Events', icon: Zap },
+          { key: 'lifecycle' as Tab, label: 'Trade Lifecycle', icon: GitBranch },
+          { key: 'helpers' as Tab, label: 'Helpers', icon: Cpu },
+          { key: 'hibernation' as Tab, label: 'Hibernation', icon: Moon },
+          { key: 'security' as Tab, label: 'Security', icon: Lock },
           { key: 'audit' as Tab, label: 'Audit Log', icon: FileText },
         ]).map(t => (
           <button key={t.key} onClick={() => setTab(t.key)} style={{
-            display: 'flex', alignItems: 'center', gap: 6,
-            padding: '8px 16px', border: 'none', borderRadius: '6px 6px 0 0',
-            fontSize: 13, fontWeight: tab === t.key ? 600 : 400, cursor: 'pointer',
+            display: 'flex', alignItems: 'center', gap: 5,
+            padding: '8px 12px', border: 'none', borderRadius: '6px 6px 0 0',
+            fontSize: 12, fontWeight: tab === t.key ? 600 : 400, cursor: 'pointer',
             background: tab === t.key ? '#1e293b' : 'transparent',
             color: tab === t.key ? '#f1f5f9' : '#64748b',
           }}>
-            <t.icon size={14} />{t.label}
+            <t.icon size={13} />{t.label}
           </button>
         ))}
       </div>
@@ -420,6 +426,217 @@ export function SupervisorPage() {
               <span style={{ fontSize: 11, color: '#475569', whiteSpace: 'nowrap' }}>{ago(e.timestamp)}</span>
             </div>
           ))}
+        </div>
+      )}
+
+      {/* ══════ BROKERS TAB ══════ */}
+      {tab === 'brokers' && (
+        <div>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 12, marginBottom: 20 }}>
+            {[
+              { jurisdiction: 'US', status: 'active', agents: 4_200, compliance: 'SEC/CFTC', restricted: ['Securities tokens', 'Unlicensed derivatives'], maxLeverage: 5 },
+              { jurisdiction: 'EU', status: 'active', agents: 3_800, compliance: 'MiFID II/ESMA', restricted: ['Binary options', 'High-risk CFDs'], maxLeverage: 2 },
+              { jurisdiction: 'APAC', status: 'active', agents: 5_100, compliance: 'MAS/FSA', restricted: ['Privacy coins', 'Unlicensed stablecoins'], maxLeverage: 10 },
+            ].map(b => (
+              <div key={b.jurisdiction} style={{
+                background: '#111827', borderRadius: 10, padding: 16,
+                border: '1px solid #1e293b',
+              }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                    <Globe size={18} color="#3b82f6" />
+                    <span style={{ fontSize: 16, fontWeight: 700 }}>{b.jurisdiction}</span>
+                  </div>
+                  <Badge color="green">{b.status}</Badge>
+                </div>
+                <div style={{ fontSize: 12, color: '#94a3b8', marginBottom: 8 }}>
+                  <div>Compliance: <span style={{ color: '#f1f5f9' }}>{b.compliance}</span></div>
+                  <div>Max Leverage: <span style={{ color: '#f1f5f9' }}>{b.maxLeverage}x</span></div>
+                  <div>User Agents: <span style={{ color: '#f1f5f9' }}>{b.agents.toLocaleString()}</span></div>
+                </div>
+                <div style={{ fontSize: 11, color: '#64748b' }}>
+                  Restricted: {b.restricted.map(r => (
+                    <Badge key={r} color="red" style={{ marginRight: 4, marginTop: 4 }}>{r}</Badge>
+                  ))}
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* ══════ TRADE LIFECYCLE TAB ══════ */}
+      {tab === 'lifecycle' && (
+        <div>
+          <div style={{ background: '#111827', borderRadius: 10, padding: 20, border: '1px solid #1e293b', marginBottom: 16 }}>
+            <h3 style={{ fontSize: 15, fontWeight: 700, marginTop: 0, marginBottom: 16 }}>11-Step Trade Lifecycle Pipeline</h3>
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, alignItems: 'center' }}>
+              {[
+                { state: 'SIGNAL_GENERATED', color: '#3b82f6' },
+                { state: 'RISK_ASSESSED', color: '#8b5cf6' },
+                { state: 'COMPLIANCE_CHECKED', color: '#6366f1' },
+                { state: 'APPROVAL_REQUESTED', color: '#eab308' },
+                { state: 'APPROVED', color: '#22c55e' },
+                { state: 'FEE_RESERVED', color: '#f97316' },
+                { state: 'ORDER_SUBMITTED', color: '#3b82f6' },
+                { state: 'ORDER_CONFIRMED', color: '#22c55e' },
+                { state: 'FEE_SETTLED', color: '#f97316' },
+                { state: 'FEE_LEDGER_RECORDED', color: '#8b5cf6' },
+                { state: 'NOTIFICATION_SENT', color: '#06b6d4' },
+                { state: 'POSITION_UPDATED', color: '#22c55e' },
+              ].map((s, i) => (
+                <div key={s.state} style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                  <div style={{
+                    padding: '4px 10px', borderRadius: 6, fontSize: 10, fontWeight: 600,
+                    background: `${s.color}20`, color: s.color, fontFamily: 'monospace',
+                    whiteSpace: 'nowrap',
+                  }}>{s.state}</div>
+                  {i < 11 && <ArrowRightLeft size={12} color="#475569" />}
+                </div>
+              ))}
+            </div>
+            <div style={{ marginTop: 16, display: 'flex', gap: 12 }}>
+              <div style={{ fontSize: 11, color: '#64748b' }}>Rejection States:</div>
+              {['RISK_REJECTED', 'COMPLIANCE_REJECTED', 'APPROVAL_REJECTED'].map(s => (
+                <div key={s} style={{
+                  padding: '2px 8px', borderRadius: 4, fontSize: 10, fontWeight: 600,
+                  background: 'rgba(239,68,68,0.15)', color: '#ef4444', fontFamily: 'monospace',
+                }}>{s}</div>
+              ))}
+            </div>
+          </div>
+          <div style={{ fontSize: 12, color: '#94a3b8' }}>
+            Each trade follows the full lifecycle pipeline. Atomic rule: fee + trade always succeed or fail together.
+          </div>
+        </div>
+      )}
+
+      {/* ══════ HELPERS TAB ══════ */}
+      {tab === 'helpers' && (
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 12 }}>
+          {[
+            { type: 'Market Data', status: 'running', queue: 0, processed: 14_892, icon: Activity, color: '#22c55e' },
+            { type: 'Risk Analyzer', status: 'running', queue: 3, processed: 8_741, icon: Shield, color: '#8b5cf6' },
+            { type: 'Strategy Executor', status: 'running', queue: 1, processed: 5_234, icon: Zap, color: '#3b82f6' },
+            { type: 'Chat/NLP', status: 'running', queue: 0, processed: 1_892, icon: FileText, color: '#06b6d4' },
+            { type: 'Backtesting', status: 'idle', queue: 0, processed: 342, icon: GitBranch, color: '#eab308' },
+            { type: 'Notification', status: 'running', queue: 2, processed: 6_123, icon: Activity, color: '#f97316' },
+          ].map(h => (
+            <div key={h.type} style={{
+              background: '#111827', borderRadius: 10, padding: 16,
+              border: '1px solid #1e293b',
+            }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                  <h.icon size={16} color={h.color} />
+                  <span style={{ fontSize: 13, fontWeight: 600 }}>{h.type}</span>
+                </div>
+                <Badge color={h.status === 'running' ? 'green' : 'yellow'}>{h.status}</Badge>
+              </div>
+              <div style={{ fontSize: 12, color: '#94a3b8' }}>
+                <div>Queue: <span style={{ color: h.queue > 0 ? '#eab308' : '#22c55e', fontWeight: 600 }}>{h.queue}</span></div>
+                <div>Processed: <span style={{ color: '#f1f5f9' }}>{h.processed.toLocaleString()}</span></div>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {/* ══════ HIBERNATION TAB ══════ */}
+      {tab === 'hibernation' && (
+        <div>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 12, marginBottom: 20 }}>
+            {[
+              { state: 'Active', count: 612, pct: 5, color: '#22c55e', desc: 'Currently trading' },
+              { state: 'Idle', count: 10_980, pct: 90, color: '#eab308', desc: '30min no activity' },
+              { state: 'On-Demand', count: 489, pct: 4, color: '#3b82f6', desc: 'Serialized to Redis (<100ms wake)' },
+              { state: 'Deep Archive', count: 119, pct: 1, color: '#64748b', desc: 'Archived to PostgreSQL (~500ms wake)' },
+            ].map(s => (
+              <div key={s.state} style={{
+                background: '#111827', borderRadius: 10, padding: 16,
+                border: '1px solid #1e293b',
+              }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 8 }}>
+                  <Moon size={14} color={s.color} />
+                  <span style={{ fontSize: 11, color: '#64748b', textTransform: 'uppercase' }}>{s.state}</span>
+                </div>
+                <div style={{ fontSize: 24, fontWeight: 700, color: '#f1f5f9' }}>{s.count.toLocaleString()}</div>
+                <div style={{ fontSize: 11, color: s.color, fontWeight: 600 }}>{s.pct}%</div>
+                <div style={{ fontSize: 11, color: '#475569', marginTop: 4 }}>{s.desc}</div>
+              </div>
+            ))}
+          </div>
+          <div style={{ background: '#111827', borderRadius: 10, padding: 16, border: '1px solid #1e293b' }}>
+            <h4 style={{ fontSize: 13, fontWeight: 600, marginTop: 0 }}>Hibernation Thresholds</h4>
+            <div style={{ fontSize: 12, color: '#94a3b8', display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
+              <div>Idle threshold: <span style={{ color: '#f1f5f9' }}>30 minutes</span></div>
+              <div>On-demand threshold: <span style={{ color: '#f1f5f9' }}>2 hours</span></div>
+              <div>Archive threshold: <span style={{ color: '#f1f5f9' }}>24 hours</span></div>
+              <div>Sweep interval: <span style={{ color: '#f1f5f9' }}>5 minutes</span></div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ══════ SECURITY TAB ══════ */}
+      {tab === 'security' && (
+        <div>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: 12, marginBottom: 16 }}>
+            <div style={{ background: '#111827', borderRadius: 10, padding: 16, border: '1px solid #1e293b' }}>
+              <h4 style={{ fontSize: 13, fontWeight: 600, marginTop: 0, display: 'flex', alignItems: 'center', gap: 6 }}>
+                <Lock size={14} color="#22c55e" /> Trust Chain (ECDSA P-256)
+              </h4>
+              <div style={{ fontSize: 12, color: '#94a3b8' }}>
+                <div style={{ marginBottom: 8 }}>
+                  <Badge color="green" style={{ marginRight: 4 }}>Root CA</Badge>
+                  <span style={{ fontFamily: 'monospace', fontSize: 11 }}>master-agent-root</span>
+                </div>
+                <div style={{ paddingLeft: 20, borderLeft: '2px solid #1e293b', marginBottom: 4 }}>
+                  <Badge color="blue" style={{ marginRight: 4 }}>Broker</Badge> broker-US (SEC/CFTC)
+                </div>
+                <div style={{ paddingLeft: 20, borderLeft: '2px solid #1e293b', marginBottom: 4 }}>
+                  <Badge color="blue" style={{ marginRight: 4 }}>Broker</Badge> broker-EU (MiFID II)
+                </div>
+                <div style={{ paddingLeft: 20, borderLeft: '2px solid #1e293b', marginBottom: 4 }}>
+                  <Badge color="blue" style={{ marginRight: 4 }}>Broker</Badge> broker-APAC (MAS)
+                </div>
+                <div style={{ paddingLeft: 40, borderLeft: '2px solid #1e293b', fontSize: 11, color: '#475569' }}>
+                  User agents issued per-broker certificates
+                </div>
+              </div>
+            </div>
+            <div style={{ background: '#111827', borderRadius: 10, padding: 16, border: '1px solid #1e293b' }}>
+              <h4 style={{ fontSize: 13, fontWeight: 600, marginTop: 0, display: 'flex', alignItems: 'center', gap: 6 }}>
+                <Shield size={14} color="#8b5cf6" /> Security Layers
+              </h4>
+              <div style={{ fontSize: 12, color: '#94a3b8' }}>
+                {[
+                  { layer: 'Network Isolation', desc: 'VPC + security groups', status: 'active' },
+                  { layer: 'Message Signing', desc: 'HMAC-SHA256 (30s expiry)', status: 'active' },
+                  { layer: 'Certificate Chain', desc: 'ECDSA P-256 hierarchy', status: 'active' },
+                  { layer: 'User Namespace', desc: 'Per-user encrypted isolation', status: 'active' },
+                  { layer: 'Dual-Sig Custody', desc: 'User+Broker for withdrawals', status: 'active' },
+                  { layer: 'Immutable Audit', desc: 'SHA-256 hash-chained log', status: 'active' },
+                ].map((l, i) => (
+                  <div key={i} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '4px 0' }}>
+                    <div>
+                      <span style={{ color: '#f1f5f9', fontWeight: 500 }}>{l.layer}</span>
+                      <span style={{ color: '#475569', marginLeft: 8, fontSize: 11 }}>{l.desc}</span>
+                    </div>
+                    <Badge color="green">{l.status}</Badge>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </div>
+          <div style={{ background: '#111827', borderRadius: 10, padding: 16, border: '1px solid #1e293b' }}>
+            <h4 style={{ fontSize: 13, fontWeight: 600, marginTop: 0 }}>Approval Tokens</h4>
+            <div style={{ fontSize: 12, color: '#94a3b8', display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 12 }}>
+              <div>Token expiry: <span style={{ color: '#f1f5f9' }}>30 seconds</span></div>
+              <div>Nonce window: <span style={{ color: '#f1f5f9' }}>60 seconds</span></div>
+              <div>One-time use: <span style={{ color: '#22c55e', fontWeight: 600 }}>Enforced (atomic CAS)</span></div>
+            </div>
+          </div>
         </div>
       )}
 

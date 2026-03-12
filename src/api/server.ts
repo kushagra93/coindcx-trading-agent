@@ -10,10 +10,12 @@ import { controlRoutes } from './routes/control.js';
 import { leaderboardRoutes } from './routes/leaderboard.js';
 import { adminRoutes } from './routes/admin.js';
 import { supervisorRoutes } from './routes/supervisor.js';
+import { brokerRoutes } from './routes/broker.js';
+import { gatewayRoutes } from './routes/gateway.js';
 
 const log = createChildLogger('api-server');
 
-const VALID_TIERS = new Set(['admin', 'ops', 'user']);
+const VALID_TIERS = new Set(['admin', 'broker', 'ops', 'user']);
 const MAX_TOKEN_LENGTH = 4096;
 const VALID_CHAINS = new Set(['solana', 'ethereum', 'polygon', 'base', 'arbitrum', 'hyperliquid']);
 
@@ -85,6 +87,8 @@ export async function createServer() {
   await app.register(leaderboardRoutes);
   await app.register(adminRoutes);
   await app.register(supervisorRoutes);
+  await app.register(brokerRoutes);
+  await app.register(gatewayRoutes);
 
   // Wallet routes
   app.get<{ Params: { chain: string } }>('/api/v1/wallet/address/:chain', async (request, reply) => {

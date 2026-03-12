@@ -21,24 +21,38 @@ const PERMISSIONS: Record<string, PermissionTier[]> = {
   'ops.view-trade-logs': ['admin', 'ops'],
   'ops.reset-circuit-breaker': ['admin', 'ops'],
 
-  // All tiers
-  'user.configure-strategy': ['admin', 'ops', 'user'],
-  'user.deposit': ['admin', 'ops', 'user'],
-  'user.withdraw': ['admin', 'ops', 'user'],
-  'user.start-agent': ['admin', 'ops', 'user'],
-  'user.stop-agent': ['admin', 'ops', 'user'],
-  'user.view-portfolio': ['admin', 'ops', 'user'],
-  'user.view-positions': ['admin', 'ops', 'user'],
-  'user.view-trades': ['admin', 'ops', 'user'],
-  'user.set-risk': ['admin', 'ops', 'user'],
+  // Broker tier — regional broker agents
+  'broker.approve-trade': ['admin', 'broker'],
+  'broker.compliance-check': ['admin', 'broker'],
+  'broker.manage-user-agents': ['admin', 'broker'],
+  'broker.aggregate-fees': ['admin', 'broker'],
+  'broker.position-limits': ['admin', 'broker'],
+  'broker.kyc-gate': ['admin', 'broker'],
+  'broker.view-managed-users': ['admin', 'broker'],
+  'broker.dual-sign-withdrawal': ['admin', 'broker'],
 
-  // Supervisor
+  // All tiers
+  'user.configure-strategy': ['admin', 'broker', 'ops', 'user'],
+  'user.deposit': ['admin', 'broker', 'ops', 'user'],
+  'user.withdraw': ['admin', 'broker', 'ops', 'user'],
+  'user.start-agent': ['admin', 'broker', 'ops', 'user'],
+  'user.stop-agent': ['admin', 'broker', 'ops', 'user'],
+  'user.view-portfolio': ['admin', 'broker', 'ops', 'user'],
+  'user.view-positions': ['admin', 'broker', 'ops', 'user'],
+  'user.view-trades': ['admin', 'broker', 'ops', 'user'],
+  'user.set-risk': ['admin', 'broker', 'ops', 'user'],
+
+  // Supervisor / Master Agent
   'supervisor.manage-agents': ['admin'],
   'supervisor.override-risk': ['admin'],
   'supervisor.manage-policies': ['admin'],
   'supervisor.view-monitoring': ['admin', 'ops'],
   'supervisor.emergency-halt': ['admin'],
   'supervisor.deploy-strategy': ['admin'],
+  'supervisor.issue-certificate': ['admin'],
+  'supervisor.revoke-certificate': ['admin'],
+  'supervisor.view-fee-ledger': ['admin', 'ops'],
+  'supervisor.generate-report': ['admin', 'ops'],
 };
 
 /**
@@ -81,8 +95,8 @@ export function assertPermission(context: AuthContext, action: string): void {
  * Check if an action targets the user's own resources, or requires cross-user access.
  */
 export function canAccessUser(context: AuthContext, targetUserId: string): boolean {
-  // Admin and ops can access any user
-  if (context.tier === 'admin' || context.tier === 'ops') return true;
+  // Admin, ops, and broker can access any user
+  if (context.tier === 'admin' || context.tier === 'ops' || context.tier === 'broker') return true;
 
   // Users can only access their own resources
   return context.userId === targetUserId;

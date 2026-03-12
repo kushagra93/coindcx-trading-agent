@@ -28,7 +28,7 @@ export interface User {
   updatedAt: Date;
 }
 
-export type PermissionTier = 'admin' | 'ops' | 'user';
+export type PermissionTier = 'admin' | 'broker' | 'ops' | 'user';
 
 export interface AuthContext {
   userId: string;
@@ -73,13 +73,24 @@ export interface TradeIntent {
 }
 
 export type TradeState =
+  // === Full 15-state trade lifecycle ===
   | 'SIGNAL_GENERATED'
+  | 'RISK_ASSESSED'
+  | 'RISK_REJECTED'             // terminal
+  | 'COMPLIANCE_CHECKED'
+  | 'COMPLIANCE_REJECTED'       // terminal
+  | 'APPROVAL_REQUESTED'
+  | 'APPROVED'
+  | 'APPROVAL_REJECTED'         // terminal
   | 'FEE_RESERVED'
   | 'ORDER_SUBMITTED'
   | 'ORDER_CONFIRMED'
   | 'ORDER_FAILED'
-  | 'FEE_REFUNDED'
-  | 'POSITION_UPDATED';
+  | 'FEE_SETTLED'
+  | 'FEE_REFUNDED'              // terminal (failure path)
+  | 'FEE_LEDGER_RECORDED'
+  | 'NOTIFICATION_SENT'
+  | 'POSITION_UPDATED';         // terminal (success path)
 
 export interface TradeRecord {
   id: string;
