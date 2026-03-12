@@ -177,5 +177,96 @@ export const api = {
     getStats: () => request<any>('/api/v1/supervisor/stats'),
     getEvents: (limit = 50, offset = 0) =>
       request<any>(`/api/v1/supervisor/events?limit=${limit}&offset=${offset}`),
+
+    // Trade Approvals (Multi-Tier)
+    requestApproval: (data: {
+      agentId: string; brokerId: string; asset: string;
+      side: 'buy' | 'sell'; amountUsd: number; chain: string;
+      riskScore: number; compliancePassed: boolean;
+    }) =>
+      request<any>('/api/v1/supervisor/approvals', {
+        method: 'POST',
+        body: JSON.stringify(data),
+      }),
+
+    // Fee Ledger (Multi-Tier)
+    getFeeSummary: (from?: string, to?: string) => {
+      const params = new URLSearchParams();
+      if (from) params.set('from', from);
+      if (to) params.set('to', to);
+      const qs = params.toString();
+      return request<any>(`/api/v1/supervisor/fees${qs ? `?${qs}` : ''}`);
+    },
+    recordFee: (data: {
+      tradeId: string; userId: string; agentId: string;
+      brokerId: string; feeAmountUsd: number; feeType: string; chain: string;
+    }) =>
+      request<any>('/api/v1/supervisor/fees', {
+        method: 'POST',
+        body: JSON.stringify(data),
+      }),
+
+    // Hibernation (Multi-Tier)
+    hibernateAgent: (agentId: string) =>
+      request<any>(`/api/v1/supervisor/agents/${agentId}/hibernate`, { method: 'POST' }),
+    wakeAgent: (agentId: string) =>
+      request<any>(`/api/v1/supervisor/agents/${agentId}/wake`, { method: 'POST' }),
+
+    // Risk Snapshot (Multi-Tier)
+    getRiskSnapshot: () => request<any>('/api/v1/supervisor/risk-snapshot'),
+
+    // Regulatory Reports (Multi-Tier)
+    getRegulatoryReport: (from: string, to: string) =>
+      request<any>(`/api/v1/supervisor/regulatory/report?from=${from}&to=${to}`),
+  },
+
+  // Brokers (Multi-Tier)
+  brokers: {
+    list: () => request<any>('/api/v1/brokers'),
+    register: (jurisdiction: string) =>
+      request<any>('/api/v1/brokers', {
+        method: 'POST',
+        body: JSON.stringify({ jurisdiction }),
+      }),
+    get: (brokerId: string) => request<any>(`/api/v1/brokers/${brokerId}`),
+    getAgents: (brokerId: string) => request<any>(`/api/v1/brokers/${brokerId}/agents`),
+    getCompliance: (brokerId: string) => request<any>(`/api/v1/brokers/${brokerId}/compliance`),
+    getFees: (brokerId: string, from?: string, to?: string) => {
+      const params = new URLSearchParams();
+      if (from) params.set('from', from);
+      if (to) params.set('to', to);
+      const qs = params.toString();
+      return request<any>(`/api/v1/brokers/${brokerId}/fees${qs ? `?${qs}` : ''}`);
+    },
+  },
+
+  // Gateway (Multi-Tier)
+  gateway: {
+    deposit: (data: {
+      user_id: string; amount: string; currency: string;
+      tx_id: string; kyc_verified: boolean; region: string;
+    }) =>
+      request<any>('/api/v1/gateway/deposit', {
+        method: 'POST',
+        body: JSON.stringify(data),
+      }),
+    withdraw: (data: {
+      userId: string; amount: string; token: string;
+      chain: string; toAddress: string;
+      userAgentSignature: string; brokerSignature: string;
+    }) =>
+      request<any>('/api/v1/gateway/withdraw', {
+        method: 'POST',
+        body: JSON.stringify(data),
+      }),
+    getTransactions: (filters?: { type?: string; status?: string; userId?: string; limit?: number }) => {
+      const params = new URLSearchParams();
+      if (filters?.type) params.set('type', filters.type);
+      if (filters?.status) params.set('status', filters.status);
+      if (filters?.userId) params.set('userId', filters.userId);
+      if (filters?.limit) params.set('limit', String(filters.limit));
+      const qs = params.toString();
+      return request<any>(`/api/v1/gateway/transactions${qs ? `?${qs}` : ''}`);
+    },
   },
 };

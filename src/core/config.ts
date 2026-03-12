@@ -13,7 +13,21 @@ function envOrDefault(key: string, defaultValue: string): string {
   return process.env[key] ?? defaultValue;
 }
 
-export type ServiceMode = 'api' | 'data-ingestion' | 'signal-worker' | 'executor' | 'supervisor';
+export type ServiceMode =
+  | 'api'
+  | 'data-ingestion'
+  | 'signal-worker'
+  | 'executor'
+  | 'supervisor'
+  // === Multi-tier agent modes ===
+  | 'master'
+  | 'broker'
+  | 'helper-chat'
+  | 'helper-executor'
+  | 'helper-risk'
+  | 'helper-backtest'
+  | 'helper-market'
+  | 'helper-notification';
 
 export interface AppConfig {
   serviceMode: ServiceMode;
@@ -94,6 +108,29 @@ export interface AppConfig {
     deadAgentTimeoutMs: number;
     maxAgentsPerUser: number;
     eventBatchSize: number;
+  };
+
+  broker: {
+    jurisdiction: string;
+    maxUsers: number;
+    positionLimitPerUser: number;
+    maxPositionSizePct: number;
+    maxLeverage: number;
+  };
+
+  security: {
+    masterKeyId: string;
+    messageExpiryMs: number;
+    nonceWindowMs: number;
+    approvalTokenExpiryMs: number;
+    certificateExpiryDays: number;
+  };
+
+  hibernation: {
+    idleThresholdMs: number;
+    onDemandThresholdMs: number;
+    archiveThresholdMs: number;
+    sweepIntervalMs: number;
   };
 }
 
@@ -177,6 +214,29 @@ export function loadConfig(): AppConfig {
       deadAgentTimeoutMs: parseInt(envOrDefault('SUPERVISOR_DEAD_AGENT_TIMEOUT_MS', '60000')),
       maxAgentsPerUser: parseInt(envOrDefault('SUPERVISOR_MAX_AGENTS_PER_USER', '5')),
       eventBatchSize: parseInt(envOrDefault('SUPERVISOR_EVENT_BATCH_SIZE', '100')),
+    },
+
+    broker: {
+      jurisdiction: envOrDefault('BROKER_JURISDICTION', 'GLOBAL'),
+      maxUsers: parseInt(envOrDefault('BROKER_MAX_USERS', '100000')),
+      positionLimitPerUser: parseInt(envOrDefault('BROKER_POSITION_LIMIT_PER_USER', '20')),
+      maxPositionSizePct: parseFloat(envOrDefault('BROKER_MAX_POSITION_SIZE_PCT', '25')),
+      maxLeverage: parseFloat(envOrDefault('BROKER_MAX_LEVERAGE', '10')),
+    },
+
+    security: {
+      masterKeyId: envOrDefault('SECURITY_MASTER_KEY_ID', ''),
+      messageExpiryMs: parseInt(envOrDefault('SECURITY_MESSAGE_EXPIRY_MS', '30000')),
+      nonceWindowMs: parseInt(envOrDefault('SECURITY_NONCE_WINDOW_MS', '60000')),
+      approvalTokenExpiryMs: parseInt(envOrDefault('SECURITY_APPROVAL_TOKEN_EXPIRY_MS', '30000')),
+      certificateExpiryDays: parseInt(envOrDefault('SECURITY_CERTIFICATE_EXPIRY_DAYS', '365')),
+    },
+
+    hibernation: {
+      idleThresholdMs: parseInt(envOrDefault('HIBERNATION_IDLE_THRESHOLD_MS', '1800000')),       // 30 min
+      onDemandThresholdMs: parseInt(envOrDefault('HIBERNATION_ON_DEMAND_THRESHOLD_MS', '7200000')), // 2 hours
+      archiveThresholdMs: parseInt(envOrDefault('HIBERNATION_ARCHIVE_THRESHOLD_MS', '86400000')),   // 24 hours
+      sweepIntervalMs: parseInt(envOrDefault('HIBERNATION_SWEEP_INTERVAL_MS', '300000')),          // 5 min
     },
   };
 }

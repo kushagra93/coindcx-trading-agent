@@ -1,5 +1,6 @@
 import { Routes, Route, Navigate } from 'react-router-dom';
 import { AppProvider, useApp } from './context/AppContext';
+import { TradingDataProvider } from './context/TradingDataContext';
 import { PhoneFrame } from './layouts/PhoneFrame';
 import { MobileLayout } from './layouts/MobileLayout';
 import { MainScreen } from './screens/MainScreen';
@@ -25,10 +26,12 @@ function AppInner() {
 
 export function AppRoutes() {
   return (
-    <AppProvider>
-      <PhoneFrame>
-        <AppInner />
-      </PhoneFrame>
-    </AppProvider>
+    <TradingDataProvider>
+      <AppProvider>
+        <PhoneFrame>
+          <AppInner />
+        </PhoneFrame>
+      </AppProvider>
+    </TradingDataProvider>
   );
 }

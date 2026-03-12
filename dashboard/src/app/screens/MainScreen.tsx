@@ -1,6 +1,7 @@
-import { useState, useRef, useEffect } from 'react';
+import { useState, useRef, useEffect, useMemo } from 'react';
 import { Send, Shield, TrendingUp, Zap, Users, Search, ChevronDown, ChevronUp, Copy, ClipboardPaste } from 'lucide-react';
 import { useApp } from '../context/AppContext';
+import { useTradingData } from '../context/TradingDataContext';
 import { MobileCard } from '../components/MobileCard';
 import { ChatBubble } from '../components/ChatBubble';
 import { TradeEventCard } from '../components/TradeEventCard';
@@ -10,96 +11,6 @@ import { processMessage, type ChatMessage } from '../services/chatEngine';
 // ─── Data ────────────────────────────────────────────────────────────
 
 type Tab = 'portfolio' | 'signals' | 'chat';
-
-const chains = ['All', 'Solana', 'Base', 'Ethereum', 'Arbitrum', 'Polygon', 'BSC', 'Optimism', 'Avalanche', 'Monad', 'Sui', 'Aptos', 'MegaETH'] as const;
-
-const holdings = [
-  { token: 'SOL', chain: 'Solana', balance: '24.5', usd: '$3,528', change: +5.2 },
-  { token: 'FARTCOIN', chain: 'Solana', balance: '450K', usd: '$1,845', change: +142.5 },
-  { token: 'POPCAT', chain: 'Solana', balance: '8,200', usd: '$2,132', change: +67.3 },
-  { token: 'WIF', chain: 'Solana', balance: '1,200', usd: '$960', change: +8.7 },
-  { token: 'BONK', chain: 'Solana', balance: '12.5M', usd: '$312', change: +18.4 },
-  { token: 'MYRO', chain: 'Solana', balance: '25K', usd: '$425', change: +34.8 },
-  { token: 'BRETT', chain: 'Base', balance: '5,000', usd: '$450', change: +12.3 },
-  { token: 'DEGEN', chain: 'Base', balance: '180K', usd: '$720', change: +28.5 },
-  { token: 'TOSHI', chain: 'Base', balance: '2.1M', usd: '$315', change: +19.2 },
-  { token: 'AERO', chain: 'Base', balance: '850', usd: '$1,020', change: -3.1 },
-  { token: 'ETH', chain: 'Ethereum', balance: '1.2', usd: '$3,840', change: +2.1 },
-  { token: 'PEPE', chain: 'Ethereum', balance: '80B', usd: '$720', change: -1.5 },
-  { token: 'MOG', chain: 'Ethereum', balance: '5.2B', usd: '$416', change: +22.1 },
-  { token: 'ARB', chain: 'Arbitrum', balance: '1,200', usd: '$1,416', change: +4.2 },
-  { token: 'GMX', chain: 'Arbitrum', balance: '15', usd: '$531', change: +6.8 },
-  { token: 'PENDLE', chain: 'Arbitrum', balance: '180', usd: '$873', change: +9.3 },
-  { token: 'POL', chain: 'Polygon', balance: '2,500', usd: '$1,450', change: +3.1 },
-  { token: 'AAVE', chain: 'Polygon', balance: '8', usd: '$740', change: +2.5 },
-  { token: 'BNB', chain: 'BSC', balance: '2.5', usd: '$1,525', change: +2.8 },
-  { token: 'CAKE', chain: 'BSC', balance: '400', usd: '$980', change: +5.4 },
-  { token: 'OP', chain: 'Optimism', balance: '550', usd: '$1,182', change: +5.8 },
-  { token: 'AVAX', chain: 'Avalanche', balance: '20', usd: '$770', change: +3.5 },
-  { token: 'MON', chain: 'Monad', balance: '850', usd: '$2,422', change: +15.2 },
-  { token: 'KURU', chain: 'Monad', balance: '1,200', usd: '$1,020', change: +22.5 },
-  { token: 'MOYAKI', chain: 'Monad', balance: '15K', usd: '$630', change: +65.3 },
-  { token: 'SUI', chain: 'Sui', balance: '1,500', usd: '$2,430', change: +7.8 },
-  { token: 'CETUS', chain: 'Sui', balance: '5,000', usd: '$900', change: +14.5 },
-  { token: 'NAVX', chain: 'Sui', balance: '3,200', usd: '$384', change: +11.2 },
-  { token: 'APT', chain: 'Aptos', balance: '200', usd: '$1,840', change: +4.8 },
-  { token: 'THALA', chain: 'Aptos', balance: '1,500', usd: '$780', change: +12.8 },
-  { token: 'MEGA', chain: 'MegaETH', balance: '2,800', usd: '$5,180', change: +32.4 },
-  { token: 'GTE', chain: 'MegaETH', balance: '12,000', usd: '$5,040', change: +18.7 },
-  { token: 'CRAB', chain: 'MegaETH', balance: '4.2M', usd: '$5,040', change: +245.3 },
-];
-
-const perpHoldings = [
-  { token: 'TSLA-PERP', side: 'Long', leverage: '3x', size: '$2,150', entry: '$430.20', pnl: '+$82', pnlPct: +3.8 },
-  { token: 'NVDA-PERP', side: 'Long', leverage: '2x', size: '$1,680', entry: '$140.10', pnl: '+$86', pnlPct: +5.1 },
-  { token: 'AAPL-PERP', side: 'Short', leverage: '2x', size: '$890', entry: '$178.50', pnl: '-$11', pnlPct: -1.2 },
-  { token: 'AMZN-PERP', side: 'Long', leverage: '2x', size: '$1,240', entry: '$185.30', pnl: '+$29', pnlPct: +2.3 },
-];
-
-const recentTrades = [
-  { id: 't1', token: 'FARTCOIN', side: 'buy' as const, amount: '150K', price: '$0.0041', time: '30s ago' },
-  { id: 't2', token: 'POPCAT', side: 'buy' as const, amount: '2,000', price: '$0.26', time: '2m ago' },
-  { id: 't3', token: 'TSLA-PERP', side: 'buy' as const, amount: '0.5', price: '$430.20', time: '5m ago' },
-  { id: 't4', token: 'DEGEN', side: 'buy' as const, amount: '50K', price: '$0.004', time: '12m ago' },
-  { id: 't5', token: 'BONK', side: 'buy' as const, amount: '2.5M', price: '$0.000025', time: '18m ago' },
-];
-
-const signals = [
-  { token: 'FARTCOIN', chain: 'Solana', signal: 'Strong Buy', reason: 'Volume 10x + CT trending #1', strength: 96 },
-  { token: 'POPCAT', chain: 'Solana', signal: 'Strong Buy', reason: 'Breaking ATH, whale accumulation', strength: 93 },
-  { token: 'DEGEN', chain: 'Base', signal: 'Buy', reason: 'Base chain TVL rising + airdrop hype', strength: 82 },
-  { token: 'MYRO', chain: 'Solana', signal: 'Buy', reason: 'Low cap gem, RSI 28 oversold bounce', strength: 75 },
-  { token: 'BONK', chain: 'Solana', signal: 'Hold', reason: 'Consolidating after 18% pump', strength: 55 },
-  { token: 'MOG', chain: 'Ethereum', signal: 'Buy', reason: 'ETH meme rotation starting', strength: 71 },
-  { token: 'ARB', chain: 'Arbitrum', signal: 'Buy', reason: 'L2 rotation + Stylus launch', strength: 79 },
-  { token: 'PENDLE', chain: 'Arbitrum', signal: 'Strong Buy', reason: 'Yield narrative + TVL surge', strength: 91 },
-  { token: 'CAKE', chain: 'BSC', signal: 'Buy', reason: 'V3 migration + buyback program', strength: 74 },
-  { token: 'OP', chain: 'Optimism', signal: 'Buy', reason: 'Superchain expansion + airdrop', strength: 80 },
-  { token: 'AVAX', chain: 'Avalanche', signal: 'Buy', reason: 'Gaming subnet growth + low fees', strength: 76 },
-  { token: 'MON', chain: 'Monad', signal: 'Strong Buy', reason: '10K TPS EVM L1 + massive hype cycle', strength: 94 },
-  { token: 'KURU', chain: 'Monad', signal: 'Buy', reason: 'Leading Monad DEX + volume surge', strength: 82 },
-  { token: 'SUI', chain: 'Sui', signal: 'Buy', reason: 'Move VM leader + DeFi TVL growth', strength: 83 },
-  { token: 'CETUS', chain: 'Sui', signal: 'Buy', reason: 'Top Sui DEX + concentrated liquidity', strength: 77 },
-  { token: 'APT', chain: 'Aptos', signal: 'Buy', reason: 'Move ecosystem revival + institutional interest', strength: 75 },
-  { token: 'MEGA', chain: 'MegaETH', signal: 'Strong Buy', reason: 'Real-time EVM L2 + 100K TPS hype', strength: 95 },
-  { token: 'GTE', chain: 'MegaETH', signal: 'Buy', reason: 'Leading MegaETH DEX + volume surge', strength: 81 },
-  { token: 'CRAB', chain: 'MegaETH', signal: 'Buy', reason: 'Top MegaETH meme + community growth', strength: 73 },
-  { token: 'TSLA-PERP', chain: 'Perps', signal: 'Buy', reason: 'Earnings beat + momentum', strength: 78 },
-  { token: 'NVDA-PERP', chain: 'Perps', signal: 'Strong Buy', reason: 'AI sector rotation + breakout', strength: 88 },
-];
-
-const leaderboard = [
-  { rank: 1, name: 'CryptoWhale', pnl: '+45.8%', sharpe: 3.1, copiers: 2100, chain: 'Solana' },
-  { rank: 2, name: 'DeFiKing', pnl: '+34.2%', sharpe: 2.4, copiers: 1240, chain: 'Ethereum' },
-  { rank: 3, name: 'BaseBuilder', pnl: '+31.5%', sharpe: 2.2, copiers: 980, chain: 'Base' },
-];
-
-const strategies = [
-  { id: 'meme-sniper', name: 'Meme Sniper', desc: 'Auto-snipe trending low-cap memes', active: true },
-  { id: 'trailing-tpsl', name: 'Trailing TP/SL', desc: 'Trail price for auto exits', active: true },
-  { id: 'perps-momentum', name: 'Perps Momentum', desc: 'Long/short US stocks on momentum', active: true },
-  { id: 'dca', name: 'DCA Bot', desc: 'Auto-buy dips on any chain', active: true },
-];
 
 const quickActions = [
   'Screen FARTCOIN',
@@ -130,9 +41,15 @@ Say "screen [token]" or "buy [token] $amount"`,
 // ─── Component ───────────────────────────────────────────────────────
 
 export function MainScreen() {
-  const { agentStatus, portfolio, toggleAgent } = useApp();
+  const { agentStatus, toggleAgent } = useApp();
+  const {
+    holdings, perpHoldings, signals, recentTrades,
+    portfolio, leaderboard, strategies, chains,
+  } = useTradingData();
   const [tab, setTab] = useState<Tab>('portfolio');
-  const [chainFilter, setChainFilter] = useState<typeof chains[number]>('All');
+  const [chainFilter, setChainFilter] = useState<string>('All');
+
+  const chainFilters = useMemo(() => ['All', ...chains], [chains]);
 
   // Chat state
   const [messages, setMessages] = useState<ChatMessage[]>([welcomeMsg]);
@@ -169,8 +86,8 @@ export function MainScreen() {
   const [signalSection, setSignalSection] = useState<'signals' | 'leaderboard' | 'strategies'>('signals');
 
   const filtered = chainFilter === 'All' ? holdings : holdings.filter(h => h.chain === chainFilter);
-  const perpTotal = perpHoldings.reduce((s, p) => s + parseFloat(p.size.replace(/[$,]/g, '')), 0);
-  const perpPnl = perpHoldings.reduce((s, p) => s + parseFloat(p.pnl.replace(/[$+,]/g, '')), 0);
+  const perpTotal = portfolio.perpTotalSize;
+  const perpPnl = portfolio.perpTotalPnl;
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
@@ -218,7 +135,7 @@ export function MainScreen() {
             fontSize: 13, fontWeight: 600,
             color: portfolio.todayPnl >= 0 ? '#22c55e' : '#ef4444',
           }}>
-            {portfolio.todayPnl >= 0 ? '+' : ''}${portfolio.todayPnl.toFixed(0)} today
+            {portfolio.todayPnl >= 0 ? '+' : ''}${Math.abs(portfolio.todayPnl).toLocaleString()} today ({portfolio.todayPnlPct > 0 ? '+' : ''}{portfolio.todayPnlPct}%)
           </span>
         </div>
 
@@ -256,7 +173,7 @@ export function MainScreen() {
           <div style={{ padding: `0 ${mobile.screenPadding}px`, paddingBottom: 16 }}>
             {/* Chain pills (scrollable) */}
             <div style={{ display: 'flex', gap: 5, marginBottom: 10, overflowX: 'auto', WebkitOverflowScrolling: 'touch', scrollbarWidth: 'none' }}>
-              {chains.map(c => (
+              {chainFilters.map(c => (
                 <button key={c} onClick={() => setChainFilter(c)} style={{
                   padding: '4px 10px', borderRadius: 16, border: 'none', fontSize: 11, fontWeight: 500,
                   background: chainFilter === c ? '#3b82f6' : '#1e293b',
@@ -305,7 +222,7 @@ export function MainScreen() {
                     <span style={{ fontSize: 9, padding: '1px 6px', borderRadius: 4, background: 'rgba(168,85,247,0.15)', color: '#a855f7', fontWeight: 600 }}>Hyperliquid</span>
                   </div>
                   <div style={{ fontSize: 11, color: perpPnl >= 0 ? '#22c55e' : '#ef4444', fontWeight: 600 }}>
-                    {perpPnl >= 0 ? '+' : ''}${perpPnl.toFixed(0)} P&L
+                    {perpPnl >= 0 ? '+' : ''}${Math.abs(Math.round(perpPnl)).toLocaleString()} P&L
                   </div>
                 </div>
                 <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>

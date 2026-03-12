@@ -2,7 +2,7 @@ import type { FastifyInstance, FastifyReply } from 'fastify';
 import { assertPermission, PermissionError } from '../../permissions/permissions.js';
 import { Supervisor } from '../../supervisor/supervisor.js';
 import { config } from '../../core/config.js';
-import type { AuthContext, Chain, RiskLevel } from '../../core/types.js';
+import type { AuthContext, Chain, RiskLevel, PermissionTier } from '../../core/types.js';
 
 // Create a singleton supervisor instance
 let supervisor: Supervisor | null = null;
@@ -18,7 +18,7 @@ function getSupervisor(): Supervisor {
 function getAuthContext(request: any): AuthContext {
   return {
     userId: request.userId as string,
-    tier: request.tier as 'admin' | 'ops' | 'user',
+    tier: request.tier as PermissionTier,
     hostApp: 'default',
   };
 }
@@ -270,5 +270,176 @@ export async function supervisorRoutes(app: FastifyInstance) {
     const limit = parseInt(query.limit ?? '50');
     const events = getSupervisor().getRecentEvents(limit);
     return { events };
+  });
+
+  // ═══════════════════════════════════════════════
+  // Trade Approvals (Multi-Tier)
+  // ═══════════════════════════════════════════════
+
+  app.post('/api/v1/supervisor/approvals', async (request, reply) => {
+    const ctx = getAuthContext(request);
+    try { assertPermission(ctx, 'supervisor.manage-agents'); } catch (err) { return handlePermissionError(err, reply); }
+
+    const body = request.body as {
+      agentId: string;
+      userId: string;
+      brokerId: string;
+      asset: string;
+      side: 'buy' | 'sell';
+      amountUsd: number;
+      chain: Chain;
+      strategyId: string;
+      riskScore: number;
+      compliancePassed: boolean;
+      corr_id: string;
+    };
+
+    if (!body.agentId || !body.asset || !body.side || !body.amountUsd) {
+      return reply.code(400).send({ error: 'Required: agentId, asset, side, amountUsd' });
+    }
+
+    // Construct full TradeApprovalRequest
+    const approvalRequest = {
+      requestId: `tar_${Date.now()}`,
+      agentId: body.agentId,
+      userId: body.userId || ctx.userId,
+      brokerId: body.brokerId || '',
+      asset: body.asset,
+      side: body.side,
+      amountUsd: body.amountUsd,
+      chain: body.chain,
+      strategyId: body.strategyId || 'manual',
+      riskScore: body.riskScore || 0,
+      complianceResult: {
+        passed: body.compliancePassed ?? true,
+        brokerId: body.brokerId || '',
+        checkedAt: new Date().toISOString(),
+      },
+      corr_id: body.corr_id || `corr_${Date.now()}`,
+    };
+
+    try {
+      const result = await getSupervisor().approveTradeRequest(approvalRequest);
+      return { approval: result };
+    } catch (err: any) {
+      return reply.code(400).send({ error: err.message });
+    }
+  });
+
+  // ═══════════════════════════════════════════════
+  // Fee Ledger (Multi-Tier)
+  // ═══════════════════════════════════════════════
+
+  app.get('/api/v1/supervisor/fees', async (request, reply) => {
+    const ctx = getAuthContext(request);
+    try { assertPermission(ctx, 'supervisor.view-monitoring'); } catch (err) { return handlePermissionError(err, reply); }
+
+    const query = request.query as { from?: string; to?: string };
+    try {
+      const summary = await getSupervisor().getFeeSummary(
+        query.from,
+        query.to,
+      );
+      return { feeSummary: summary };
+    } catch (err: any) {
+      return reply.code(500).send({ error: err.message });
+    }
+  });
+
+  app.post('/api/v1/supervisor/fees', async (request, reply) => {
+    const ctx = getAuthContext(request);
+    try { assertPermission(ctx, 'supervisor.manage-agents'); } catch (err) { return handlePermissionError(err, reply); }
+
+    const body = request.body as {
+      type: string;
+      tradeId: string;
+      userId: string;
+      agentId: string;
+      brokerId: string;
+      amountUsd: number;
+      amountToken: string;
+      feeToken: string;
+      chain: string;
+      feeRate: number;
+      corr_id: string;
+      metadata?: Record<string, unknown>;
+    };
+
+    try {
+      await getSupervisor().recordFeeInLedger(body as any);
+      return { success: true };
+    } catch (err: any) {
+      return reply.code(400).send({ error: err.message });
+    }
+  });
+
+  // ═══════════════════════════════════════════════
+  // Hibernation (Multi-Tier)
+  // ═══════════════════════════════════════════════
+
+  app.post('/api/v1/supervisor/agents/:agentId/hibernate', async (request, reply) => {
+    const ctx = getAuthContext(request);
+    try { assertPermission(ctx, 'supervisor.manage-agents'); } catch (err) { return handlePermissionError(err, reply); }
+
+    const { agentId } = request.params as { agentId: string };
+    try {
+      await getSupervisor().hibernateAgent(agentId, ctx.userId);
+      return { success: true, agentId, state: 'hibernating' };
+    } catch (err: any) {
+      return reply.code(400).send({ error: err.message });
+    }
+  });
+
+  app.post('/api/v1/supervisor/agents/:agentId/wake', async (request, reply) => {
+    const ctx = getAuthContext(request);
+    try { assertPermission(ctx, 'supervisor.manage-agents'); } catch (err) { return handlePermissionError(err, reply); }
+
+    const { agentId } = request.params as { agentId: string };
+    try {
+      await getSupervisor().wakeAgent(agentId, ctx.userId);
+      return { success: true, agentId, state: 'running' };
+    } catch (err: any) {
+      return reply.code(400).send({ error: err.message });
+    }
+  });
+
+  // ═══════════════════════════════════════════════
+  // Global Risk Snapshot (Multi-Tier)
+  // ═══════════════════════════════════════════════
+
+  app.get('/api/v1/supervisor/risk-snapshot', async (request, reply) => {
+    const ctx = getAuthContext(request);
+    try { assertPermission(ctx, 'supervisor.view-monitoring'); } catch (err) { return handlePermissionError(err, reply); }
+
+    try {
+      const snapshot = await getSupervisor().getGlobalRiskSnapshot();
+      return { riskSnapshot: snapshot };
+    } catch (err: any) {
+      return reply.code(500).send({ error: err.message });
+    }
+  });
+
+  // ═══════════════════════════════════════════════
+  // Regulatory Reports (Multi-Tier)
+  // ═══════════════════════════════════════════════
+
+  app.get('/api/v1/supervisor/regulatory/report', async (request, reply) => {
+    const ctx = getAuthContext(request);
+    try { assertPermission(ctx, 'supervisor.view-monitoring'); } catch (err) { return handlePermissionError(err, reply); }
+
+    const query = request.query as { from: string; to: string };
+    if (!query.from || !query.to) {
+      return reply.code(400).send({ error: 'from and to date params are required' });
+    }
+
+    try {
+      const report = await getSupervisor().generateRegulatoryReport(
+        query.from,
+        query.to,
+      );
+      return { report };
+    } catch (err: any) {
+      return reply.code(500).send({ error: err.message });
+    }
   });
 }

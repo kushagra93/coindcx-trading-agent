@@ -122,6 +122,44 @@ export class AgentRegistry {
     return this.redis.scard(REDIS_KEYS.userAgents(userId));
   }
 
+  /** Get all agents of a specific tier */
+  async getByTier(tier: string): Promise<ManagedAgent[]> {
+    const all = await this.getAll();
+    return all.filter(a => a.tier === tier);
+  }
+
+  /** Get all agents for a specific jurisdiction */
+  async getByJurisdiction(jurisdiction: string): Promise<ManagedAgent[]> {
+    const all = await this.getAll();
+    return all.filter(a => a.jurisdiction === jurisdiction);
+  }
+
+  /** Get all agents in a specific hibernation state */
+  async getByHibernationState(hibernationState: string): Promise<ManagedAgent[]> {
+    const all = await this.getAll();
+    return all.filter(a => a.hibernationState === hibernationState);
+  }
+
+  /** Update hibernation state for an agent */
+  async updateHibernationState(
+    agentId: string,
+    hibernationState: 'active' | 'idle' | 'on-demand' | 'deep-archive',
+  ): Promise<void> {
+    await this.redis.hset(
+      REDIS_KEYS.agentState(agentId),
+      'hibernationState', hibernationState,
+    );
+    log.debug({ agentId, hibernationState }, 'Agent hibernation state updated');
+  }
+
+  /** Update the last active timestamp for an agent */
+  async updateLastActive(agentId: string, timestamp: number = Date.now()): Promise<void> {
+    await this.redis.hset(
+      REDIS_KEYS.agentState(agentId),
+      'lastActiveAt', timestamp.toString(),
+    );
+  }
+
   // ── Serialization ──
 
   private serializeAgent(agent: ManagedAgent): Record<string, string> {
@@ -140,6 +178,12 @@ export class AgentRegistry {
       lastHeartbeat: (agent.lastHeartbeat ?? '').toString(),
       lastCommandId: agent.lastCommandId ?? '',
       metrics: JSON.stringify(agent.metrics),
+      tier: agent.tier ?? '',
+      jurisdiction: agent.jurisdiction ?? '',
+      certificateId: agent.certificateId ?? '',
+      hibernationState: agent.hibernationState ?? '',
+      lastActiveAt: (agent.lastActiveAt ?? '').toString(),
+      parentAgentId: agent.parentAgentId ?? '',
     };
   }
 
@@ -163,6 +207,12 @@ export class AgentRegistry {
         winCount: 0, lossCount: 0, openPositions: 0,
         highWaterMarkUsd: 0, maxDrawdownPct: 0,
       },
+      tier: (data.tier || undefined) as ManagedAgent['tier'],
+      jurisdiction: (data.jurisdiction || undefined) as ManagedAgent['jurisdiction'],
+      certificateId: data.certificateId || undefined,
+      hibernationState: (data.hibernationState || undefined) as ManagedAgent['hibernationState'],
+      lastActiveAt: data.lastActiveAt ? parseInt(data.lastActiveAt) || undefined : undefined,
+      parentAgentId: data.parentAgentId || undefined,
     };
   }
 }

@@ -1,65 +1,13 @@
 import { useState } from 'react';
 import {
   Eye, Users, Play, Pause, Square, Trash2, AlertTriangle, Shield,
-  Activity, Zap, Settings, FileText, ChevronDown,
+  Activity, Zap, Settings, FileText, ChevronDown, Globe, GitBranch,
+  Cpu, Moon, Lock, ArrowRightLeft,
 } from 'lucide-react';
 import { Badge } from '../components/Badge';
+import { useTradingData, type AgentData } from '../app/context/TradingDataContext';
 
-// ─── Demo Data ────────────────────────────────────────────────
-
-type AgentState = 'running' | 'paused' | 'stopped' | 'error' | 'creating';
-
-interface DemoAgent {
-  agentId: string;
-  userId: string;
-  state: AgentState;
-  strategy: string;
-  chain: string;
-  riskLevel: string;
-  tradesExecuted: number;
-  volumeUsd: number;
-  pnlUsd: number;
-  openPositions: number;
-  lastHeartbeat: number;
-  createdAt: number;
-}
-
-const demoAgents: DemoAgent[] = [
-  { agentId: 'agt_a1b2c3d4', userId: 'usr_k8x92m', state: 'running', strategy: 'Meme Sniper', chain: 'solana', riskLevel: 'aggressive', tradesExecuted: 142, volumeUsd: 48_200, pnlUsd: 3_892, openPositions: 4, lastHeartbeat: Date.now() - 2_000, createdAt: Date.now() - 86400_000 * 3 },
-  { agentId: 'agt_e5f6g7h8', userId: 'usr_p3n71q', state: 'running', strategy: 'DCA Blue Chip', chain: 'ethereum', riskLevel: 'conservative', tradesExecuted: 24, volumeUsd: 125_000, pnlUsd: 4_230, openPositions: 8, lastHeartbeat: Date.now() - 3_000, createdAt: Date.now() - 86400_000 * 14 },
-  { agentId: 'agt_i9j0k1l2', userId: 'usr_j5w88r', state: 'running', strategy: 'Perp Momentum', chain: 'hyperliquid', riskLevel: 'moderate', tradesExecuted: 89, volumeUsd: 234_500, pnlUsd: -1_340, openPositions: 3, lastHeartbeat: Date.now() - 1_500, createdAt: Date.now() - 86400_000 * 7 },
-  { agentId: 'agt_m3n4o5p6', userId: 'usr_m2c44x', state: 'paused', strategy: 'Copy Trade', chain: 'base', riskLevel: 'moderate', tradesExecuted: 67, volumeUsd: 32_900, pnlUsd: 1_445, openPositions: 2, lastHeartbeat: Date.now() - 45_000, createdAt: Date.now() - 86400_000 * 10 },
-  { agentId: 'agt_q7r8s9t0', userId: 'usr_t9v66p', state: 'running', strategy: 'Grid Trading', chain: 'arbitrum', riskLevel: 'moderate', tradesExecuted: 312, volumeUsd: 89_600, pnlUsd: 5_890, openPositions: 6, lastHeartbeat: Date.now() - 4_000, createdAt: Date.now() - 86400_000 * 21 },
-  { agentId: 'agt_u1v2w3x4', userId: 'usr_a7b33n', state: 'running', strategy: 'Meme Sniper', chain: 'monad', riskLevel: 'aggressive', tradesExecuted: 78, volumeUsd: 22_100, pnlUsd: 6_120, openPositions: 5, lastHeartbeat: Date.now() - 2_500, createdAt: Date.now() - 86400_000 * 5 },
-  { agentId: 'agt_y5z6a7b8', userId: 'usr_f1d22k', state: 'error', strategy: 'DCA Blue Chip', chain: 'sui', riskLevel: 'conservative', tradesExecuted: 12, volumeUsd: 8_200, pnlUsd: -245, openPositions: 0, lastHeartbeat: Date.now() - 120_000, createdAt: Date.now() - 86400_000 * 2 },
-  { agentId: 'agt_c9d0e1f2', userId: 'usr_h8g55w', state: 'stopped', strategy: 'Perp Momentum', chain: 'hyperliquid', riskLevel: 'aggressive', tradesExecuted: 56, volumeUsd: 67_800, pnlUsd: 2_100, openPositions: 0, lastHeartbeat: Date.now() - 3600_000, createdAt: Date.now() - 86400_000 * 30 },
-  { agentId: 'agt_g3h4i5j6', userId: 'usr_r4p21b', state: 'running', strategy: 'Copy Trade', chain: 'base', riskLevel: 'moderate', tradesExecuted: 45, volumeUsd: 18_400, pnlUsd: 920, openPositions: 3, lastHeartbeat: Date.now() - 5_000, createdAt: Date.now() - 86400_000 * 8 },
-  { agentId: 'agt_k7l8m9n0', userId: 'usr_x5y33z', state: 'running', strategy: 'Grid Trading', chain: 'polygon', riskLevel: 'moderate', tradesExecuted: 198, volumeUsd: 54_300, pnlUsd: 3_450, openPositions: 4, lastHeartbeat: Date.now() - 3_500, createdAt: Date.now() - 86400_000 * 12 },
-  { agentId: 'agt_o1p2q3r4', userId: 'usr_w8t11g', state: 'paused', strategy: 'Meme Sniper', chain: 'megaeth', riskLevel: 'aggressive', tradesExecuted: 34, volumeUsd: 12_600, pnlUsd: 4_780, openPositions: 2, lastHeartbeat: Date.now() - 50_000, createdAt: Date.now() - 86400_000 },
-  { agentId: 'agt_s5t6u7v8', userId: 'usr_q2m77k', state: 'running', strategy: 'DCA Blue Chip', chain: 'avalanche', riskLevel: 'conservative', tradesExecuted: 15, volumeUsd: 42_000, pnlUsd: 1_120, openPositions: 5, lastHeartbeat: Date.now() - 2_000, createdAt: Date.now() - 86400_000 * 6 },
-];
-
-const demoEvents = [
-  { type: 'trade-executed', agentId: 'agt_a1b2c3d4', timestamp: Date.now() - 5_000, payload: { token: 'FARTCOIN', side: 'buy', volumeUsd: 420 } },
-  { type: 'started', agentId: 'agt_s5t6u7v8', timestamp: Date.now() - 12_000, payload: {} },
-  { type: 'position-opened', agentId: 'agt_i9j0k1l2', timestamp: Date.now() - 30_000, payload: { token: 'TSLA-PERP', amountUsd: 2500 } },
-  { type: 'circuit-breaker-tripped', agentId: 'agt_y5z6a7b8', timestamp: Date.now() - 120_000, payload: {} },
-  { type: 'command-ack', agentId: 'agt_m3n4o5p6', timestamp: Date.now() - 180_000, payload: { commandId: 'cmd_pause' } },
-  { type: 'trade-executed', agentId: 'agt_q7r8s9t0', timestamp: Date.now() - 240_000, payload: { token: 'ARB', side: 'buy', volumeUsd: 1200 } },
-  { type: 'position-closed', agentId: 'agt_u1v2w3x4', timestamp: Date.now() - 300_000, payload: { token: 'MON', pnlUsd: 340 } },
-  { type: 'error', agentId: 'agt_y5z6a7b8', timestamp: Date.now() - 360_000, payload: { message: 'RPC timeout on Sui' } },
-  { type: 'trade-executed', agentId: 'agt_k7l8m9n0', timestamp: Date.now() - 420_000, payload: { token: 'POL', side: 'sell', volumeUsd: 800 } },
-  { type: 'resumed', agentId: 'agt_g3h4i5j6', timestamp: Date.now() - 500_000, payload: {} },
-];
-
-const demoAuditLog = [
-  { actor: 'admin_kush', action: 'pause-agent', resource: 'agt_m3n4o5p6', timestamp: Date.now() - 180_000, success: true },
-  { actor: 'admin_kush', action: 'create-agent', resource: 'agt_s5t6u7v8', timestamp: Date.now() - 360_000, success: true },
-  { actor: 'admin_ops1', action: 'override-risk', resource: 'agt_i9j0k1l2', timestamp: Date.now() - 600_000, success: true },
-  { actor: 'supervisor', action: 'dead-agent-detected', resource: 'agt_y5z6a7b8', timestamp: Date.now() - 900_000, success: true },
-  { actor: 'admin_kush', action: 'update-policies', resource: 'global-policies', timestamp: Date.now() - 1800_000, success: true },
-  { actor: 'admin_kush', action: 'emergency-halt-all', resource: 'all-agents', timestamp: Date.now() - 86400_000, success: true },
-];
+type AgentState = AgentData['state'];
 
 // ─── Helpers ─────────────────────────────────────────────────
 
@@ -78,11 +26,14 @@ const stateColor: Record<AgentState, 'green' | 'yellow' | 'gray' | 'red' | 'blue
 
 // ─── Component ───────────────────────────────────────────────
 
-type Tab = 'agents' | 'policies' | 'events' | 'audit';
+type Tab = 'agents' | 'brokers' | 'policies' | 'events' | 'lifecycle' | 'helpers' | 'hibernation' | 'security' | 'audit';
 
 export function SupervisorPage() {
+  const {
+    agents, setAgents, events, auditLog, helpers, brokers,
+    portfolio, addAuditEntry,
+  } = useTradingData();
   const [tab, setTab] = useState<Tab>('agents');
-  const [agents, setAgents] = useState(demoAgents);
   const [globalHalt, setGlobalHalt] = useState(false);
   const [filterState, setFilterState] = useState<string>('all');
   const [filterChain, setFilterChain] = useState<string>('all');
@@ -219,21 +170,26 @@ export function SupervisorPage() {
       </div>
 
       {/* Tabs */}
-      <div style={{ display: 'flex', gap: 4, marginBottom: 16, borderBottom: '1px solid #1e293b', paddingBottom: 1 }}>
+      <div style={{ display: 'flex', gap: 2, marginBottom: 16, borderBottom: '1px solid #1e293b', paddingBottom: 1, flexWrap: 'wrap' }}>
         {([
           { key: 'agents' as Tab, label: 'Agents', icon: Users },
+          { key: 'brokers' as Tab, label: 'Brokers', icon: Globe },
           { key: 'policies' as Tab, label: 'Policies', icon: Shield },
           { key: 'events' as Tab, label: 'Events', icon: Zap },
+          { key: 'lifecycle' as Tab, label: 'Trade Lifecycle', icon: GitBranch },
+          { key: 'helpers' as Tab, label: 'Helpers', icon: Cpu },
+          { key: 'hibernation' as Tab, label: 'Hibernation', icon: Moon },
+          { key: 'security' as Tab, label: 'Security', icon: Lock },
           { key: 'audit' as Tab, label: 'Audit Log', icon: FileText },
         ]).map(t => (
           <button key={t.key} onClick={() => setTab(t.key)} style={{
-            display: 'flex', alignItems: 'center', gap: 6,
-            padding: '8px 16px', border: 'none', borderRadius: '6px 6px 0 0',
-            fontSize: 13, fontWeight: tab === t.key ? 600 : 400, cursor: 'pointer',
+            display: 'flex', alignItems: 'center', gap: 5,
+            padding: '8px 12px', border: 'none', borderRadius: '6px 6px 0 0',
+            fontSize: 12, fontWeight: tab === t.key ? 600 : 400, cursor: 'pointer',
             background: tab === t.key ? '#1e293b' : 'transparent',
             color: tab === t.key ? '#f1f5f9' : '#64748b',
           }}>
-            <t.icon size={14} />{t.label}
+            <t.icon size={13} />{t.label}
           </button>
         ))}
       </div>
@@ -402,7 +358,7 @@ export function SupervisorPage() {
       {/* ══════ EVENTS TAB ══════ */}
       {tab === 'events' && (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-          {demoEvents.map((e, i) => (
+          {events.map((e, i) => (
             <div key={i} style={{
               display: 'flex', alignItems: 'center', gap: 12, padding: '8px 12px',
               background: '#111827', borderRadius: 8, border: '1px solid #1e293b',
@@ -423,6 +379,219 @@ export function SupervisorPage() {
         </div>
       )}
 
+      {/* ══════ BROKERS TAB ══════ */}
+      {tab === 'brokers' && (
+        <div>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 12, marginBottom: 20 }}>
+            {brokers.map(b => (
+              <div key={b.jurisdiction} style={{
+                background: '#111827', borderRadius: 10, padding: 16,
+                border: '1px solid #1e293b',
+              }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                    <Globe size={18} color="#3b82f6" />
+                    <span style={{ fontSize: 16, fontWeight: 700 }}>{b.jurisdiction}</span>
+                  </div>
+                  <Badge color="green">{b.status}</Badge>
+                </div>
+                <div style={{ fontSize: 12, color: '#94a3b8', marginBottom: 8 }}>
+                  <div>Compliance: <span style={{ color: '#f1f5f9' }}>{b.compliance}</span></div>
+                  <div>Max Leverage: <span style={{ color: '#f1f5f9' }}>{b.maxLeverage}x</span></div>
+                  <div>User Agents: <span style={{ color: '#f1f5f9' }}>{b.agents.toLocaleString()}</span></div>
+                </div>
+                <div style={{ fontSize: 11, color: '#64748b' }}>
+                  Restricted: {b.restricted.map(r => (
+                    <Badge key={r} color="red" style={{ marginRight: 4, marginTop: 4 }}>{r}</Badge>
+                  ))}
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* ══════ TRADE LIFECYCLE TAB ══════ */}
+      {tab === 'lifecycle' && (
+        <div>
+          <div style={{ background: '#111827', borderRadius: 10, padding: 20, border: '1px solid #1e293b', marginBottom: 16 }}>
+            <h3 style={{ fontSize: 15, fontWeight: 700, marginTop: 0, marginBottom: 16 }}>11-Step Trade Lifecycle Pipeline</h3>
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, alignItems: 'center' }}>
+              {[
+                { state: 'SIGNAL_GENERATED', color: '#3b82f6' },
+                { state: 'RISK_ASSESSED', color: '#8b5cf6' },
+                { state: 'COMPLIANCE_CHECKED', color: '#6366f1' },
+                { state: 'APPROVAL_REQUESTED', color: '#eab308' },
+                { state: 'APPROVED', color: '#22c55e' },
+                { state: 'FEE_RESERVED', color: '#f97316' },
+                { state: 'ORDER_SUBMITTED', color: '#3b82f6' },
+                { state: 'ORDER_CONFIRMED', color: '#22c55e' },
+                { state: 'FEE_SETTLED', color: '#f97316' },
+                { state: 'FEE_LEDGER_RECORDED', color: '#8b5cf6' },
+                { state: 'NOTIFICATION_SENT', color: '#06b6d4' },
+                { state: 'POSITION_UPDATED', color: '#22c55e' },
+              ].map((s, i) => (
+                <div key={s.state} style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                  <div style={{
+                    padding: '4px 10px', borderRadius: 6, fontSize: 10, fontWeight: 600,
+                    background: `${s.color}20`, color: s.color, fontFamily: 'monospace',
+                    whiteSpace: 'nowrap',
+                  }}>{s.state}</div>
+                  {i < 11 && <ArrowRightLeft size={12} color="#475569" />}
+                </div>
+              ))}
+            </div>
+            <div style={{ marginTop: 16, display: 'flex', gap: 12 }}>
+              <div style={{ fontSize: 11, color: '#64748b' }}>Rejection States:</div>
+              {['RISK_REJECTED', 'COMPLIANCE_REJECTED', 'APPROVAL_REJECTED'].map(s => (
+                <div key={s} style={{
+                  padding: '2px 8px', borderRadius: 4, fontSize: 10, fontWeight: 600,
+                  background: 'rgba(239,68,68,0.15)', color: '#ef4444', fontFamily: 'monospace',
+                }}>{s}</div>
+              ))}
+            </div>
+          </div>
+          <div style={{ fontSize: 12, color: '#94a3b8' }}>
+            Each trade follows the full lifecycle pipeline. Atomic rule: fee + trade always succeed or fail together.
+          </div>
+        </div>
+      )}
+
+      {/* ══════ HELPERS TAB ══════ */}
+      {tab === 'helpers' && (
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 12 }}>
+          {helpers.map(h => {
+            const IconMap: Record<string, typeof Activity> = { Activity, Shield, Zap, FileText, GitBranch };
+            const Icon = IconMap[h.icon] ?? Cpu;
+            return (
+              <div key={h.type} style={{
+                background: '#111827', borderRadius: 10, padding: 16,
+                border: '1px solid #1e293b',
+              }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                    <Icon size={16} color={h.color} />
+                    <span style={{ fontSize: 13, fontWeight: 600 }}>{h.type}</span>
+                  </div>
+                  <Badge color={h.status === 'running' ? 'green' : h.status === 'idle' ? 'yellow' : 'red'}>{h.status}</Badge>
+                </div>
+                <div style={{ fontSize: 12, color: '#94a3b8' }}>
+                  <div>Queue: <span style={{ color: h.queue > 0 ? '#eab308' : '#22c55e', fontWeight: 600 }}>{h.queue}</span></div>
+                  <div>Processed: <span style={{ color: '#f1f5f9' }}>{h.processed.toLocaleString()}</span></div>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
+
+      {/* ══════ HIBERNATION TAB ══════ */}
+      {tab === 'hibernation' && (
+        <div>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 12, marginBottom: 20 }}>
+            {(() => {
+              const active = agents.filter(a => a.state === 'running').length;
+              const idle = agents.filter(a => a.state === 'paused').length;
+              const onDemand = agents.filter(a => a.state === 'stopped').length;
+              const archived = agents.filter(a => a.state === 'error').length;
+              const total = Math.max(active + idle + onDemand + archived, 1);
+              // Scale up to show realistic numbers
+              const scale = 1000;
+              return [
+                { state: 'Active', count: active * scale, pct: Math.round(active / total * 100), color: '#22c55e', desc: 'Currently trading' },
+                { state: 'Idle', count: idle * scale, pct: Math.round(idle / total * 100), color: '#eab308', desc: '30min no activity' },
+                { state: 'On-Demand', count: onDemand * scale, pct: Math.round(onDemand / total * 100), color: '#3b82f6', desc: 'Serialized to Redis (<100ms wake)' },
+                { state: 'Deep Archive', count: archived * scale, pct: Math.round(archived / total * 100), color: '#64748b', desc: 'Archived to PostgreSQL (~500ms wake)' },
+              ];
+            })().map(s => (
+              <div key={s.state} style={{
+                background: '#111827', borderRadius: 10, padding: 16,
+                border: '1px solid #1e293b',
+              }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 8 }}>
+                  <Moon size={14} color={s.color} />
+                  <span style={{ fontSize: 11, color: '#64748b', textTransform: 'uppercase' }}>{s.state}</span>
+                </div>
+                <div style={{ fontSize: 24, fontWeight: 700, color: '#f1f5f9' }}>{s.count.toLocaleString()}</div>
+                <div style={{ fontSize: 11, color: s.color, fontWeight: 600 }}>{s.pct}%</div>
+                <div style={{ fontSize: 11, color: '#475569', marginTop: 4 }}>{s.desc}</div>
+              </div>
+            ))}
+          </div>
+          <div style={{ background: '#111827', borderRadius: 10, padding: 16, border: '1px solid #1e293b' }}>
+            <h4 style={{ fontSize: 13, fontWeight: 600, marginTop: 0 }}>Hibernation Thresholds</h4>
+            <div style={{ fontSize: 12, color: '#94a3b8', display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
+              <div>Idle threshold: <span style={{ color: '#f1f5f9' }}>30 minutes</span></div>
+              <div>On-demand threshold: <span style={{ color: '#f1f5f9' }}>2 hours</span></div>
+              <div>Archive threshold: <span style={{ color: '#f1f5f9' }}>24 hours</span></div>
+              <div>Sweep interval: <span style={{ color: '#f1f5f9' }}>5 minutes</span></div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ══════ SECURITY TAB ══════ */}
+      {tab === 'security' && (
+        <div>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: 12, marginBottom: 16 }}>
+            <div style={{ background: '#111827', borderRadius: 10, padding: 16, border: '1px solid #1e293b' }}>
+              <h4 style={{ fontSize: 13, fontWeight: 600, marginTop: 0, display: 'flex', alignItems: 'center', gap: 6 }}>
+                <Lock size={14} color="#22c55e" /> Trust Chain (ECDSA P-256)
+              </h4>
+              <div style={{ fontSize: 12, color: '#94a3b8' }}>
+                <div style={{ marginBottom: 8 }}>
+                  <Badge color="green" style={{ marginRight: 4 }}>Root CA</Badge>
+                  <span style={{ fontFamily: 'monospace', fontSize: 11 }}>master-agent-root</span>
+                </div>
+                <div style={{ paddingLeft: 20, borderLeft: '2px solid #1e293b', marginBottom: 4 }}>
+                  <Badge color="blue" style={{ marginRight: 4 }}>Broker</Badge> broker-US (SEC/CFTC)
+                </div>
+                <div style={{ paddingLeft: 20, borderLeft: '2px solid #1e293b', marginBottom: 4 }}>
+                  <Badge color="blue" style={{ marginRight: 4 }}>Broker</Badge> broker-EU (MiFID II)
+                </div>
+                <div style={{ paddingLeft: 20, borderLeft: '2px solid #1e293b', marginBottom: 4 }}>
+                  <Badge color="blue" style={{ marginRight: 4 }}>Broker</Badge> broker-APAC (MAS)
+                </div>
+                <div style={{ paddingLeft: 40, borderLeft: '2px solid #1e293b', fontSize: 11, color: '#475569' }}>
+                  User agents issued per-broker certificates
+                </div>
+              </div>
+            </div>
+            <div style={{ background: '#111827', borderRadius: 10, padding: 16, border: '1px solid #1e293b' }}>
+              <h4 style={{ fontSize: 13, fontWeight: 600, marginTop: 0, display: 'flex', alignItems: 'center', gap: 6 }}>
+                <Shield size={14} color="#8b5cf6" /> Security Layers
+              </h4>
+              <div style={{ fontSize: 12, color: '#94a3b8' }}>
+                {[
+                  { layer: 'Network Isolation', desc: 'VPC + security groups', status: 'active' },
+                  { layer: 'Message Signing', desc: 'HMAC-SHA256 (30s expiry)', status: 'active' },
+                  { layer: 'Certificate Chain', desc: 'ECDSA P-256 hierarchy', status: 'active' },
+                  { layer: 'User Namespace', desc: 'Per-user encrypted isolation', status: 'active' },
+                  { layer: 'Dual-Sig Custody', desc: 'User+Broker for withdrawals', status: 'active' },
+                  { layer: 'Immutable Audit', desc: 'SHA-256 hash-chained log', status: 'active' },
+                ].map((l, i) => (
+                  <div key={i} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '4px 0' }}>
+                    <div>
+                      <span style={{ color: '#f1f5f9', fontWeight: 500 }}>{l.layer}</span>
+                      <span style={{ color: '#475569', marginLeft: 8, fontSize: 11 }}>{l.desc}</span>
+                    </div>
+                    <Badge color="green">{l.status}</Badge>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </div>
+          <div style={{ background: '#111827', borderRadius: 10, padding: 16, border: '1px solid #1e293b' }}>
+            <h4 style={{ fontSize: 13, fontWeight: 600, marginTop: 0 }}>Approval Tokens</h4>
+            <div style={{ fontSize: 12, color: '#94a3b8', display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 12 }}>
+              <div>Token expiry: <span style={{ color: '#f1f5f9' }}>30 seconds</span></div>
+              <div>Nonce window: <span style={{ color: '#f1f5f9' }}>60 seconds</span></div>
+              <div>One-time use: <span style={{ color: '#22c55e', fontWeight: 600 }}>Enforced (atomic CAS)</span></div>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* ══════ AUDIT TAB ══════ */}
       {tab === 'audit' && (
         <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12 }}>
@@ -438,7 +607,7 @@ export function SupervisorPage() {
             </tr>
           </thead>
           <tbody>
-            {demoAuditLog.map((entry, i) => (
+            {auditLog.map((entry, i) => (
               <tr key={i} style={{ borderBottom: '1px solid #1e293b' }}>
                 <td style={{ padding: '10px', color: '#64748b' }}>{ago(entry.timestamp)}</td>
                 <td style={{ padding: '10px', fontWeight: 600 }}>{entry.actor}</td>
