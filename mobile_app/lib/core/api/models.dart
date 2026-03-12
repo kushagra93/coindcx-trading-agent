@@ -3,6 +3,9 @@ class TokenMetrics {
   final String name;
   final String chain;
   final double priceUsd;
+  final double? priceChange5m;
+  final double? priceChange1h;
+  final double? priceChange6h;
   final double? priceChange24h;
   final double? volume24h;
   final double? liquidity;
@@ -17,6 +20,9 @@ class TokenMetrics {
     required this.name,
     required this.chain,
     required this.priceUsd,
+    this.priceChange5m,
+    this.priceChange1h,
+    this.priceChange6h,
     this.priceChange24h,
     this.volume24h,
     this.liquidity,
@@ -35,6 +41,9 @@ class TokenMetrics {
       priceUsd: (json['priceUsd'] as num?)?.toDouble()
           ?? (json['price'] as num?)?.toDouble()
           ?? 0.0,
+      priceChange5m: (json['priceChange5m'] as num?)?.toDouble(),
+      priceChange1h: (json['priceChange1h'] as num?)?.toDouble(),
+      priceChange6h: (json['priceChange6h'] as num?)?.toDouble(),
       priceChange24h: (json['priceChange24h'] as num?)?.toDouble(),
       volume24h: (json['volume24h'] as num?)?.toDouble(),
       liquidity: (json['liquidity'] as num?)?.toDouble(),

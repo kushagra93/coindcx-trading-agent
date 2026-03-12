@@ -13,6 +13,7 @@ export interface TokenMetrics {
   price: number;
   priceChange5m: number;
   priceChange1h: number;
+  priceChange6h: number;
   priceChange24h: number;
   volume24h: number;
   marketCap: number;
@@ -119,6 +120,7 @@ function pairToMetrics(pair: DexScreenerPair, symbolOverride?: string): TokenMet
     price: parseFloat(pair.priceUsd ?? '0'),
     priceChange5m: pair.priceChange?.m5 ?? 0,
     priceChange1h: pair.priceChange?.h1 ?? 0,
+    priceChange6h: pair.priceChange?.h6 ?? 0,
     priceChange24h: pair.priceChange?.h24 ?? 0,
     volume24h: pair.volume?.h24 ?? 0,
     marketCap: pair.marketCap ?? pair.fdv ?? 0,
@@ -181,38 +183,44 @@ export async function lookupByAddress(address: string): Promise<{ metrics: Token
 }
 
 export async function fetchTrending(): Promise<TokenMetrics[]> {
-  // Fetch known popular tokens in parallel, filter for green 24h, sort by volume
-  const symbols = Object.keys(KNOWN_TOKEN_ADDRESSES);
+  try {
+    const res = await fetch(`${DEXSCREENER_BASE}/token-boosts/top/v1`);
+    if (!res.ok) return [];
+    const data = await res.json() as Array<{ tokenAddress: string; chainId: string; amount?: number }>;
 
-  const fetches = symbols.map(async (sym) => {
-    try {
-      const addr = KNOWN_TOKEN_ADDRESSES[sym];
-      const res = await fetch(`${DEXSCREENER_BASE}/latest/dex/tokens/${addr}`);
-      if (!res.ok) return null;
-      const data = await res.json() as { pairs?: DexScreenerPair[] };
-      if (!data.pairs || data.pairs.length === 0) return null;
-      return pairToMetrics(pickBestPair(data.pairs, sym), sym);
-    } catch { return null; }
-  });
+    const results: TokenMetrics[] = [];
+    const seen = new Set<string>();
 
-  const results = (await Promise.all(fetches)).filter((t): t is TokenMetrics => t !== null);
+    // Fetch all token data in parallel (batches of 5 to avoid rate limits)
+    const items = data.slice(0, 20).filter(item => {
+      if (seen.has(item.tokenAddress)) return false;
+      seen.add(item.tokenAddress);
+      return true;
+    });
 
-  // Only show tokens that are green on 24h and have meaningful volume
-  const greenTokens = results
-    .filter(t => t.priceChange24h > 0 && t.volume24h > 10_000)
-    .sort((a, b) => b.volume24h - a.volume24h);
+    const fetches = items.map(async (item) => {
+      try {
+        const lookup = await lookupByAddress(item.tokenAddress);
+        if (lookup) {
+          const m = lookup.metrics;
+          (m as any).boosts = item.amount ?? 0;
+          return m;
+        }
+      } catch { /* skip */ }
+      return null;
+    });
 
-  // If not enough green tokens, also include top volume tokens regardless of color
-  if (greenTokens.length >= 5) return greenTokens.slice(0, 15);
+    const fetched = await Promise.all(fetches);
+    for (const m of fetched) {
+      if (m) results.push(m);
+      if (results.length >= 15) break;
+    }
 
-  const byVolume = results
-    .sort((a, b) => b.volume24h - a.volume24h)
-    .slice(0, 15);
-
-  // Green first, then rest by volume
-  const seen = new Set(greenTokens.map(t => t.symbol));
-  const combined = [...greenTokens, ...byVolume.filter(t => !seen.has(t.symbol))];
-  return combined.slice(0, 15);
+    return results;
+  } catch (e) {
+    log.warn({ err: e }, 'Trending fetch failed');
+    return [];
+  }
 }
 
 // ─── RugCheck (Solana) ────────────────────────────────────────────────

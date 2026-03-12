@@ -324,48 +324,63 @@ The application runs in one of 8 service modes, set via `SERVICE_MODE` environme
 ## Getting Started
 
 ### Prerequisites
-- Node.js 18+
-- npm or pnpm
 
-### Quick Start (Dashboard Only)
+- **Node.js 18+** (recommend v20 or v24 via nvm)
+- **Flutter 3.32+** (for the mobile app)
+- npm
+
+### Quick Start — Mobile App + Backend API
+
+This is the recommended way to run the full app (Discovery, AI Chat, Trading, Portfolio):
 
 ```bash
-# Clone
+# 1. Clone and install backend dependencies
 git clone https://github.com/kushagra93/coindcx-trading-agent.git
 cd coindcx-trading-agent
+npm install
 
-# Install dependencies
+# 2. Create .env file with API keys
+cat > .env << 'EOF'
+OPENROUTER_API_KEY=your_openrouter_key_here
+OPENROUTER_MODEL=minimax/minimax-m2.5
+BIRDEYE_API_KEY=your_birdeye_key_here     # optional, enriches holder data
+HELIUS_API_KEY=your_helius_key_here       # optional, enriches Solana holder data
+EOF
+
+# 3. Start the backend API server (Terminal 1)
+NODE_TLS_REJECT_UNAUTHORIZED=0 SERVICE_MODE=api DRY_RUN=true PORT=3000 npx tsx src/index.ts
+
+# 4. Run the Flutter mobile app (Terminal 2)
+cd mobile_app
+flutter pub get
+flutter run -d chrome --web-port 8080
+
+# Open http://localhost:8080
+```
+
+### API Keys
+
+| Variable | Required | Where to get | Purpose |
+|----------|----------|-------------|---------|
+| `OPENROUTER_API_KEY` | **Yes** (for AI chat) | [openrouter.ai](https://openrouter.ai) | LLM-powered chat responses |
+| `OPENROUTER_MODEL` | No | — | Defaults to `minimax/minimax-m2.5` |
+| `BIRDEYE_API_KEY` | No | [birdeye.so](https://birdeye.so) | Token holder distribution data |
+| `HELIUS_API_KEY` | No | [helius.dev](https://helius.dev) | Solana token holder counts |
+
+> **Note**: The app works without any API keys — trending tokens, screening, and trading all use DexScreener (free, no key needed). The OpenRouter key enables AI-powered chat. Birdeye/Helius keys add richer holder data to screening results.
+
+### Quick Start — Supervisor Dashboard (Legacy)
+
+```bash
 npm install
 cd dashboard && npm install && cd ..
-
-# Run the dashboard
 npm run dashboard
 # Open http://localhost:5174/app/home
 ```
 
-The dashboard runs in **paper trading mode** with simulated data — no API keys needed.
-
-### Full Backend Setup
+### Full Multi-Tier Deployment
 
 ```bash
-# Copy environment config
-cp .env.example .env
-# Edit .env with your API keys (Helius, Alchemy, Anthropic, etc.)
-
-# Start infrastructure
-docker-compose up -d   # PostgreSQL + Redis
-
-# Run backend
-npm run dev
-
-# Run dashboard (separate terminal)
-npm run dashboard
-```
-
-### Multi-Tier Deployment
-
-```bash
-# Start the full agent economy
 docker-compose up -d
 
 # Services started:
@@ -383,7 +398,7 @@ docker-compose up -d
 #   redis         - Redis
 ```
 
-### Environment Variables
+### Environment Variables (Full Backend)
 
 See `.env.example` for all configuration options. Key ones:
 
@@ -394,8 +409,7 @@ See `.env.example` for all configuration options. Key ones:
 | `BROKER_JURISDICTION` | For broker | `US`, `EU`, `APAC`, or `GLOBAL` |
 | `SOLANA_RPC_URL` | For live | Helius/QuickNode Solana RPC |
 | `EVM_RPC_URL` | For live | Alchemy/Infura EVM RPC |
-| `ANTHROPIC_API_KEY` | For AI | Claude API for chat/NLP helper |
-| `DATABASE_URL` | For backend | PostgreSQL connection string |
+| `DATABASE_URL` | For backend | PostgreSQL connection string (optional) |
 | `REDIS_URL` | For backend | Redis for streams, pub/sub, and agent state |
 
 ---
@@ -478,6 +492,33 @@ The dashboard is a standalone React 19 + Vite app under `dashboard/`. Key files:
 - No new dependencies unless necessary
 - TypeScript strict mode — zero `any` types
 - Functional components with hooks
+
+---
+
+## Changelog
+
+### v0.4.0 — DexScreener Trending Feed (2026-03-12)
+- **Discovery overhaul**: Replaced hardcoded token list with DexScreener Token Boosts API (`/token-boosts/top/v1`) — shows the same trending/boosted tokens as DexScreener's frontend
+- **Table layout**: Discovery screen now shows ranked tokens in a DexScreener-style table with price, 24h change, volume, and market cap columns
+- **Added 6h price change**: Backend and Flutter models now carry 5m, 1h, 6h, and 24h price changes
+
+### v0.3.0 — Trending, Sell Flow, Push (2026-03-12)
+- **Trending filter**: Show top volume tokens that are green on 24h timeframe
+- **Sell flow**: Added sell functionality in chat and portfolio screen
+- **Portfolio refresh**: Auto-refresh portfolio data when navigating to the Portfolio tab
+
+### v0.2.0 — LLM Chat, Trade Execution, Birdeye/Helius (2026-03-12)
+- **LLM integration**: Connected OpenRouter (MiniMax M2.5) for AI-powered chat responses with context injection
+- **Chat UI cards**: Rich rendering for trending, screening, price, trade preview, and trade executed cards with suggestion chips
+- **End-to-end trade flow**: Buy/sell from chat with confirm button, dry-run execution, portfolio tracking
+- **Birdeye + Helius**: Optional API integrations for richer token holder data on Solana tokens
+- **Merge with main**: Integrated multi-agent architecture from main branch
+
+### v0.1.0 — Flutter Mobile App + Backend API (2026-03-11)
+- **Flutter mobile app**: CoinDCX design system, Riverpod state management, 4-tab navigation (Discover, Chat, Portfolio, Settings)
+- **Backend API routes**: Token search, trending, screening, chat, trade quote/execute, portfolio
+- **Live data**: DexScreener for market data, RugCheck for Solana safety, GoPlus for EVM security
+- **CORS + SSL fixes**: Development environment setup for corporate proxy
 
 ## License
 
