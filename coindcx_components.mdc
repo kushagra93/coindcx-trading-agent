@@ -1,0 +1,578 @@
+---
+description: "CoinDCX component blueprints — exact token mapping for every UI component. Use alongside flutter_hackathon.mdc when building any Flutter widget."
+alwaysApply: true
+---
+
+# CoinDCX Component Blueprints
+
+**Purpose:** This rule provides the exact token usage for every UI component so generated code matches the design system. Each component specifies typography, colors, spacing, and radius from the tokens defined in `flutter_hackathon.mdc` §3.
+
+**How to use:** When building any UI component, find its blueprint below and follow the token assignments exactly. Access tokens via `context.colors` (c), `context.fonts` (f), `context.sizes` (s).
+
+---
+
+## 1. Buttons
+
+### 1.1 Primary filled button
+
+- **Background:** `c.actionBackgroundPrimary`
+- **Text color:** `c.actionForegroundPrimary`
+- **Text style:** `f.uiTextSB` (14/20, weight 600)
+- **Padding:** vertical `s.sizeButtonButton` (12), horizontal `s.sizeGeneralL` (20)
+- **Radius:** `s.cornerRadiusButtonButton` (8)
+- **Elevation:** 0
+
+```dart
+SizedBox(
+  width: double.infinity,
+  child: ElevatedButton(
+    onPressed: () {},
+    style: ElevatedButton.styleFrom(
+      backgroundColor: c.actionBackgroundPrimary,
+      foregroundColor: c.actionForegroundPrimary,
+      elevation: 0,
+      padding: EdgeInsets.symmetric(
+        vertical: s.sizeButtonButton,
+        horizontal: s.sizeGeneralL,
+      ),
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(s.cornerRadiusButtonButton),
+      ),
+    ),
+    child: Text('Button Text', style: f.uiTextSB),
+  ),
+)
+```
+
+### 1.2 Secondary outlined button
+
+- **Background:** `c.generalBackgroundBgL1`
+- **Border:** `c.actionBackgroundPrimary`
+- **Text color:** `c.actionBackgroundPrimary`
+- **Text style:** `f.uiTextSB` (14/20)
+- **Padding / radius:** same as primary
+
+```dart
+OutlinedButton(
+  onPressed: () {},
+  style: OutlinedButton.styleFrom(
+    foregroundColor: c.actionBackgroundPrimary,
+    backgroundColor: c.generalBackgroundBgL1,
+    side: BorderSide(color: c.actionBackgroundPrimary),
+    elevation: 0,
+    padding: EdgeInsets.symmetric(
+      vertical: s.sizeButtonButton,
+      horizontal: s.sizeGeneralL,
+    ),
+    shape: RoundedRectangleBorder(
+      borderRadius: BorderRadius.circular(s.cornerRadiusButtonButton),
+    ),
+  ),
+  child: Text('Button Text', style: f.uiTextSB.copyWith(color: c.actionBackgroundPrimary)),
+)
+```
+
+### 1.3 Text button (ghost)
+
+- **Background:** transparent
+- **Text color:** `c.actionBackgroundPrimary`
+- **Text style:** `f.uiTextSB` (14/20)
+
+```dart
+TextButton(
+  onPressed: () {},
+  child: Text('Button Text', style: f.uiTextSB.copyWith(color: c.actionBackgroundPrimary)),
+)
+```
+
+### 1.4 Small / compact button
+
+- **Text style:** `f.bodySB` (12/16) — only case where button text is < 14px
+- **Padding:** vertical `s.sizeButtonSButton` (8), horizontal `s.sizeGeneralS` (12)
+
+---
+
+## 2. Input field
+
+### 2.1 Default input
+
+- **Container bg:** `c.generalBackgroundBgL1`
+- **Border:** `c.generalStrokeL2` (default), `c.actionBackgroundPrimary` (focused), `c.negativeBackgroundPrimary` (error)
+- **Radius:** `s.cornerRadiusInputInput` (8)
+- **Label (above field):** `f.bodyR` (12/16), color `c.generalForegroundSecondary`
+- **Input value text:** `f.uiTextR` (14/20), color `c.generalForegroundPrimary`
+- **Placeholder / hint:** `f.uiTextR` (14/20), color `c.generalForegroundTertiary`
+- **Error text (below):** `f.bodyR` (12/16), color `c.negativeBackgroundPrimary`
+- **Content padding:** horizontal `s.sizeInputInputH` (16), vertical `s.sizeInputInputV` (6)
+
+```dart
+Column(
+  crossAxisAlignment: CrossAxisAlignment.start,
+  children: [
+    Text('Label', style: f.bodyR.copyWith(color: c.generalForegroundSecondary)),
+    SizedBox(height: s.sizeGeneralXXS),
+    TextField(
+      style: f.uiTextR.copyWith(color: c.generalForegroundPrimary),
+      decoration: InputDecoration(
+        hintText: 'Placeholder',
+        hintStyle: f.uiTextR.copyWith(color: c.generalForegroundTertiary),
+        contentPadding: EdgeInsets.symmetric(
+          horizontal: s.sizeInputInputH,
+          vertical: s.sizeInputInputV,
+        ),
+        filled: true,
+        fillColor: c.generalBackgroundBgL1,
+        border: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(s.cornerRadiusInputInput),
+          borderSide: BorderSide(color: c.generalStrokeL2),
+        ),
+        enabledBorder: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(s.cornerRadiusInputInput),
+          borderSide: BorderSide(color: c.generalStrokeL2),
+        ),
+        focusedBorder: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(s.cornerRadiusInputInput),
+          borderSide: BorderSide(color: c.actionBackgroundPrimary),
+        ),
+        errorBorder: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(s.cornerRadiusInputInput),
+          borderSide: BorderSide(color: c.negativeBackgroundPrimary),
+        ),
+      ),
+    ),
+  ],
+)
+```
+
+### 2.2 Hero input (large numeric)
+
+- **Text style:** `f.lHeadlineSB` (20/24) or `f.xlHeadlineSB` (24/28)
+- **No border;** underline or borderless style
+
+---
+
+## 3. Dropdown
+
+### 3.1 Dropdown trigger
+
+Same anatomy as **Input field** (§2) with a trailing chevron icon (size 20, `c.generalForegroundSecondary`).
+
+### 3.2 Dropdown menu
+
+- **Container bg:** `c.generalBackgroundBgL1`
+- **Radius:** `s.cornerRadiusCardSCard` (8)
+- **Shadow:** elevation 4 or equivalent `BoxShadow`
+- **Menu item text:** `f.uiTextR` (14/20), color `c.generalForegroundPrimary`
+- **Item vertical padding:** `s.sizeGeneralS` (12)
+- **Item horizontal padding:** `s.sizeGeneralM` (16)
+- **Divider between items:** `c.generalStrokeL1`
+
+```dart
+Container(
+  decoration: BoxDecoration(
+    color: c.generalBackgroundBgL1,
+    borderRadius: BorderRadius.circular(s.cornerRadiusCardSCard),
+    boxShadow: [
+      BoxShadow(
+        color: c.generalForegroundPrimary.withValues(alpha: 0.08),
+        blurRadius: 16,
+        offset: const Offset(0, 4),
+      ),
+    ],
+  ),
+  child: Column(
+    mainAxisSize: MainAxisSize.min,
+    children: items.map((item) => InkWell(
+      onTap: () {},
+      child: Padding(
+        padding: EdgeInsets.symmetric(
+          horizontal: s.sizeGeneralM,
+          vertical: s.sizeGeneralS,
+        ),
+        child: Text(item, style: f.uiTextR.copyWith(color: c.generalForegroundPrimary)),
+      ),
+    )).toList(),
+  ),
+)
+```
+
+---
+
+## 4. Header / AppBar
+
+### 4.1 Standard header (L2 — white background)
+
+- **Background:** `c.generalBackgroundBgL1`
+- **Title:** `f.headlineSB` (16/20), color `c.generalForegroundPrimary`
+- **Back icon:** size 24, color `c.generalForegroundPrimary`
+- **Action icons:** size 24, color `c.generalForegroundPrimary`
+- **Bottom border:** `c.generalStrokeL1`
+
+### 4.2 Accent header (colored background)
+
+- **Background:** `c.actionBackgroundPrimary`
+- **Title:** `f.headlineSB` (16/20), color `c.actionForegroundPrimary`
+- **Icons:** color `c.actionForegroundPrimary`
+
+### 4.3 Tab bar below header
+
+- **Active tab:** `f.headlineSB` (16/20), color `c.actionBackgroundPrimary` (on white bg) or `c.actionForegroundPrimary` (on accent bg), with 2px underline
+- **Inactive tab:** `f.headlineR` (16/20), color `c.generalForegroundTertiary` (on white bg) or `c.actionForegroundPrimary` at 60% opacity (on accent bg)
+
+---
+
+## 5. Tabs
+
+### 5.1 L1 — page-level tabs
+
+- **Active:** `f.headlineSB` (16/20), `c.generalForegroundPrimary`
+- **Inactive:** `f.headlineR` (16/20), `c.generalForegroundTertiary`
+- **Indicator:** none (text weight change is the signal)
+
+### 5.2 L2 — section tabs with underline
+
+- **Active:** `f.headlineSB` (16/20), `c.actionBackgroundPrimary`, 2px underline
+- **Inactive:** `f.headlineR` (16/20), `c.generalForegroundTertiary`
+- **Spacing between tabs:** `s.sizeGeneralL` (20)
+
+```dart
+GestureDetector(
+  onTap: () {},
+  child: Column(
+    children: [
+      Text(
+        'Tab Label',
+        style: isActive
+            ? f.headlineSB.copyWith(color: c.actionBackgroundPrimary)
+            : f.headlineR.copyWith(color: c.generalForegroundTertiary),
+      ),
+      SizedBox(height: s.sizeGeneralXXS),
+      if (isActive)
+        Container(
+          height: 2,
+          width: 24,
+          decoration: BoxDecoration(
+            color: c.actionBackgroundPrimary,
+            borderRadius: BorderRadius.circular(1),
+          ),
+        ),
+    ],
+  ),
+)
+```
+
+### 5.3 L3 — chip / pill tabs
+
+- **Active:** `f.bodySB` (12/16), `c.actionForegroundPrimary`, bg `c.actionBackgroundPrimary`, radius `s.cornerRadiusCardSCard` (8)
+- **Inactive:** `f.bodyR` (12/16), `c.generalForegroundSecondary`, no background
+- **Padding:** vertical `s.sizeGeneralXXS` (4), horizontal `s.sizeGeneralS` (12)
+
+```dart
+Container(
+  padding: EdgeInsets.symmetric(
+    vertical: s.sizeGeneralXXS,
+    horizontal: s.sizeGeneralS,
+  ),
+  decoration: BoxDecoration(
+    color: isActive ? c.actionBackgroundPrimary : Colors.transparent,
+    borderRadius: BorderRadius.circular(s.cornerRadiusCardSCard),
+  ),
+  child: Text(
+    'Tab',
+    style: isActive
+        ? f.bodySB.copyWith(color: c.actionForegroundPrimary)
+        : f.bodyR.copyWith(color: c.generalForegroundSecondary),
+  ),
+)
+```
+
+---
+
+## 6. Tags / Badges
+
+- **Text style:** `f.sLabelSB` (8/12, weight 600), **UPPERCASE**
+- **Padding:** vertical `s.sizeGeneralXXS` (4), horizontal `s.sizeChipChip` (8)
+- **Radius:** `s.cornerRadiusCardSCard` (8)
+
+**Color variants (bg / text):**
+
+| Variant | Background | Text color |
+|---|---|---|
+| Positive (green) | `c.positiveBackgroundSecondary` | `c.positiveBackgroundPrimary` |
+| Negative (red) | `c.negativeBackgroundSecondary` | `c.negativeBackgroundPrimary` |
+| Alert (orange) | `c.alertBackgroundSecondary` | `c.alertBackgroundPrimary` |
+| Action (blue) | `c.actionBackgroundSecondary` | `c.actionBackgroundPrimary` |
+| Neutral (gray) | `c.generalBackgroundBgL2` | `c.generalForegroundSecondary` |
+
+```dart
+Container(
+  padding: EdgeInsets.symmetric(
+    vertical: s.sizeGeneralXXS,
+    horizontal: s.sizeChipChip,
+  ),
+  decoration: BoxDecoration(
+    color: c.positiveBackgroundSecondary,
+    borderRadius: BorderRadius.circular(s.cornerRadiusCardSCard),
+  ),
+  child: Text(
+    'TAG TEXT',
+    style: f.sLabelSB.copyWith(color: c.positiveBackgroundPrimary),
+  ),
+)
+```
+
+### 6.1 Flag tag (left-anchored)
+
+Same as above but with a flat left edge (use `BorderRadius.only` with left radii at 0).
+
+---
+
+## 7. Toast / Snackbar
+
+- **Radius:** `s.cornerRadiusGeneralXS` (8)
+- **Text style:** `f.uiTextM` (14/20, weight 500)
+- **Text color:** white (`c.actionForegroundPrimary`)
+- **Leading indicator:** 8px circle, white
+- **Padding:** horizontal `s.sizeGeneralM` (16), vertical `s.sizeGeneralS` (12)
+
+**Variants:**
+
+| Variant | Background |
+|---|---|
+| Success | `c.positiveBackgroundPrimary` |
+| Error | `c.negativeBackgroundPrimary` |
+| Warning | `c.alertBackgroundPrimary` |
+| Neutral | `c.generalBackgroundBgL3` (text: `c.generalForegroundPrimary`) |
+
+```dart
+Container(
+  width: double.infinity,
+  padding: EdgeInsets.symmetric(
+    horizontal: s.sizeGeneralM,
+    vertical: s.sizeGeneralS,
+  ),
+  decoration: BoxDecoration(
+    color: c.positiveBackgroundPrimary,
+    borderRadius: BorderRadius.circular(s.cornerRadiusGeneralXS),
+  ),
+  child: Row(
+    children: [
+      Container(
+        width: 8,
+        height: 8,
+        decoration: const BoxDecoration(
+          color: Colors.white,
+          shape: BoxShape.circle,
+        ),
+      ),
+      SizedBox(width: s.sizeGeneralS),
+      Expanded(
+        child: Text(
+          'Toast message goes here',
+          style: f.uiTextM.copyWith(color: c.actionForegroundPrimary),
+        ),
+      ),
+    ],
+  ),
+)
+```
+
+---
+
+## 8. Checkbox / Toggle / Radio
+
+### 8.1 Checkbox
+
+- **Size:** 24x24
+- **Active:** bg `c.actionBackgroundPrimary`, white check icon, radius 4
+- **Inactive:** bg transparent, border `c.generalStrokeL3`, radius 4
+
+### 8.2 Toggle / Switch
+
+- **Track size:** 48x28
+- **Active track:** `c.actionBackgroundPrimary`
+- **Inactive track:** `c.generalBackgroundBgL3`
+- **Thumb:** white circle, 22px diameter
+
+### 8.3 Radio
+
+- **Size:** 24x24, circle
+- **Active:** `c.actionBackgroundPrimary` fill with white inner dot
+- **Inactive:** border `c.generalStrokeL3`, no fill
+
+**Use Flutter Material widgets** (`Checkbox`, `Switch`, `Radio`) and theme them via `ThemeData` or widget-level `activeColor` / `fillColor`:
+
+```dart
+Checkbox(
+  value: isChecked,
+  onChanged: (v) {},
+  activeColor: c.actionBackgroundPrimary,
+  side: BorderSide(color: c.generalStrokeL3, width: 1.5),
+  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(4)),
+)
+
+Switch(
+  value: isOn,
+  onChanged: (v) {},
+  activeColor: Colors.white,
+  activeTrackColor: c.actionBackgroundPrimary,
+  inactiveThumbColor: Colors.white,
+  inactiveTrackColor: c.generalBackgroundBgL3,
+)
+
+Radio<String>(
+  value: option,
+  groupValue: selected,
+  onChanged: (v) {},
+  activeColor: c.actionBackgroundPrimary,
+)
+```
+
+---
+
+## 9. Cards
+
+- **Background:** `c.generalBackgroundBgL1`
+- **Radius:** `s.cornerRadiusCardCard` (16) for standard, `s.cornerRadiusCardSCard` (8) for compact
+- **Border:** `c.generalStrokeL2`
+- **Padding:** `s.sizeGeneralM` (16) all sides
+- **Title:** `f.uiTextSB` (14/20), color `c.generalForegroundPrimary`
+- **Subtitle / secondary:** `f.bodyR` (12/16), color `c.generalForegroundSecondary`
+- **Divider inside card:** `c.generalStrokeL1`
+
+```dart
+Container(
+  padding: EdgeInsets.all(s.sizeGeneralM),
+  decoration: BoxDecoration(
+    color: c.generalBackgroundBgL1,
+    borderRadius: BorderRadius.circular(s.cornerRadiusCardCard),
+    border: Border.all(color: c.generalStrokeL2),
+  ),
+  child: Column(
+    crossAxisAlignment: CrossAxisAlignment.start,
+    children: [
+      Text('Card Title', style: f.uiTextSB.copyWith(color: c.generalForegroundPrimary)),
+      SizedBox(height: s.sizeGeneralXXS),
+      Text('Secondary info', style: f.bodyR.copyWith(color: c.generalForegroundSecondary)),
+    ],
+  ),
+)
+```
+
+---
+
+## 10. List items / Selection rows
+
+### 10.1 Simple list item
+
+- **Leading icon:** 24px, color `c.generalForegroundSecondary`
+- **Primary text:** `f.uiTextSB` (14/20), color `c.generalForegroundPrimary`
+- **Trailing icon/chevron:** 20px, color `c.generalForegroundTertiary`
+- **Vertical padding:** `s.sizeGeneralS` (12)
+- **Horizontal padding:** `s.sizeGeneralM` (16)
+
+### 10.2 Two-line list item
+
+- **Primary text:** `f.uiTextSB` (14/20), color `c.generalForegroundPrimary`
+- **Secondary text:** `f.bodyR` (12/16), color `c.generalForegroundSecondary`
+- **Spacing between lines:** `s.sizeGeneralXXS` (4)
+
+### 10.3 Selection item (with check)
+
+- **Leading check circle:** 24px, bg `c.positiveBackgroundSecondary`, icon `c.positiveBackgroundPrimary` (when selected)
+- **Text:** `f.uiTextR` (14/20), color `c.generalForegroundPrimary`
+- **Trailing indicator:** 8px circle, color `c.generalForegroundTertiary`
+- **Row bg (selected):** `c.positiveBackgroundSecondary`
+
+```dart
+Container(
+  padding: EdgeInsets.symmetric(
+    horizontal: s.sizeGeneralM,
+    vertical: s.sizeGeneralS,
+  ),
+  decoration: BoxDecoration(
+    color: isSelected ? c.positiveBackgroundSecondary : c.generalBackgroundBgL1,
+    borderRadius: BorderRadius.circular(s.cornerRadiusCardSCard),
+  ),
+  child: Row(
+    children: [
+      Icon(
+        isSelected ? Icons.check_circle : Icons.circle_outlined,
+        size: 24,
+        color: isSelected ? c.positiveBackgroundPrimary : c.generalForegroundTertiary,
+      ),
+      SizedBox(width: s.sizeGeneralS),
+      Expanded(
+        child: Text(
+          'Selection item',
+          style: f.uiTextR.copyWith(color: c.generalForegroundPrimary),
+        ),
+      ),
+      Icon(Icons.circle, size: 8, color: c.generalForegroundTertiary),
+    ],
+  ),
+)
+```
+
+---
+
+## 11. Bottom navigation
+
+- **Bar height:** 56
+- **Bar background:** `c.generalBackgroundBgL1`
+- **Top border:** `c.generalStrokeL2`
+- **Icon size:** 22
+- **Label style:** `f.labelM` (10/16)
+- **Active color:** `c.actionBackgroundPrimary`
+- **Inactive color:** `c.generalForegroundTertiary`
+- **Item width:** 64
+
+```dart
+GestureDetector(
+  onTap: onTap,
+  behavior: HitTestBehavior.opaque,
+  child: SizedBox(
+    width: 64,
+    child: Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Icon(
+          isActive ? activeIcon : icon,
+          size: 22,
+          color: isActive ? c.actionBackgroundPrimary : c.generalForegroundTertiary,
+        ),
+        const SizedBox(height: 2),
+        Text(
+          label,
+          style: f.labelM.copyWith(
+            color: isActive ? c.actionBackgroundPrimary : c.generalForegroundTertiary,
+          ),
+        ),
+      ],
+    ),
+  ),
+)
+```
+
+---
+
+## 12. Bottom sheet
+
+- **Background:** `c.generalBackgroundBgL1`
+- **Radius (top only):** `s.cornerRadiusBottomSheetBottomSheet` (20) for topLeft and topRight
+- **Handle bar:** 36x4, color `c.generalStrokeL3`, centered, radius 2
+- **Title:** `f.headlineSB` (16/20), color `c.generalForegroundPrimary`
+- **Padding:** `s.sizePagePageMargin` (20) horizontal, `s.sizeGeneralM` (16) vertical
+
+---
+
+## Quick reference — minimum font sizes
+
+| Context | Minimum style | Size |
+|---|---|---|
+| Any readable body text | `uiTextR` | 14px |
+| Secondary / supporting text | `bodyR` | 12px |
+| Captions, field labels | `bodyR` | 12px |
+| Bottom-nav labels | `labelM` | 10px |
+| Tags, badges, tiny counts | `sLabelSB` | 8px |
+| Never use for readable content | `xsBody`, `xsLabel` | 7–9px |

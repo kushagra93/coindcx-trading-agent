@@ -45,18 +45,25 @@ export function ChatScreen() {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages]);
 
-  const send = (text: string) => {
+  const send = async (text: string) => {
     if (!text.trim()) return;
     const userMsg: ChatMessage = { id: `u${Date.now()}`, role: 'user', text };
     setMessages(prev => [...prev, userMsg]);
     setInput('');
     setIsTyping(true);
 
-    setTimeout(() => {
-      const reply = processMessage(text);
+    try {
+      const reply = await processMessage(text);
       setMessages(prev => [...prev, reply]);
+    } catch (e) {
+      setMessages(prev => [...prev, {
+        id: `e${Date.now()}`,
+        role: 'assistant',
+        text: `Error fetching live data: ${e instanceof Error ? e.message : 'Unknown error'}. Try again.`,
+      }]);
+    } finally {
       setIsTyping(false);
-    }, 400 + Math.random() * 400);
+    }
   };
 
   const showChips = messages.length <= 1;
