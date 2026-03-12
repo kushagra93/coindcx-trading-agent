@@ -106,7 +106,7 @@ export function loadConfig(): AppConfig {
     dryRun: envOrDefault('DRY_RUN', 'true').toLowerCase() === 'true',
 
     database: {
-      url: envOrThrow('DATABASE_URL'),
+      url: envOrDefault('DATABASE_URL', ''),
     },
 
     redis: {

@@ -10,6 +10,9 @@ import { controlRoutes } from './routes/control.js';
 import { leaderboardRoutes } from './routes/leaderboard.js';
 import { adminRoutes } from './routes/admin.js';
 import { supervisorRoutes } from './routes/supervisor.js';
+import { tokenRoutes } from './routes/tokens.js';
+import { chatRoutes } from './routes/chat.js';
+import { tradeRoutes } from './routes/trade.js';
 
 const log = createChildLogger('api-server');
 
@@ -35,8 +38,9 @@ export async function createServer() {
 
   // Auth middleware — extract user from host app token
   app.addHook('onRequest', async (request, reply) => {
-    // Skip auth for health checks
+    // Skip auth for health checks and public API routes (hackathon mode)
     if (request.url === '/health' || request.url === '/ready') return;
+    if (request.url.startsWith('/api/v1/tokens/') || request.url.startsWith('/api/v1/chat') || request.url.startsWith('/api/v1/trade/')) return;
 
     const authHeader = request.headers.authorization;
     if (!authHeader?.startsWith('Bearer ')) {
@@ -85,6 +89,9 @@ export async function createServer() {
   await app.register(leaderboardRoutes);
   await app.register(adminRoutes);
   await app.register(supervisorRoutes);
+  await app.register(tokenRoutes);
+  await app.register(chatRoutes);
+  await app.register(tradeRoutes);
 
   // Wallet routes
   app.get<{ Params: { chain: string } }>('/api/v1/wallet/address/:chain', async (request, reply) => {
