@@ -22,10 +22,11 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
   void initState() {
     super.initState();
     _messages.add(ChatMessage(
-      text: 'Hey! I can help you discover, screen, and trade tokens. '
-          'Try "show trending", "screen SOL", "price of ETH", or "buy 10 BONK".',
+      text: 'Hey! I\'m your AI trading agent. I can discover tokens, run safety audits, '
+          'trade, and manage your portfolio. Try "trending", "screen SOL", "portfolio", or "buy ETH \$200".',
       isUser: false,
       timestamp: DateTime.now(),
+      suggestions: ['trending', 'portfolio', 'screen SOL', 'help'],
     ));
   }
 
@@ -178,6 +179,8 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
         return _buildTradePreviewCard(card.data, colors);
       case 'trade_executed':
         return _buildTradeExecutedCard(card.data, colors);
+      case 'portfolio':
+        return _buildPortfolioCard(card.data, colors);
       default:
         return const SizedBox.shrink();
     }
@@ -455,6 +458,84 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
           _kvRow('Quantity', quantity.toStringAsFixed(6), colors),
           _kvRow('Price', _formatPrice(price), colors),
           _kvRow('Chain', chain, colors),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildPortfolioCard(Map<String, dynamic> data, CoinDCXColorScheme colors) {
+    final positions = data['positions'] as List<dynamic>? ?? [];
+    final totalInvested = (data['totalInvested'] as num?)?.toDouble() ?? 0;
+    final totalSold = (data['totalSold'] as num?)?.toDouble() ?? 0;
+    final buys = positions.where((p) => (p as Map<String, dynamic>)['side'] == 'buy').toList();
+
+    return Container(
+      width: double.infinity,
+      margin: const EdgeInsets.only(top: CoinDCXSpacing.xs),
+      padding: const EdgeInsets.all(CoinDCXSpacing.sm),
+      decoration: BoxDecoration(
+        color: colors.generalBackgroundBgL3,
+        borderRadius: BorderRadius.circular(CoinDCXSpacing.radiusSm),
+        border: Border.all(color: colors.generalStrokeL1),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Icon(Icons.account_balance_wallet_rounded, size: 16, color: colors.actionBackgroundPrimary),
+              const SizedBox(width: 4),
+              Text('Portfolio', style: CoinDCXTypography.buttonSm.copyWith(color: colors.generalForegroundPrimary)),
+            ],
+          ),
+          const SizedBox(height: CoinDCXSpacing.xs),
+          Row(
+            children: [
+              _statChip('Invested', _formatLargeNum(totalInvested), colors.generalForegroundPrimary, colors),
+              const SizedBox(width: CoinDCXSpacing.md),
+              _statChip('Sold', _formatLargeNum(totalSold), colors.generalForegroundSecondary, colors),
+            ],
+          ),
+          if (buys.isNotEmpty) ...[
+            const SizedBox(height: CoinDCXSpacing.sm),
+            ...buys.take(5).map((p) {
+              final pos = p as Map<String, dynamic>;
+              final symbol = pos['symbol'] as String? ?? '';
+              final amount = (pos['amount'] as num?)?.toDouble() ?? 0;
+              final price = (pos['price'] as num?)?.toDouble() ?? 0;
+              return Padding(
+                padding: const EdgeInsets.symmetric(vertical: 2),
+                child: InkWell(
+                  onTap: () {
+                    _controller.text = 'sell $symbol';
+                    _sendMessage();
+                  },
+                  child: Row(
+                    children: [
+                      Text(symbol, style: CoinDCXTypography.buttonSm.copyWith(color: colors.generalForegroundPrimary, fontSize: 12)),
+                      const Spacer(),
+                      Text('${amount.toStringAsFixed(4)} @ ${_formatPrice(price)}',
+                        style: CoinDCXTypography.numberSm.copyWith(color: colors.generalForegroundSecondary, fontSize: 11)),
+                      const SizedBox(width: 8),
+                      Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                        decoration: BoxDecoration(
+                          color: colors.negativeBackgroundPrimary.withValues(alpha: 0.15),
+                          borderRadius: BorderRadius.circular(4),
+                        ),
+                        child: Text('SELL', style: CoinDCXTypography.caption.copyWith(
+                          color: colors.negativeBackgroundPrimary, fontSize: 9, fontWeight: FontWeight.w600)),
+                      ),
+                    ],
+                  ),
+                ),
+              );
+            }),
+          ] else
+            Padding(
+              padding: const EdgeInsets.only(top: CoinDCXSpacing.xs),
+              child: Text('No positions yet', style: CoinDCXTypography.bodySmall.copyWith(color: colors.generalForegroundTertiary)),
+            ),
         ],
       ),
     );

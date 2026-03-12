@@ -99,22 +99,32 @@ type ChatCard =
   | { type: 'screening'; data: ScreeningResult }
   | { type: 'token_price'; data: TokenMetrics }
   | { type: 'trending'; data: TokenMetrics[] }
-  | { type: 'trade_preview'; data: { symbol: string; amount: number; price: number; chain: string } };
+  | { type: 'trade_preview'; data: { symbol: string; amount: number; price: number; chain: string } }
+  | { type: 'portfolio'; data: { positions: any[]; totalInvested: number; totalSold: number } };
 
 // ─── LLM-powered response generation ─────────────────────────────────
 
-const SYSTEM_PROMPT = `You are a crypto trading assistant for CoinDCX's Web3 platform. You help users discover, screen, and trade tokens.
+const SYSTEM_PROMPT = `You are an AI trading agent for CoinDCX's Web3 platform. You help users discover, screen, trade tokens, and manage their portfolio.
 
 You speak in a concise, knowledgeable tone — like a smart degen friend who also understands risk.
+
+Capabilities:
+- Screen tokens for safety (rug checks, audit: mint authority, freeze, LP burn, top holders, insiders)
+- Show trending/hot tokens with real-time data
+- Execute buys and sells (dry-run mode)
+- Show portfolio positions and P&L
+- Analyze tokens with full security audit data
 
 Rules:
 - Keep responses SHORT (2-4 sentences max)
 - Use simple language, avoid jargon unless the user uses it first
 - Always mention key numbers: price, 24h change, volume, safety score
+- When showing audit data, highlight: NoMint, NoFreeze, LP Burn %, Top 10 holder %, insiders
 - If a token looks risky, warn clearly but don't be preachy
 - Use bold (**text**) for token names and key figures
 - Never make up data — only reference what's provided in the context
-- Don't use emojis excessively, 1-2 max per message`;
+- When user asks about portfolio, reference their actual positions
+- If user wants to sell, check if they hold that token first`;
 
 async function generateLLMResponse(
   userMessage: string,
@@ -145,7 +155,7 @@ async function generateLLMResponse(
 
 function screeningToContext(result: ScreeningResult): string {
   const t = result.token;
-  return `Token: ${t.symbol} (${t.chain})
+  let ctx = `Token: ${t.symbol} (${t.chain})
 Price: ${formatPrice(t.price)} | 24h change: ${t.priceChange24h > 0 ? '+' : ''}${t.priceChange24h.toFixed(1)}%
 Volume 24h: ${formatUsd(t.volume24h)} | Liquidity: ${formatUsd(t.liquidity)}
 Market Cap: ${formatUsd(t.marketCap)}
@@ -153,6 +163,24 @@ Safety Score: ${t.rugScore}/100 | Grade: ${result.grade}
 ${result.passed ? 'PASSED safety checks' : 'FAILED safety checks'}
 Recommendation: ${result.recommendation}
 Reasons: ${result.reasons.join(', ')}`;
+
+  if (result.audit) {
+    const a = result.audit;
+    ctx += `\n\nToken Audit:
+NoMint: ${a.noMint ? 'YES (safe)' : 'NO (can mint more)'}
+NoFreeze: ${a.noFreeze ? 'YES (safe)' : 'NO (can freeze wallets)'}
+LP Burnt: ${a.burnt}%
+Top 10 Holders: ${a.top10HolderPct.toFixed(1)}%
+Insiders Detected: ${a.insidersDetected}
+Holders: ${a.totalHolders}
+Total Liquidity: ${formatUsd(a.totalLiquidity)}
+LP Locked: ${a.lpLockedPct.toFixed(1)}%
+Rugged: ${a.rugged ? 'YES (DANGER)' : 'No'}`;
+    if (a.deployPlatform) ctx += `\nPlatform: ${a.deployPlatform}`;
+    if (a.risks.length > 0) ctx += `\nRisks: ${a.risks.map((r: any) => r.name).join(', ')}`;
+  }
+
+  return ctx;
 }
 
 function tokenToContext(m: TokenMetrics): string {
@@ -358,6 +386,81 @@ async function handleSell(token: string, userMsg: string, history: LLMMessage[])
   }
 }
 
+async function fetchPortfolio(): Promise<{ positions: any[]; totalInvested: number; totalSold: number }> {
+  try {
+    const res = await fetch(`http://localhost:${process.env.PORT ?? 3000}/api/v1/trade/portfolio`);
+    if (!res.ok) return { positions: [], totalInvested: 0, totalSold: 0 };
+    const data = await res.json() as any;
+    return {
+      positions: data.positions ?? [],
+      totalInvested: data.totalInvested ?? 0,
+      totalSold: data.totalSold ?? 0,
+    };
+  } catch { return { positions: [], totalInvested: 0, totalSold: 0 }; }
+}
+
+function portfolioToContext(portfolio: { positions: any[]; totalInvested: number; totalSold: number }): string {
+  if (portfolio.positions.length === 0) return 'Portfolio is empty. No positions yet.';
+
+  const buys = portfolio.positions.filter((p: any) => p.side === 'buy');
+  const sells = portfolio.positions.filter((p: any) => p.side === 'sell');
+
+  let ctx = `Portfolio Summary:
+Total Invested: ${formatUsd(portfolio.totalInvested)}
+Total Sold: ${formatUsd(portfolio.totalSold)}
+Open Positions: ${buys.length} buys, ${sells.length} sells
+
+Holdings:`;
+
+  for (const p of buys) {
+    ctx += `\n- ${p.symbol}: ${p.amount?.toFixed(4)} tokens @ ${formatPrice(p.price)} ($${((p.amount ?? 0) * p.price).toFixed(2)} value)`;
+  }
+
+  return ctx;
+}
+
+async function handlePortfolio(userMsg: string, history: LLMMessage[]): Promise<ChatResponse> {
+  const portfolio = await fetchPortfolio();
+
+  if (portfolio.positions.length === 0) {
+    const text = await generateLLMResponse(userMsg, 'Portfolio is empty. User has no positions yet.', history);
+    return {
+      text, intent: 'portfolio',
+      cards: [],
+      suggestions: ['trending', 'buy SOL $200', 'screen ETH'],
+    };
+  }
+
+  const context = portfolioToContext(portfolio);
+  const text = await generateLLMResponse(userMsg, context, history);
+
+  const holdingSymbols = [...new Set(portfolio.positions.filter((p: any) => p.side === 'buy').map((p: any) => p.symbol))];
+
+  return {
+    text, intent: 'portfolio',
+    cards: [{ type: 'portfolio', data: portfolio }],
+    suggestions: [
+      ...holdingSymbols.slice(0, 2).map((s: string) => `sell ${s}`),
+      'trending',
+    ],
+  };
+}
+
+async function handleSellFromPortfolio(token: string, userMsg: string, history: LLMMessage[]): Promise<ChatResponse> {
+  const portfolio = await fetchPortfolio();
+  const held = portfolio.positions.filter((p: any) => p.side === 'buy' && p.symbol.toUpperCase() === token.toUpperCase());
+
+  if (held.length === 0) {
+    const context = `User wants to sell ${token} but does NOT hold any ${token} in their portfolio. Their holdings: ${portfolio.positions.filter((p: any) => p.side === 'buy').map((p: any) => p.symbol).join(', ') || 'empty'}`;
+    const text = await generateLLMResponse(userMsg, context, history);
+    return {
+      text, intent: 'sell', cards: [], suggestions: ['portfolio', 'trending'],
+    };
+  }
+
+  return handleSell(token, userMsg, history);
+}
+
 async function handleTrending(userMsg: string, history: LLMMessage[]): Promise<ChatResponse> {
   const tokens = await fetchTrending();
   if (tokens.length === 0) {
@@ -389,9 +492,9 @@ async function handleGeneralQuestion(userMsg: string, history: LLMMessage[]): Pr
 
 function handleHelp(): ChatResponse {
   return {
-    text: `Here's what I can do:\n\n• **"screen SOL"** — Safety and rug check\n• **"buy ETH $200"** — Buy a token\n• **"analyze PEPE"** — Full analysis with safety score\n• **"trending"** — See what's hot right now\n• **"SOL price"** — Quick price check\n• Paste any contract address to screen it\n\nOr just ask me anything about crypto!`,
+    text: `Here's what I can do:\n\n• **"screen SOL"** — Full safety audit (mint, freeze, LP, holders, insiders)\n• **"buy ETH $200"** — Buy a token\n• **"sell BONK"** — Sell from your portfolio\n• **"portfolio"** — View your holdings and P&L\n• **"analyze PEPE"** — Deep analysis with audit data\n• **"trending"** — See what's hot right now\n• **"SOL price"** — Quick price check\n• Paste any contract address to auto-screen it\n\nI know what's in your wallet — ask me anything!`,
     intent: 'help', cards: [],
-    suggestions: ['screen SOL', 'trending', 'buy ETH $200'],
+    suggestions: ['portfolio', 'trending', 'screen SOL'],
   };
 }
 
@@ -442,13 +545,18 @@ export async function processChat(message: string, conversationId?: string): Pro
         break;
       case 'sell':
         resp = token
-          ? await handleSell(token, message, history)
-          : { text: 'Which token do you want to sell? Try "sell SOL $100".', intent: 'sell', cards: [], suggestions: ['portfolio', 'sell SOL $100'] };
+          ? await handleSellFromPortfolio(token, message, history)
+          : { text: 'Which token do you want to sell? Try "sell SOL $100" or check your **portfolio** first.', intent: 'sell', cards: [], suggestions: ['portfolio', 'sell SOL $100'] };
         break;
       case 'analyze':
         resp = token
           ? await handleAnalyze(token, message, history)
           : { text: 'Which token should I analyze? Try "analyze SOL".', intent: 'analyze', cards: [], suggestions: ['analyze SOL', 'analyze ETH'] };
+        break;
+      case 'positions':
+      case 'pnl':
+      case 'portfolio':
+        resp = await handlePortfolio(message, history);
         break;
       case 'trending':
       case 'hot':

@@ -42,7 +42,7 @@ export async function createServer() {
   app.addHook('onRequest', async (request, reply) => {
     // Skip auth for health checks and public API routes (hackathon mode)
     if (request.url === '/health' || request.url === '/ready') return;
-    if (request.url.startsWith('/api/v1/tokens/') || request.url.startsWith('/api/v1/chat') || request.url.startsWith('/api/v1/trade/')) return;
+    if (request.url.startsWith('/api/v1/tokens/') || request.url.startsWith('/api/v1/chat') || request.url.startsWith('/api/v1/trade/') || request.url.startsWith('/api/v1/proxy/')) return;
 
     const authHeader = request.headers.authorization;
     if (!authHeader?.startsWith('Bearer ')) {
@@ -96,6 +96,26 @@ export async function createServer() {
   await app.register(tradeRoutes);
   await app.register(brokerRoutes);
   await app.register(gatewayRoutes);
+
+  // Image proxy for CORS bypass in Flutter web
+  app.get<{ Querystring: { url: string } }>('/api/v1/proxy/image', async (request, reply) => {
+    const { url } = request.query;
+    if (!url || !url.startsWith('https://')) {
+      reply.code(400).send('Invalid URL');
+      return;
+    }
+    try {
+      const imgRes = await fetch(url);
+      if (!imgRes.ok) { reply.code(imgRes.status).send('Upstream error'); return; }
+      const contentType = imgRes.headers.get('content-type') ?? 'image/png';
+      const buffer = Buffer.from(await imgRes.arrayBuffer());
+      reply.header('content-type', contentType);
+      reply.header('cache-control', 'public, max-age=86400');
+      reply.send(buffer);
+    } catch {
+      reply.code(502).send('Proxy error');
+    }
+  });
 
   // Wallet routes
   app.get<{ Params: { chain: string } }>('/api/v1/wallet/address/:chain', async (request, reply) => {

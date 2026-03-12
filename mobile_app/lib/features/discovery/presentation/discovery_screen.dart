@@ -16,6 +16,8 @@ class _DiscoveryScreenState extends ConsumerState<DiscoveryScreen> {
   final _searchController = TextEditingController();
   Timer? _debounce;
   String _searchQuery = '';
+  String _activeFilter = '1D';
+  bool _showMcap = true;
 
   @override
   void dispose() {
@@ -31,251 +33,328 @@ class _DiscoveryScreenState extends ConsumerState<DiscoveryScreen> {
     });
   }
 
+  double _getChangeForFilter(TokenMetrics t) {
+    switch (_activeFilter) {
+      case '15M': return t.priceChange5m ?? 0;
+      case '1H': return t.priceChange1h ?? 0;
+      case '4H': return t.priceChange6h ?? 0;
+      case '1D': default: return t.priceChange24h ?? 0;
+    }
+  }
+
+  String _filterLabel() {
+    switch (_activeFilter) {
+      case '15M': return '5m';
+      case '1H': return '1h';
+      case '4H': return '6h';
+      case '1D': default: return '24h';
+    }
+  }
+
+  List<TokenMetrics> _sortedTokens(List<TokenMetrics> tokens) {
+    final sorted = List<TokenMetrics>.from(tokens);
+    sorted.sort((a, b) => _getChangeForFilter(b).compareTo(_getChangeForFilter(a)));
+    return sorted;
+  }
+
   @override
   Widget build(BuildContext context) {
     final colors = CoinDCXTheme.of(context);
-
     return Scaffold(
-      appBar: AppBar(
-        title: const Text('Discover'),
-        actions: [
-          IconButton(
-            icon: const Icon(Icons.refresh_rounded),
-            onPressed: () => ref.invalidate(trendingTokensProvider),
-          ),
-        ],
-      ),
-      body: Column(
-        children: [
-          Padding(
-            padding: const EdgeInsets.all(CoinDCXSpacing.md),
-            child: TextField(
-              controller: _searchController,
-              onChanged: _onSearchChanged,
-              style: CoinDCXTypography.bodyMedium.copyWith(color: colors.generalForegroundPrimary),
-              decoration: InputDecoration(
-                hintText: 'Search tokens by name or symbol...',
-                hintStyle: CoinDCXTypography.bodyMedium.copyWith(color: colors.generalForegroundTertiary),
-                prefixIcon: Icon(Icons.search_rounded, color: colors.generalForegroundTertiary),
-                suffixIcon: _searchQuery.isNotEmpty
-                    ? IconButton(
-                        icon: Icon(Icons.clear_rounded, color: colors.generalForegroundTertiary),
-                        onPressed: () {
-                          _searchController.clear();
-                          setState(() => _searchQuery = '');
-                        },
-                      )
-                    : null,
-              ),
-            ),
-          ),
-          Expanded(
-            child: _searchQuery.isNotEmpty ? _buildSearchResults() : _buildTrending(),
-          ),
-        ],
+      backgroundColor: colors.generalBackgroundBgL1,
+      body: SafeArea(
+        child: _searchQuery.isNotEmpty ? _buildSearchMode(colors) : _buildMainView(colors),
       ),
     );
   }
 
-  Widget _buildTrending() {
+  Widget _buildMainView(CoinDCXColorScheme colors) {
     final trendingAsync = ref.watch(trendingTokensProvider);
-    final colors = CoinDCXTheme.of(context);
 
     return trendingAsync.when(
       loading: () => const Center(child: CircularProgressIndicator()),
       error: (err, _) => Center(
-        child: Padding(
-          padding: const EdgeInsets.all(CoinDCXSpacing.xl),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Icon(Icons.cloud_off_rounded, size: 48, color: colors.generalForegroundTertiary),
-              const SizedBox(height: CoinDCXSpacing.md),
-              Text('Could not load trending tokens',
-                style: CoinDCXTypography.bodyLarge.copyWith(color: colors.generalForegroundSecondary)),
-              const SizedBox(height: CoinDCXSpacing.md),
-              TextButton(
-                onPressed: () => ref.invalidate(trendingTokensProvider),
-                child: const Text('Retry'),
-              ),
-            ],
-          ),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(Icons.cloud_off_rounded, size: 48, color: colors.generalForegroundTertiary),
+            const SizedBox(height: CoinDCXSpacing.md),
+            Text('Could not load tokens', style: CoinDCXTypography.bodyLarge.copyWith(color: colors.generalForegroundSecondary)),
+            const SizedBox(height: CoinDCXSpacing.sm),
+            TextButton(onPressed: () => ref.invalidate(trendingTokensProvider), child: const Text('Retry')),
+          ],
         ),
       ),
-      data: (tokens) {
-        if (tokens.isEmpty) {
-          return Center(
-            child: Text('No trending tokens found',
-              style: CoinDCXTypography.bodyMedium.copyWith(color: colors.generalForegroundSecondary)),
-          );
-        }
-        return _buildTokenTable(tokens, colors);
-      },
+      data: (tokens) => _buildLoadedView(tokens, colors),
     );
   }
 
-  Widget _buildTokenTable(List<TokenMetrics> tokens, CoinDCXColorScheme colors) {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        // Header
-        Padding(
-          padding: const EdgeInsets.symmetric(horizontal: CoinDCXSpacing.md),
-          child: Row(
-            children: [
-              Text('Trending', style: CoinDCXTypography.heading3.copyWith(color: colors.generalForegroundPrimary)),
-              const Spacer(),
-              Container(
-                padding: const EdgeInsets.symmetric(horizontal: CoinDCXSpacing.sm, vertical: CoinDCXSpacing.xxxs),
-                decoration: BoxDecoration(
-                  color: colors.positiveBackgroundSecondary,
-                  borderRadius: BorderRadius.circular(CoinDCXSpacing.radiusFull),
+  Widget _buildLoadedView(List<TokenMetrics> tokens, CoinDCXColorScheme colors) {
+    final sorted = _sortedTokens(tokens);
+    final hotTokens = sorted.where((t) => _getChangeForFilter(t) > 0).take(5).toList();
+
+    return CustomScrollView(
+      slivers: [
+        // Search bar
+        SliverToBoxAdapter(
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(CoinDCXSpacing.md, CoinDCXSpacing.md, CoinDCXSpacing.md, 0),
+            child: Row(
+              children: [
+                Expanded(
+                  child: Container(
+                    height: 40,
+                    decoration: BoxDecoration(
+                      color: colors.generalBackgroundBgL2,
+                      borderRadius: BorderRadius.circular(CoinDCXSpacing.radiusFull),
+                    ),
+                    child: TextField(
+                      controller: _searchController,
+                      onChanged: _onSearchChanged,
+                      style: CoinDCXTypography.bodyMedium.copyWith(color: colors.generalForegroundPrimary, fontSize: 13),
+                      decoration: InputDecoration(
+                        hintText: 'Search tokens...',
+                        hintStyle: CoinDCXTypography.bodyMedium.copyWith(color: colors.generalForegroundTertiary, fontSize: 13),
+                        prefixIcon: Icon(Icons.search_rounded, color: colors.generalForegroundTertiary, size: 18),
+                        border: InputBorder.none,
+                        contentPadding: const EdgeInsets.symmetric(vertical: 10),
+                      ),
+                    ),
+                  ),
                 ),
-                child: Text('LIVE', style: CoinDCXTypography.caption.copyWith(
-                  color: colors.positiveBackgroundPrimary, fontWeight: FontWeight.w700, fontSize: 10)),
+                const SizedBox(width: CoinDCXSpacing.sm),
+                GestureDetector(
+                  onTap: () => ref.invalidate(trendingTokensProvider),
+                  child: Icon(Icons.refresh_rounded, color: colors.generalForegroundSecondary, size: 22),
+                ),
+              ],
+            ),
+          ),
+        ),
+
+        // "Hot Right Now"
+        if (hotTokens.isNotEmpty) ...[
+          SliverToBoxAdapter(
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(CoinDCXSpacing.md, CoinDCXSpacing.lg, CoinDCXSpacing.md, CoinDCXSpacing.sm),
+              child: Row(
+                children: [
+                  Icon(Icons.local_fire_department_rounded, color: colors.alertBackgroundPrimary, size: 20),
+                  const SizedBox(width: CoinDCXSpacing.xs),
+                  Text('Hot Right Now', style: CoinDCXTypography.heading3.copyWith(color: colors.generalForegroundPrimary, fontSize: 15)),
+                  const SizedBox(width: CoinDCXSpacing.xs),
+                  Expanded(child: Text('Top gainers, DYOR', style: CoinDCXTypography.caption.copyWith(color: colors.generalForegroundTertiary))),
+                ],
               ),
-            ],
+            ),
+          ),
+          SliverToBoxAdapter(
+            child: SizedBox(
+              height: 110,
+              child: ListView.separated(
+                padding: const EdgeInsets.symmetric(horizontal: CoinDCXSpacing.md),
+                scrollDirection: Axis.horizontal,
+                itemCount: hotTokens.length,
+                separatorBuilder: (_, __) => const SizedBox(width: CoinDCXSpacing.sm),
+                itemBuilder: (context, i) => _buildHotCard(hotTokens[i], colors),
+              ),
+            ),
+          ),
+        ],
+
+        // Category + filters
+        SliverToBoxAdapter(
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(CoinDCXSpacing.md, CoinDCXSpacing.lg, CoinDCXSpacing.md, CoinDCXSpacing.xs),
+            child: Row(
+              children: [
+                Icon(Icons.star_rounded, color: colors.alertBackgroundPrimary, size: 16),
+                const SizedBox(width: CoinDCXSpacing.xxs),
+                Text('Gainers', style: CoinDCXTypography.buttonSm.copyWith(color: colors.generalForegroundPrimary)),
+                const Spacer(),
+                _buildTimeFilter(colors),
+              ],
+            ),
           ),
         ),
-        const SizedBox(height: CoinDCXSpacing.sm),
-        // Column headers
-        Container(
-          padding: const EdgeInsets.symmetric(horizontal: CoinDCXSpacing.md, vertical: CoinDCXSpacing.xs),
-          decoration: BoxDecoration(
-            border: Border(bottom: BorderSide(color: colors.generalStrokeL1)),
-          ),
-          child: Row(
-            children: [
-              SizedBox(width: 28, child: Text('#', style: _headerStyle(colors))),
-              Expanded(flex: 3, child: Text('TOKEN', style: _headerStyle(colors))),
-              Expanded(flex: 2, child: Text('PRICE', style: _headerStyle(colors), textAlign: TextAlign.right)),
-              Expanded(flex: 2, child: Text('24H', style: _headerStyle(colors), textAlign: TextAlign.right)),
-              Expanded(flex: 2, child: Text('VOL', style: _headerStyle(colors), textAlign: TextAlign.right)),
-              Expanded(flex: 2, child: Text('MCAP', style: _headerStyle(colors), textAlign: TextAlign.right)),
-            ],
+
+        // Column header
+        SliverToBoxAdapter(
+          child: Container(
+            padding: const EdgeInsets.symmetric(horizontal: CoinDCXSpacing.md, vertical: CoinDCXSpacing.xs),
+            child: Row(
+              children: [
+                SizedBox(width: 160, child: Text('Name / Age', style: _hdr(colors))),
+                const Spacer(),
+                GestureDetector(
+                  onTap: () => setState(() => _showMcap = !_showMcap),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Text(
+                        _showMcap ? 'M.Cap' : 'Price',
+                        style: _hdr(colors).copyWith(
+                          color: colors.actionBackgroundPrimary,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                      const SizedBox(width: 2),
+                      Icon(Icons.swap_vert_rounded, size: 12, color: colors.actionBackgroundPrimary),
+                    ],
+                  ),
+                ),
+                const SizedBox(width: CoinDCXSpacing.md),
+                SizedBox(width: 50, child: Text(_filterLabel(), style: _hdr(colors), textAlign: TextAlign.right)),
+              ],
+            ),
           ),
         ),
-        // Token rows
-        Expanded(
-          child: ListView.builder(
-            padding: EdgeInsets.zero,
-            itemCount: tokens.length,
-            itemBuilder: (context, index) => _buildTokenRow(index, tokens[index], colors),
+        SliverToBoxAdapter(child: Divider(height: 1, color: colors.generalStrokeL1)),
+
+        // Token list — sorted by selected timeframe % change descending
+        SliverList(
+          delegate: SliverChildBuilderDelegate(
+            (context, index) => _buildTokenRow(sorted[index], colors),
+            childCount: sorted.length,
           ),
         ),
+        const SliverToBoxAdapter(child: SizedBox(height: 80)),
       ],
     );
   }
 
-  Widget _buildTokenRow(int index, TokenMetrics token, CoinDCXColorScheme colors) {
-    final is24hPositive = (token.priceChange24h ?? 0) >= 0;
+  Widget _buildHotCard(TokenMetrics token, CoinDCXColorScheme colors) {
+    final change = _getChangeForFilter(token);
+    final isPositive = change >= 0;
+    final buys = token.txnsBuys24h ?? 0;
+
+    return GestureDetector(
+      onTap: () => Navigator.pushNamed(context, '/token-detail', arguments: token),
+      child: Container(
+        width: 155,
+        padding: const EdgeInsets.all(CoinDCXSpacing.sm),
+        decoration: BoxDecoration(
+          color: colors.generalBackgroundBgL2,
+          borderRadius: BorderRadius.circular(CoinDCXSpacing.radiusMd),
+          border: Border.all(color: colors.generalStrokeL2),
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            if (buys > 100)
+              Container(
+                margin: const EdgeInsets.only(bottom: 4),
+                padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 1),
+                decoration: BoxDecoration(
+                  color: colors.positiveBackgroundPrimary.withValues(alpha: 0.15),
+                  borderRadius: BorderRadius.circular(4),
+                ),
+                child: Text('$buys+ bought last 24h',
+                  style: CoinDCXTypography.caption.copyWith(color: colors.positiveBackgroundPrimary, fontSize: 8)),
+              ),
+            Row(
+              children: [
+                _buildTokenIcon(token, colors, size: 30),
+                const SizedBox(width: CoinDCXSpacing.xs),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(token.symbol.toUpperCase(),
+                        style: CoinDCXTypography.buttonSm.copyWith(color: colors.generalForegroundPrimary, fontSize: 12),
+                        overflow: TextOverflow.ellipsis),
+                      Text(token.name.length > 12 ? '${token.name.substring(0, 12)}...' : token.name,
+                        style: CoinDCXTypography.caption.copyWith(color: colors.generalForegroundTertiary, fontSize: 9),
+                        overflow: TextOverflow.ellipsis),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+            const Spacer(),
+            Text('${isPositive ? '+' : ''}${change.toStringAsFixed(2)}%',
+              style: CoinDCXTypography.numberMd.copyWith(
+                color: isPositive ? colors.positiveBackgroundPrimary : colors.negativeBackgroundPrimary,
+                fontSize: 16, fontWeight: FontWeight.w700)),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildTokenRow(TokenMetrics token, CoinDCXColorScheme colors) {
+    final change = _getChangeForFilter(token);
+    final isPositive = change >= 0;
+    final age = _formatAge(token.pairAgeHours);
 
     return GestureDetector(
       onTap: () => Navigator.pushNamed(context, '/token-detail', arguments: token),
       child: Container(
         padding: const EdgeInsets.symmetric(horizontal: CoinDCXSpacing.md, vertical: CoinDCXSpacing.sm),
         decoration: BoxDecoration(
-          border: Border(bottom: BorderSide(color: colors.generalStrokeL1.withValues(alpha: 0.5))),
+          border: Border(bottom: BorderSide(color: colors.generalStrokeL1.withValues(alpha: 0.3))),
         ),
         child: Row(
           children: [
-            SizedBox(
-              width: 28,
-              child: Text(
-                '#${index + 1}',
-                style: CoinDCXTypography.caption.copyWith(color: colors.generalForegroundTertiary),
-              ),
-            ),
-            // Token info
+            _buildTokenIcon(token, colors, size: 36),
+            const SizedBox(width: CoinDCXSpacing.sm),
             Expanded(
-              flex: 3,
-              child: Row(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Container(
-                    width: 28, height: 28,
-                    decoration: BoxDecoration(
-                      color: colors.actionBackgroundSecondary,
-                      borderRadius: BorderRadius.circular(CoinDCXSpacing.radiusFull),
-                    ),
-                    child: Center(
-                      child: Text(
-                        token.symbol.isNotEmpty ? token.symbol[0].toUpperCase() : '?',
-                        style: CoinDCXTypography.caption.copyWith(
-                          color: colors.actionBackgroundPrimary, fontWeight: FontWeight.w700, fontSize: 11),
-                      ),
-                    ),
-                  ),
-                  const SizedBox(width: CoinDCXSpacing.xs),
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(
-                          token.symbol.toUpperCase(),
-                          style: CoinDCXTypography.buttonSm.copyWith(color: colors.generalForegroundPrimary),
-                          overflow: TextOverflow.ellipsis,
-                        ),
-                        Text(
-                          token.name.length > 14 ? '${token.name.substring(0, 14)}...' : token.name,
-                          style: CoinDCXTypography.caption.copyWith(
-                            color: colors.generalForegroundTertiary, fontSize: 9),
-                          overflow: TextOverflow.ellipsis,
+                  Row(
+                    children: [
+                      Flexible(child: Text(token.symbol.toUpperCase(),
+                        style: CoinDCXTypography.buttonSm.copyWith(color: colors.generalForegroundPrimary, fontSize: 13),
+                        overflow: TextOverflow.ellipsis)),
+                      if (age != null) ...[
+                        const SizedBox(width: 4),
+                        Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 1),
+                          decoration: BoxDecoration(color: colors.generalBackgroundBgL3, borderRadius: BorderRadius.circular(4)),
+                          child: Text(age, style: CoinDCXTypography.caption.copyWith(color: colors.generalForegroundTertiary, fontSize: 8)),
                         ),
                       ],
-                    ),
+                      if (token.boosts != null && token.boosts! > 0) ...[
+                        const SizedBox(width: 4),
+                        Icon(Icons.bolt_rounded, size: 12, color: colors.alertBackgroundPrimary),
+                      ],
+                    ],
                   ),
+                  const SizedBox(height: 2),
+                  Text(token.name.length > 18 ? '${token.name.substring(0, 18)}...' : token.name,
+                    style: CoinDCXTypography.caption.copyWith(color: colors.generalForegroundTertiary, fontSize: 10),
+                    overflow: TextOverflow.ellipsis),
                 ],
               ),
             ),
-            // Price
-            Expanded(
-              flex: 2,
+            const SizedBox(width: CoinDCXSpacing.sm),
+            // M.Cap or Price (toggleable)
+            SizedBox(
+              width: 70,
               child: Text(
-                _formatPrice(token.priceUsd),
+                _showMcap ? _formatCompact(token.marketCap) : _formatPrice(token.priceUsd),
                 style: CoinDCXTypography.numberSm.copyWith(color: colors.generalForegroundPrimary, fontSize: 11),
                 textAlign: TextAlign.right,
               ),
             ),
-            // 24h change
-            Expanded(
-              flex: 2,
-              child: Container(
-                alignment: Alignment.centerRight,
-                child: Container(
-                  padding: const EdgeInsets.symmetric(horizontal: CoinDCXSpacing.xxs, vertical: 1),
-                  decoration: BoxDecoration(
-                    color: is24hPositive
-                        ? colors.positiveBackgroundPrimary.withValues(alpha: 0.15)
-                        : colors.negativeBackgroundPrimary.withValues(alpha: 0.15),
-                    borderRadius: BorderRadius.circular(4),
-                  ),
-                  child: Text(
-                    '${is24hPositive ? '+' : ''}${(token.priceChange24h ?? 0).toStringAsFixed(0)}%',
-                    style: CoinDCXTypography.numberSm.copyWith(
-                      color: is24hPositive ? colors.positiveBackgroundPrimary : colors.negativeBackgroundPrimary,
-                      fontSize: 10,
-                    ),
-                    textAlign: TextAlign.right,
-                  ),
-                ),
+            const SizedBox(width: CoinDCXSpacing.sm),
+            // % change for selected timeframe
+            Container(
+              width: 58,
+              padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 2),
+              decoration: BoxDecoration(
+                color: isPositive
+                    ? colors.positiveBackgroundPrimary.withValues(alpha: 0.12)
+                    : colors.negativeBackgroundPrimary.withValues(alpha: 0.12),
+                borderRadius: BorderRadius.circular(4),
               ),
-            ),
-            // Volume
-            Expanded(
-              flex: 2,
               child: Text(
-                _formatCompact(token.volume24h),
-                style: CoinDCXTypography.numberSm.copyWith(color: colors.generalForegroundSecondary, fontSize: 10),
-                textAlign: TextAlign.right,
-              ),
-            ),
-            // Market cap
-            Expanded(
-              flex: 2,
-              child: Text(
-                _formatCompact(token.marketCap),
-                style: CoinDCXTypography.numberSm.copyWith(color: colors.generalForegroundSecondary, fontSize: 10),
-                textAlign: TextAlign.right,
+                '${isPositive ? '+' : ''}${change.toStringAsFixed(1)}%',
+                style: CoinDCXTypography.numberSm.copyWith(
+                  color: isPositive ? colors.positiveBackgroundPrimary : colors.negativeBackgroundPrimary,
+                  fontSize: 11),
+                textAlign: TextAlign.center,
               ),
             ),
           ],
@@ -284,43 +363,137 @@ class _DiscoveryScreenState extends ConsumerState<DiscoveryScreen> {
     );
   }
 
-  Widget _buildSearchResults() {
-    final searchAsync = ref.watch(tokenSearchProvider(_searchQuery));
-    final colors = CoinDCXTheme.of(context);
+  String _proxyUrl(String url) =>
+    'http://localhost:3000/api/v1/proxy/image?url=${Uri.encodeComponent(url)}';
 
-    return searchAsync.when(
-      loading: () => const Center(child: CircularProgressIndicator()),
-      error: (err, _) => Center(
-        child: Text('Search failed: $err',
-          style: CoinDCXTypography.bodyMedium.copyWith(color: colors.negativeBackgroundPrimary)),
-      ),
-      data: (tokens) {
-        if (tokens.isEmpty) {
-          return Center(
-            child: Text('No results for "$_searchQuery"',
-              style: CoinDCXTypography.bodyMedium.copyWith(color: colors.generalForegroundSecondary)),
-          );
-        }
-        return _buildTokenTable(tokens, colors);
-      },
+  Widget _buildTokenIcon(TokenMetrics token, CoinDCXColorScheme colors, {double size = 36}) {
+    if (token.imageUrl != null && token.imageUrl!.isNotEmpty) {
+      return ClipRRect(
+        borderRadius: BorderRadius.circular(size),
+        child: Image.network(_proxyUrl(token.imageUrl!), width: size, height: size, fit: BoxFit.cover,
+          errorBuilder: (_, __, ___) => _buildFallbackIcon(token, colors, size)),
+      );
+    }
+    return _buildFallbackIcon(token, colors, size);
+  }
+
+  Widget _buildFallbackIcon(TokenMetrics token, CoinDCXColorScheme colors, double size) {
+    return Container(
+      width: size, height: size,
+      decoration: BoxDecoration(color: colors.actionBackgroundSecondary, borderRadius: BorderRadius.circular(size)),
+      child: Center(child: Text(
+        token.symbol.isNotEmpty ? token.symbol[0].toUpperCase() : '?',
+        style: CoinDCXTypography.buttonSm.copyWith(color: colors.actionBackgroundPrimary, fontSize: size * 0.38, fontWeight: FontWeight.w700),
+      )),
     );
   }
 
-  TextStyle _headerStyle(CoinDCXColorScheme colors) =>
-    CoinDCXTypography.caption.copyWith(color: colors.generalForegroundTertiary, fontSize: 9, fontWeight: FontWeight.w600);
+  Widget _buildTimeFilter(CoinDCXColorScheme colors) {
+    final filters = ['15M', '1H', '4H', '1D'];
+    return Row(
+      children: filters.map((f) {
+        final active = f == _activeFilter;
+        return GestureDetector(
+          onTap: () => setState(() => _activeFilter = f),
+          child: Container(
+            margin: const EdgeInsets.only(left: 4),
+            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+            decoration: BoxDecoration(
+              color: active ? colors.actionBackgroundPrimary : Colors.transparent,
+              borderRadius: BorderRadius.circular(CoinDCXSpacing.radiusFull),
+            ),
+            child: Text(f, style: CoinDCXTypography.caption.copyWith(
+              color: active ? Colors.white : colors.generalForegroundTertiary,
+              fontSize: 10, fontWeight: active ? FontWeight.w600 : FontWeight.w400)),
+          ),
+        );
+      }).toList(),
+    );
+  }
+
+  Widget _buildSearchMode(CoinDCXColorScheme colors) {
+    final searchAsync = ref.watch(tokenSearchProvider(_searchQuery));
+    return Column(
+      children: [
+        Padding(
+          padding: const EdgeInsets.all(CoinDCXSpacing.md),
+          child: Row(
+            children: [
+              GestureDetector(
+                onTap: () { _searchController.clear(); setState(() => _searchQuery = ''); },
+                child: Icon(Icons.arrow_back_rounded, color: colors.generalForegroundPrimary),
+              ),
+              const SizedBox(width: CoinDCXSpacing.sm),
+              Expanded(
+                child: Container(
+                  height: 40,
+                  decoration: BoxDecoration(color: colors.generalBackgroundBgL2, borderRadius: BorderRadius.circular(CoinDCXSpacing.radiusFull)),
+                  child: TextField(
+                    controller: _searchController, onChanged: _onSearchChanged, autofocus: true,
+                    style: CoinDCXTypography.bodyMedium.copyWith(color: colors.generalForegroundPrimary, fontSize: 13),
+                    decoration: InputDecoration(
+                      hintText: 'Search by name, symbol, or address...',
+                      hintStyle: CoinDCXTypography.bodyMedium.copyWith(color: colors.generalForegroundTertiary, fontSize: 13),
+                      prefixIcon: Icon(Icons.search_rounded, color: colors.generalForegroundTertiary, size: 18),
+                      border: InputBorder.none, contentPadding: const EdgeInsets.symmetric(vertical: 10)),
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+        Expanded(child: searchAsync.when(
+          loading: () => const Center(child: CircularProgressIndicator()),
+          error: (err, _) => Center(child: Text('Search failed', style: CoinDCXTypography.bodyMedium.copyWith(color: colors.negativeBackgroundPrimary))),
+          data: (tokens) {
+            if (tokens.isEmpty) return Center(child: Text('No results for "$_searchQuery"',
+              style: CoinDCXTypography.bodyMedium.copyWith(color: colors.generalForegroundSecondary)));
+            return ListView.builder(itemCount: tokens.length, itemBuilder: (_, i) => _buildTokenRow(tokens[i], colors));
+          },
+        )),
+      ],
+    );
+  }
+
+  TextStyle _hdr(CoinDCXColorScheme c) =>
+    CoinDCXTypography.caption.copyWith(color: c.generalForegroundTertiary, fontSize: 10);
 
   String _formatPrice(double price) {
+    if (price >= 1000) return '\$${price.toStringAsFixed(2)}';
     if (price >= 1.0) return '\$${price.toStringAsFixed(2)}';
     if (price >= 0.01) return '\$${price.toStringAsFixed(4)}';
     if (price >= 0.0001) return '\$${price.toStringAsFixed(6)}';
+    final str = price.toStringAsFixed(10);
+    final match = RegExp(r'0\.0+').firstMatch(str);
+    if (match != null) {
+      final zeroCount = match.group(0)!.length - 2;
+      final significant = str.substring(match.end, (match.end + 4).clamp(0, str.length));
+      return '\$0.0${_toSubscript(zeroCount)}$significant';
+    }
     return '\$${price.toStringAsFixed(8)}';
   }
 
+  String _toSubscript(int n) {
+    const subs = ['\u2080', '\u2081', '\u2082', '\u2083', '\u2084', '\u2085', '\u2086', '\u2087', '\u2088', '\u2089'];
+    return n.toString().split('').map((d) => subs[int.parse(d)]).join();
+  }
+
   String _formatCompact(double? value) {
-    if (value == null || value == 0) return '—';
+    if (value == null || value == 0) return '-';
     if (value >= 1e9) return '\$${(value / 1e9).toStringAsFixed(1)}B';
     if (value >= 1e6) return '\$${(value / 1e6).toStringAsFixed(1)}M';
     if (value >= 1e3) return '\$${(value / 1e3).toStringAsFixed(0)}K';
     return '\$${value.toStringAsFixed(0)}';
+  }
+
+  String? _formatAge(int? ageHours) {
+    if (ageHours == null) return null;
+    if (ageHours < 1) return '<1h';
+    if (ageHours < 24) return '${ageHours}h';
+    final days = ageHours ~/ 24;
+    if (days < 30) return '${days}d';
+    final months = days ~/ 30;
+    if (months < 12) return '${months}mo';
+    return '${days ~/ 365}y';
   }
 }

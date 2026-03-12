@@ -14,6 +14,9 @@ class TokenMetrics {
   final int? pairAgeHours;
   final String? address;
   final String? imageUrl;
+  final int? boosts;
+  final int? txnsBuys24h;
+  final int? txnsSells24h;
 
   const TokenMetrics({
     required this.symbol,
@@ -31,6 +34,9 @@ class TokenMetrics {
     this.pairAgeHours,
     this.address,
     this.imageUrl,
+    this.boosts,
+    this.txnsBuys24h,
+    this.txnsSells24h,
   });
 
   factory TokenMetrics.fromJson(Map<String, dynamic> json) {
@@ -53,6 +59,70 @@ class TokenMetrics {
           ?? (json['ageMinutes'] != null ? ((json['ageMinutes'] as num).toDouble() / 60).round() : null),
       address: json['address'] as String?,
       imageUrl: json['imageUrl'] as String?,
+      boosts: (json['boosts'] as num?)?.toInt(),
+      txnsBuys24h: (json['txnsBuys24h'] as num?)?.toInt(),
+      txnsSells24h: (json['txnsSells24h'] as num?)?.toInt(),
+    );
+  }
+}
+
+class TokenAudit {
+  final bool noMint;
+  final bool noFreeze;
+  final int burnt;
+  final double top10HolderPct;
+  final int insidersDetected;
+  final int totalHolders;
+  final double totalLiquidity;
+  final double lpLockedPct;
+  final int lpProviders;
+  final String? creator;
+  final double? creatorBalance;
+  final String? deployPlatform;
+  final bool rugged;
+  final String? tokenCreatedAt;
+  final String? pairAddress;
+  final List<Map<String, dynamic>> risks;
+
+  const TokenAudit({
+    required this.noMint,
+    required this.noFreeze,
+    required this.burnt,
+    required this.top10HolderPct,
+    required this.insidersDetected,
+    required this.totalHolders,
+    required this.totalLiquidity,
+    required this.lpLockedPct,
+    required this.lpProviders,
+    this.creator,
+    this.creatorBalance,
+    this.deployPlatform,
+    required this.rugged,
+    this.tokenCreatedAt,
+    this.pairAddress,
+    required this.risks,
+  });
+
+  factory TokenAudit.fromJson(Map<String, dynamic> json) {
+    return TokenAudit(
+      noMint: json['noMint'] as bool? ?? false,
+      noFreeze: json['noFreeze'] as bool? ?? false,
+      burnt: (json['burnt'] as num?)?.toInt() ?? 0,
+      top10HolderPct: (json['top10HolderPct'] as num?)?.toDouble() ?? 0,
+      insidersDetected: (json['insidersDetected'] as num?)?.toInt() ?? 0,
+      totalHolders: (json['totalHolders'] as num?)?.toInt() ?? 0,
+      totalLiquidity: (json['totalLiquidity'] as num?)?.toDouble() ?? 0,
+      lpLockedPct: (json['lpLockedPct'] as num?)?.toDouble() ?? 0,
+      lpProviders: (json['lpProviders'] as num?)?.toInt() ?? 0,
+      creator: json['creator'] as String?,
+      creatorBalance: (json['creatorBalance'] as num?)?.toDouble(),
+      deployPlatform: json['deployPlatform'] as String?,
+      rugged: json['rugged'] as bool? ?? false,
+      tokenCreatedAt: json['tokenCreatedAt'] as String?,
+      pairAddress: json['pairAddress'] as String?,
+      risks: (json['risks'] as List<dynamic>?)
+          ?.map((r) => r as Map<String, dynamic>)
+          .toList() ?? [],
     );
   }
 }
@@ -63,6 +133,7 @@ class ScreeningResult {
   final int score;
   final List<String> flags;
   final Map<String, dynamic>? security;
+  final TokenAudit? audit;
 
   const ScreeningResult({
     required this.metrics,
@@ -70,10 +141,10 @@ class ScreeningResult {
     required this.score,
     required this.flags,
     this.security,
+    this.audit,
   });
 
   factory ScreeningResult.fromJson(Map<String, dynamic> json) {
-    // Backend sends `token` (not `metrics`) and `grade` (not `verdict`)
     final tokenData = json['metrics'] as Map<String, dynamic>?
         ?? json['token'] as Map<String, dynamic>?
         ?? {};
@@ -93,6 +164,9 @@ class ScreeningResult {
       score: rugScore,
       flags: reasons,
       security: json['security'] as Map<String, dynamic>?,
+      audit: json['audit'] != null
+          ? TokenAudit.fromJson(json['audit'] as Map<String, dynamic>)
+          : null,
     );
   }
 

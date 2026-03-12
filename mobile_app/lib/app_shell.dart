@@ -47,16 +47,16 @@ class _AppShellState extends ConsumerState<AppShell> {
           onTap: _onTabTap,
           items: const [
             BottomNavigationBarItem(
-              icon: Icon(Icons.explore_rounded),
-              label: 'Discover',
+              icon: Icon(Icons.candlestick_chart_rounded),
+              label: 'Trade',
             ),
             BottomNavigationBarItem(
-              icon: Icon(Icons.smart_toy_rounded),
-              label: 'AI Chat',
+              icon: Icon(Icons.auto_awesome_rounded),
+              label: 'Agent',
             ),
             BottomNavigationBarItem(
               icon: Icon(Icons.account_balance_wallet_rounded),
-              label: 'Portfolio',
+              label: 'Wallet',
             ),
           ],
         ),

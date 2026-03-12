@@ -10,6 +10,8 @@ export interface TokenMetrics {
   symbol: string;
   name: string;
   chain: Chain | string;
+  address?: string;
+  imageUrl?: string;
   price: number;
   priceChange5m: number;
   priceChange1h: number;
@@ -25,6 +27,28 @@ export interface TokenMetrics {
   lpLockPct: number;
   rugScore: number;
   ctScore: number;
+  boosts?: number;
+  txnsBuys24h?: number;
+  txnsSells24h?: number;
+}
+
+export interface TokenAudit {
+  noMint: boolean;
+  noFreeze: boolean;
+  burnt: number;
+  top10HolderPct: number;
+  insidersDetected: number;
+  totalHolders: number;
+  totalLiquidity: number;
+  lpLockedPct: number;
+  lpProviders: number;
+  creator?: string;
+  creatorBalance?: number;
+  deployPlatform?: string;
+  rugged: boolean;
+  tokenCreatedAt?: string;
+  risks: Array<{ name: string; level: string; description?: string }>;
+  pairAddress?: string;
 }
 
 export interface ScreeningResult {
@@ -37,6 +61,7 @@ export interface ScreeningResult {
   warnings: string[];
   reasons: string[];
   dataSources: Array<{ name: string; value: string; verdict: 'safe' | 'warn' | 'danger' }>;
+  audit?: TokenAudit;
 }
 
 // ─── DexScreener ──────────────────────────────────────────────────────
@@ -60,6 +85,12 @@ interface DexScreenerPair {
     m5: { buys: number; sells: number };
     h1: { buys: number; sells: number };
     h24: { buys: number; sells: number };
+  };
+  info?: {
+    imageUrl?: string;
+    header?: string;
+    websites?: Array<{ label: string; url: string }>;
+    socials?: Array<{ type: string; url: string }>;
   };
 }
 
@@ -117,6 +148,8 @@ function pairToMetrics(pair: DexScreenerPair, symbolOverride?: string): TokenMet
     symbol: symbolOverride ?? pair.baseToken.symbol,
     name: pair.baseToken.name,
     chain,
+    address: pair.baseToken.address,
+    imageUrl: pair.info?.imageUrl ?? undefined,
     price: parseFloat(pair.priceUsd ?? '0'),
     priceChange5m: pair.priceChange?.m5 ?? 0,
     priceChange1h: pair.priceChange?.h1 ?? 0,
@@ -132,6 +165,8 @@ function pairToMetrics(pair: DexScreenerPair, symbolOverride?: string): TokenMet
     lpLockPct: 0,
     rugScore: 50,
     ctScore: 50,
+    txnsBuys24h: pair.txns?.h24?.buys ?? 0,
+    txnsSells24h: pair.txns?.h24?.sells ?? 0,
   };
 }
 
@@ -175,7 +210,9 @@ export async function lookupByAddress(address: string): Promise<{ metrics: Token
     const data = await res.json() as { pairs?: DexScreenerPair[] };
     const pairs = data.pairs ?? [];
     if (pairs.length === 0) return null;
-    return { metrics: pairToMetrics(pickBestPair(pairs)), address };
+    const m = pairToMetrics(pickBestPair(pairs));
+    m.address = address;
+    return { metrics: m, address };
   } catch (e) {
     log.warn({ err: e, address }, 'DexScreener address lookup failed');
     return null;
@@ -186,13 +223,15 @@ export async function fetchTrending(): Promise<TokenMetrics[]> {
   try {
     const res = await fetch(`${DEXSCREENER_BASE}/token-boosts/top/v1`);
     if (!res.ok) return [];
-    const data = await res.json() as Array<{ tokenAddress: string; chainId: string; amount?: number }>;
+    const boostItems = await res.json() as Array<{
+      tokenAddress: string; chainId: string; amount?: number;
+      icon?: string; header?: string; description?: string;
+    }>;
 
     const results: TokenMetrics[] = [];
     const seen = new Set<string>();
 
-    // Fetch all token data in parallel (batches of 5 to avoid rate limits)
-    const items = data.slice(0, 20).filter(item => {
+    const items = boostItems.slice(0, 30).filter(item => {
       if (seen.has(item.tokenAddress)) return false;
       seen.add(item.tokenAddress);
       return true;
@@ -203,7 +242,8 @@ export async function fetchTrending(): Promise<TokenMetrics[]> {
         const lookup = await lookupByAddress(item.tokenAddress);
         if (lookup) {
           const m = lookup.metrics;
-          (m as any).boosts = item.amount ?? 0;
+          m.boosts = item.amount ?? 0;
+          if (item.icon && !m.imageUrl) m.imageUrl = item.icon;
           return m;
         }
       } catch { /* skip */ }
@@ -212,8 +252,10 @@ export async function fetchTrending(): Promise<TokenMetrics[]> {
 
     const fetched = await Promise.all(fetches);
     for (const m of fetched) {
-      if (m) results.push(m);
-      if (results.length >= 15) break;
+      if (m && m.marketCap >= 100_000) {
+        results.push(m);
+        if (results.length >= 20) break;
+      }
     }
 
     return results;
@@ -223,35 +265,88 @@ export async function fetchTrending(): Promise<TokenMetrics[]> {
   }
 }
 
+export async function fetchGainers(): Promise<TokenMetrics[]> {
+  const trending = await fetchTrending();
+  return trending
+    .filter(t => t.priceChange24h > 0)
+    .sort((a, b) => b.priceChange24h - a.priceChange24h);
+}
+
 // ─── RugCheck (Solana) ────────────────────────────────────────────────
 
 const RUGCHECK_BASE = 'https://api.rugcheck.xyz/v1';
 
-export async function fetchRugCheck(mintAddress: string): Promise<{
+interface RugCheckFullReport {
   rugScore: number;
   topHolderPct: number;
+  top10HolderPct: number;
   lpLocked: boolean;
   lpLockPct: number;
   holders: number;
   risks: string[];
-} | null> {
+  audit: TokenAudit;
+}
+
+export async function fetchRugCheck(mintAddress: string): Promise<RugCheckFullReport | null> {
   try {
-    const res = await fetch(`${RUGCHECK_BASE}/tokens/${mintAddress}/report/summary`);
+    const res = await fetch(`${RUGCHECK_BASE}/tokens/${mintAddress}/report`);
     if (!res.ok) return null;
     const data = await res.json() as {
       score: number;
-      risks?: Array<{ name: string; level: string }>;
-      topHolders?: Array<{ pct: number }>;
-      markets?: Array<{ lp: { lpLockedPct: number } }>;
+      score_normalised: number;
+      mintAuthority: string | null;
+      freezeAuthority: string | null;
+      creator?: string;
+      creatorBalance?: number;
+      deployPlatform?: string;
+      rugged?: boolean;
+      detectedAt?: string;
+      graphInsidersDetected?: number;
+      totalHolders?: number;
+      totalLPProviders?: number;
+      totalMarketLiquidity?: number;
+      risks?: Array<{ name: string; level: string; description?: string }>;
+      topHolders?: Array<{ address: string; pct: number; amount?: number }>;
+      markets?: Array<{
+        pubkey: string;
+        lp?: { lpLockedPct: number; lpBurnedPct?: number };
+        liquidityA?: number;
+        liquidityB?: number;
+      }>;
+      lockers?: Record<string, unknown>;
     };
+
+    const topHolders = data.topHolders ?? [];
+    const top10Pct = topHolders.slice(0, 10).reduce((s, h) => s + (h.pct ?? 0), 0);
+    const lpLockedPct = data.markets?.[0]?.lp?.lpLockedPct ?? 0;
+    const lpBurnedPct = data.markets?.[0]?.lp?.lpBurnedPct ?? 0;
 
     return {
       rugScore: Math.max(0, Math.min(100, Math.round(data.score / 10))),
-      topHolderPct: data.topHolders?.[0]?.pct ?? 0,
-      lpLocked: (data.markets?.[0]?.lp?.lpLockedPct ?? 0) > 0,
-      lpLockPct: Math.round(data.markets?.[0]?.lp?.lpLockedPct ?? 0),
-      holders: data.topHolders?.length ?? 0,
+      topHolderPct: topHolders[0]?.pct ?? 0,
+      top10HolderPct: Math.round(top10Pct * 100) / 100,
+      lpLocked: lpLockedPct > 0,
+      lpLockPct: Math.round(lpLockedPct),
+      holders: data.totalHolders ?? topHolders.length,
       risks: data.risks?.filter(r => r.level === 'error' || r.level === 'warn').map(r => r.name) ?? [],
+      audit: {
+        noMint: data.mintAuthority === null,
+        noFreeze: data.freezeAuthority === null,
+        burnt: Math.round(lpBurnedPct),
+        top10HolderPct: Math.round(top10Pct * 100) / 100,
+        insidersDetected: data.graphInsidersDetected ?? 0,
+        totalHolders: data.totalHolders ?? topHolders.length,
+        totalLiquidity: data.totalMarketLiquidity ?? 0,
+        lpLockedPct: Math.round(lpLockedPct * 100) / 100,
+        lpProviders: data.totalLPProviders ?? 0,
+        creator: data.creator,
+        creatorBalance: data.creatorBalance,
+        deployPlatform: data.deployPlatform,
+        rugged: data.rugged ?? false,
+        tokenCreatedAt: data.detectedAt,
+        risks: data.risks ?? [],
+        pairAddress: data.markets?.[0]?.pubkey,
+      },
     };
   } catch (e) {
     log.warn({ err: e, mintAddress }, 'RugCheck failed');
@@ -473,6 +568,7 @@ async function enrichWithSecurity(metrics: TokenMetrics, contractAddress: string
       enriched.lpLocked = rugData.lpLocked;
       enriched.lpLockPct = rugData.lpLockPct;
       if (rugData.holders > 0) enriched.holders = rugData.holders;
+      enriched._audit = rugData.audit;
     }
 
     // Birdeye provides more accurate holder counts
@@ -587,6 +683,7 @@ export function screenToken(metrics: TokenMetrics): ScreeningResult {
     warnings,
     reasons,
     dataSources,
+    audit: (metrics as any)._audit ?? undefined,
   };
 }
 
