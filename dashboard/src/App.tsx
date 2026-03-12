@@ -27,6 +27,7 @@ export default function App() {
       <Routes>
         <Route path="/login" element={<LoginPage />} />
         <Route path="/app/*" element={<AppRoutes />} />
+        <Route path="/" element={<Navigate to="/app/home" replace />} />
         <Route
           element={
             <ProtectedRoute>
@@ -34,7 +35,7 @@ export default function App() {
             </ProtectedRoute>
           }
         >
-          <Route path="/" element={<DashboardPage />} />
+          <Route path="/dashboard" element={<DashboardPage />} />
           <Route path="/positions" element={<PositionsPage />} />
           <Route path="/strategies" element={<StrategiesPage />} />
           <Route path="/leaderboard" element={<LeaderboardPage />} />

@@ -9,6 +9,9 @@
 import {
   screenToken,
   screenByAddress,
+  screenTokenLive,
+  screenByAddressLive,
+  getTokenPriceLive,
   detectChainFromAddress,
   openPosition,
   closePosition,
@@ -207,23 +210,23 @@ function formatScreeningResult(result: ScreeningResult, contractAddress?: string
   return resp;
 }
 
-function handleScreen(token: string): string {
-  const result = screenToken(token);
+async function handleScreen(token: string): Promise<string> {
+  const result = await screenTokenLive(token);
   ctx.lastScreening = result;
   ctx.lastToken = token;
   return formatScreeningResult(result);
 }
 
-function handleScreenByAddress(address: string, chainHint?: Chain): string {
-  const result = screenByAddress(address, chainHint);
+async function handleScreenByAddress(address: string, chainHint?: Chain): Promise<string> {
+  const result = await screenByAddressLive(address, chainHint);
   ctx.lastScreening = result;
   ctx.lastToken = result.token.symbol;
   return formatScreeningResult(result, address);
 }
 
-function handleBuy(token: string, text: string): string {
+async function handleBuy(token: string, text: string): Promise<string> {
   const amount = extractAmount(text);
-  const screening = screenToken(token);
+  const screening = await screenTokenLive(token);
 
   if (!screening.passed && screening.grade !== 'C') {
     ctx.lastScreening = screening;
@@ -363,17 +366,17 @@ function handleSnipe(): string {
   return resp;
 }
 
-function handleAnalyze(token: string): string {
-  const t = getTokenPrice(token);
+async function handleAnalyze(token: string): Promise<string> {
+  const t = await getTokenPriceLive(token);
   if (!t) return `Token ${token} not found. Try: SOL, FARTCOIN, TSLA, DEGEN, ETH...`;
 
   ctx.lastToken = token;
-  const screening = screenToken(token);
+  const screening = await screenTokenLive(token);
   ctx.lastScreening = screening;
   const isMeme = MEME_TOKENS.has(token);
   const isPerp = PERP_TOKENS.has(token);
 
-  let resp = `ANALYSIS: ${t.symbol}\n`;
+  let resp = `ANALYSIS: ${t.symbol} (LIVE DATA)\n`;
   resp += `${t.name} | ${t.chain.toUpperCase()}\n\n`;
 
   resp += `--- Price Action ---\n`;
@@ -385,15 +388,15 @@ function handleAnalyze(token: string): string {
   resp += `\n--- Fundamentals ---\n`;
   resp += `Market Cap: ${formatUsd(t.marketCap)}\n`;
   resp += `Volume (24h): ${formatUsd(t.volume24h)}\n`;
-  resp += `Vol/MCap: ${(t.volume24h / t.marketCap * 100).toFixed(1)}%\n`;
+  resp += `Vol/MCap: ${(t.volume24h / Math.max(t.marketCap, 1) * 100).toFixed(1)}%\n`;
   resp += `Liquidity: ${formatUsd(t.liquidity)}\n`;
 
   if (!isPerp) {
     resp += `\n--- On-Chain ---\n`;
-    resp += `Holders: ${t.holders.toLocaleString()}\n`;
-    resp += `Top Holder: ${t.topHolderPct}%\n`;
-    resp += `LP Locked: ${t.lpLocked ? `${t.lpLockPct}%` : 'NO'}\n`;
-    resp += `RugCheck: ${t.rugScore}/100\n`;
+    resp += `Holders: ${t.holders > 0 ? t.holders.toLocaleString() : 'N/A'}\n`;
+    resp += `Top Holder: ${t.topHolderPct > 0 ? t.topHolderPct.toFixed(1) + '%' : 'N/A'}\n`;
+    resp += `LP Locked: ${t.lpLocked ? `${t.lpLockPct}%` : t.lpLockPct === 0 ? 'Unknown' : 'NO'}\n`;
+    resp += `Safety Score: ${t.rugScore}/100\n`;
     resp += `Age: ${t.ageMinutes > 1440 ? `${Math.floor(t.ageMinutes / 1440)} days` : `${t.ageMinutes} min`}\n`;
   }
 
@@ -407,7 +410,6 @@ function handleAnalyze(token: string): string {
 
   resp += `\nScreening Grade: ${screening.grade} — ${screening.recommendation}\n`;
 
-  // Suggested actions
   resp += `\nActions:\n`;
   if (screening.passed) {
     resp += `- "buy ${t.symbol} $200"\n`;
@@ -467,12 +469,12 @@ function handlePnl(): string {
   return resp;
 }
 
-function handleDca(token: string, text: string): string {
+async function handleDca(token: string, text: string): Promise<string> {
   const amount = extractAmount(text);
-  const t = getTokenPrice(token);
+  const t = await getTokenPriceLive(token);
   if (!t) return `Token ${token} not found.`;
 
-  const screening = screenToken(token);
+  const screening = await screenTokenLive(token);
   const isMeme = MEME_TOKENS.has(token);
   const isPerp = PERP_TOKENS.has(token);
 
@@ -635,12 +637,10 @@ function handleHelp(): string {
     `Tip: Add "on <chain>" to specify chain (e.g., "on arbitrum", "on sui", "on aptos")`;
 }
 
-function handleUnknown(text: string): string {
-  // Try contract address first
+async function handleUnknown(text: string): Promise<string> {
   const addr = extractContractAddress(text);
   if (addr) return handleScreenByAddress(addr);
 
-  // Try to extract a token and default to analyze
   const token = extractToken(text) ?? ctx.lastToken;
   if (token) return handleAnalyze(token);
 
@@ -657,7 +657,7 @@ function handleUnknown(text: string): string {
 
 // ─── Main Engine ─────────────────────────────────────────────────────
 
-export function processMessage(text: string): ChatMessage {
+export async function processMessage(text: string): Promise<ChatMessage> {
   ctx.conversationTurn++;
   const intent = detectIntent(text);
   const token = extractToken(text) ?? ctx.lastToken;
@@ -665,14 +665,11 @@ export function processMessage(text: string): ChatMessage {
 
   let response: string;
 
-  // Parse "on <chain>" hint from user text
   const chainHint = parseChainHint(text) ?? undefined;
 
-  // If user pasted a contract address, auto-screen it
   if (contractAddress && (intent === 'screen' || intent === 'unknown' || intent === 'analyze' || intent === 'buy')) {
     if (intent === 'buy') {
-      // Screen first, then show buy path
-      const result = screenByAddress(contractAddress, chainHint);
+      const result = await screenByAddressLive(contractAddress, chainHint);
       ctx.lastScreening = result;
       ctx.lastToken = result.token.symbol;
       if (!result.passed && result.grade !== 'C') {
@@ -683,14 +680,14 @@ export function processMessage(text: string): ChatMessage {
           `\n\nPassed screening. Say "buy ${result.token.symbol} $200" to execute.`;
       }
     } else {
-      response = handleScreenByAddress(contractAddress, chainHint);
+      response = await handleScreenByAddress(contractAddress, chainHint);
     }
   } else switch (intent) {
     case 'screen':
-      response = token ? handleScreen(token) : 'Which token? Say "screen FARTCOIN" or paste a contract address.';
+      response = token ? await handleScreen(token) : 'Which token? Say "screen FARTCOIN" or paste a contract address.';
       break;
     case 'buy':
-      response = token ? handleBuy(token, text) : 'Which token? Say "buy FARTCOIN $200".';
+      response = token ? await handleBuy(token, text) : 'Which token? Say "buy FARTCOIN $200".';
       break;
     case 'sell':
       response = handleSell(token ?? '', text);
@@ -705,10 +702,10 @@ export function processMessage(text: string): ChatMessage {
       response = handleSnipe();
       break;
     case 'analyze':
-      response = token ? handleAnalyze(token) : 'Which token? Say "analyze FARTCOIN" or "analyze NVDA".';
+      response = token ? await handleAnalyze(token) : 'Which token? Say "analyze FARTCOIN" or "analyze NVDA".';
       break;
     case 'dca':
-      response = token ? handleDca(token, text) : 'Which token? Say "dca SOL $100".';
+      response = token ? await handleDca(token, text) : 'Which token? Say "dca SOL $100".';
       break;
     case 'positions':
       response = handlePositions();
@@ -739,7 +736,7 @@ export function processMessage(text: string): ChatMessage {
       response = handleHelp();
       break;
     default:
-      response = handleUnknown(text);
+      response = await handleUnknown(text);
   }
 
   return {

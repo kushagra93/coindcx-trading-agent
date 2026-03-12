@@ -864,6 +864,57 @@ export function screenToken(symbol: string): ScreeningResult {
   return screenTokenMetrics(token);
 }
 
+// ─── Live Screening (Real API Data) ──────────────────────────────────
+
+import { fetchLiveTokenBySymbol, fetchLiveTokenByAddress } from './liveData';
+
+/** Screen a token using live DexScreener + RugCheck/GoPlus data */
+export async function screenTokenLive(symbol: string): Promise<ScreeningResult> {
+  const upper = symbol.toUpperCase().replace('-PERP', '');
+
+  // Perps always use static data (no DEX pairs to look up)
+  if (PERP_DB[upper]) return screenTokenMetrics(PERP_DB[upper]);
+
+  try {
+    const liveData = await fetchLiveTokenBySymbol(upper);
+    if (liveData) {
+      console.log(`[LIVE] ${upper}: $${liveData.price} (24h: ${liveData.priceChange24h}%)`);
+      return screenTokenMetrics(liveData);
+    }
+    console.warn(`[LIVE] No data for ${upper}, falling back to static`);
+  } catch (e) {
+    console.error(`[LIVE] API error for ${upper}:`, e);
+  }
+
+  const fallback = TOKEN_DB[upper];
+  if (fallback) return screenTokenMetrics(fallback);
+  return screenToken(upper);
+}
+
+/** Screen a contract address using live API data */
+export async function screenByAddressLive(
+  address: string,
+  hintChain?: Chain
+): Promise<ScreeningResult> {
+  const chain = detectChainFromAddress(address, hintChain);
+
+  const liveData = await fetchLiveTokenByAddress(address, chain ?? undefined);
+  if (!liveData) {
+    // Fall back to static screening
+    return screenByAddress(address, hintChain);
+  }
+
+  return screenTokenMetrics(liveData);
+}
+
+/** Get live token price from DexScreener */
+export async function getTokenPriceLive(symbol: string): Promise<TokenMetrics | null> {
+  const upper = symbol.toUpperCase().replace('-PERP', '');
+  if (PERP_DB[upper]) return PERP_DB[upper];
+  const live = await fetchLiveTokenBySymbol(upper);
+  return live ?? TOKEN_DB[upper] ?? null;
+}
+
 // ─── Position Manager ────────────────────────────────────────────────
 
 let positions: Position[] = [];
@@ -1037,4 +1088,4 @@ export function formatPrice(n: number): string {
   return `$${n.toExponential(2)}`;
 }
 
-export { MEME_TOKENS, PERP_TOKENS, TOKEN_DB, PERP_DB, fmt, CONTRACT_DB };
+export { MEME_TOKENS, PERP_TOKENS, TOKEN_DB, PERP_DB, fmt, CONTRACT_DB, screenTokenMetrics };

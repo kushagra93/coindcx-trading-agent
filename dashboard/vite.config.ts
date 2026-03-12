@@ -18,6 +18,21 @@ export default defineConfig({
         target: 'http://localhost:3000',
         changeOrigin: true,
       },
+      '/dexscreener': {
+        target: 'https://api.dexscreener.com',
+        changeOrigin: true,
+        rewrite: (path) => path.replace(/^\/dexscreener/, ''),
+      },
+      '/rugcheck': {
+        target: 'https://api.rugcheck.xyz',
+        changeOrigin: true,
+        rewrite: (path) => path.replace(/^\/rugcheck/, ''),
+      },
+      '/goplus': {
+        target: 'https://api.gopluslabs.com',
+        changeOrigin: true,
+        rewrite: (path) => path.replace(/^\/goplus/, ''),
+      },
     },
   },
 })
