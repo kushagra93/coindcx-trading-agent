@@ -151,7 +151,8 @@ class ScreeningResult {
     final grade = json['verdict'] as String?
         ?? json['grade'] as String?
         ?? '';
-    final rugScore = (json['score'] as num?)?.toInt()
+    final confidence = (json['aiConfidence'] as num?)?.toInt()
+        ?? (json['score'] as num?)?.toInt()
         ?? (tokenData['rugScore'] as num?)?.toInt()
         ?? 0;
     final reasons = (json['flags'] as List<dynamic>?)?.cast<String>()
@@ -161,7 +162,7 @@ class ScreeningResult {
     return ScreeningResult(
       metrics: TokenMetrics.fromJson(tokenData),
       verdict: grade,
-      score: rugScore,
+      score: confidence,
       flags: reasons,
       security: json['security'] as Map<String, dynamic>?,
       audit: json['audit'] != null

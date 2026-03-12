@@ -56,14 +56,12 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
     } on ApiException catch (e) {
       setState(() => _messages.add(ChatMessage(
         text: 'Something went wrong (${e.statusCode}). Try again.',
-        isUser: false,
-        timestamp: DateTime.now(),
+        isUser: false, timestamp: DateTime.now(),
       )));
     } catch (e) {
       setState(() => _messages.add(ChatMessage(
         text: 'Network error. Make sure the backend is running.',
-        isUser: false,
-        timestamp: DateTime.now(),
+        isUser: false, timestamp: DateTime.now(),
       )));
     } finally {
       setState(() => _isLoading = false);
@@ -86,7 +84,6 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
   @override
   Widget build(BuildContext context) {
     final colors = CoinDCXTheme.of(context);
-
     return Scaffold(
       appBar: AppBar(title: const Text('AI Assistant')),
       body: Column(
@@ -112,13 +109,11 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
     return Align(
       alignment: msg.isUser ? Alignment.centerRight : Alignment.centerLeft,
       child: Container(
-        constraints: BoxConstraints(maxWidth: MediaQuery.of(context).size.width * 0.8),
+        constraints: BoxConstraints(maxWidth: MediaQuery.of(context).size.width * 0.85),
         margin: const EdgeInsets.only(bottom: CoinDCXSpacing.sm),
         padding: const EdgeInsets.all(CoinDCXSpacing.sm),
         decoration: BoxDecoration(
-          color: msg.isUser
-              ? colors.actionBackgroundPrimary
-              : colors.generalBackgroundBgL2,
+          color: msg.isUser ? colors.actionBackgroundPrimary : colors.generalBackgroundBgL2,
           borderRadius: BorderRadius.only(
             topLeft: const Radius.circular(CoinDCXSpacing.radiusMd),
             topRight: const Radius.circular(CoinDCXSpacing.radiusMd),
@@ -143,10 +138,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
                 spacing: CoinDCXSpacing.xxs,
                 runSpacing: CoinDCXSpacing.xxs,
                 children: msg.suggestions!.map((s) => GestureDetector(
-                  onTap: () {
-                    _controller.text = s;
-                    _sendMessage();
-                  },
+                  onTap: () { _controller.text = s; _sendMessage(); },
                   child: Container(
                     padding: const EdgeInsets.symmetric(horizontal: CoinDCXSpacing.sm, vertical: CoinDCXSpacing.xxs),
                     decoration: BoxDecoration(
@@ -167,22 +159,17 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
 
   Widget _buildCard(ChatCard card, CoinDCXColorScheme colors) {
     switch (card.type) {
-      case 'trending':
-        return _buildTrendingCard(card.data, colors);
-      case 'screening':
-        return _buildScreeningCard(card.data, colors);
-      case 'token_price':
-        return _buildTokenPriceCard(card.data, colors);
-      case 'trade_preview':
-        return _buildTradePreviewCard(card.data, colors);
-      case 'trade_executed':
-        return _buildTradeExecutedCard(card.data, colors);
-      case 'portfolio':
-        return _buildPortfolioCard(card.data, colors);
-      default:
-        return const SizedBox.shrink();
+      case 'trending': return _buildTrendingCard(card.data, colors);
+      case 'screening': return _buildScreeningCard(card.data, colors);
+      case 'token_price': return _buildTokenPriceCard(card.data, colors);
+      case 'trade_preview': return _buildTradePreviewCard(card.data, colors);
+      case 'trade_executed': return _buildTradeExecutedCard(card.data, colors);
+      case 'portfolio': return _buildPortfolioCard(card.data, colors);
+      default: return const SizedBox.shrink();
     }
   }
+
+  // ── Trending card ──────────────────────────────────────────────────
 
   Widget _buildTrendingCard(Map<String, dynamic> data, CoinDCXColorScheme colors) {
     final items = data['items'] as List<dynamic>? ?? [];
@@ -196,53 +183,52 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
         border: Border.all(color: colors.generalStrokeL1),
       ),
       child: Column(
-        children: items.take(6).map<Widget>((item) {
+        children: items.take(8).map<Widget>((item) {
           final t = item as Map<String, dynamic>;
           final symbol = t['symbol'] as String? ?? '';
-          final price = (t['price'] as num?)?.toDouble() ?? 0;
+          final price = (t['price'] as num?)?.toDouble() ?? (t['priceUsd'] as num?)?.toDouble() ?? 0;
           final change = (t['priceChange24h'] as num?)?.toDouble() ?? 0;
           final chain = t['chain'] as String? ?? '';
+          final imageUrl = t['imageUrl'] as String?;
+          final mcap = (t['marketCap'] as num?)?.toDouble() ?? 0;
           final isPositive = change >= 0;
 
           return InkWell(
-            onTap: () {
-              _controller.text = 'screen $symbol';
-              _sendMessage();
-            },
+            onTap: () { _controller.text = 'screen $symbol'; _sendMessage(); },
             child: Padding(
               padding: const EdgeInsets.symmetric(horizontal: CoinDCXSpacing.sm, vertical: CoinDCXSpacing.xs),
               child: Row(
                 children: [
-                  Container(
-                    width: 28, height: 28,
-                    decoration: BoxDecoration(
-                      color: colors.actionBackgroundSecondary,
-                      borderRadius: BorderRadius.circular(CoinDCXSpacing.radiusFull),
-                    ),
-                    child: Center(
-                      child: Text(symbol.isNotEmpty ? symbol[0] : '?',
-                        style: CoinDCXTypography.caption.copyWith(color: colors.actionBackgroundPrimary, fontWeight: FontWeight.w700)),
-                    ),
-                  ),
+                  _buildMiniIcon(symbol, imageUrl, colors),
                   const SizedBox(width: CoinDCXSpacing.xs),
                   Expanded(
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        Text(symbol, style: CoinDCXTypography.buttonSm.copyWith(color: colors.generalForegroundPrimary)),
-                        Text(chain, style: CoinDCXTypography.caption.copyWith(color: colors.generalForegroundTertiary, fontSize: 10)),
+                        Text(symbol, style: CoinDCXTypography.buttonSm.copyWith(color: colors.generalForegroundPrimary, fontSize: 12)),
+                        Text('${chain.toUpperCase()} · MCap ${_formatLargeNum(mcap)}',
+                          style: CoinDCXTypography.caption.copyWith(color: colors.generalForegroundTertiary, fontSize: 9)),
                       ],
                     ),
                   ),
                   Column(
                     crossAxisAlignment: CrossAxisAlignment.end,
                     children: [
-                      Text(_formatPrice(price), style: CoinDCXTypography.numberSm.copyWith(color: colors.generalForegroundPrimary)),
-                      Text(
-                        '${isPositive ? '+' : ''}${change.toStringAsFixed(1)}%',
-                        style: CoinDCXTypography.caption.copyWith(
-                          color: isPositive ? colors.positiveBackgroundPrimary : colors.negativeBackgroundPrimary,
-                          fontSize: 10,
+                      Text(_formatPrice(price), style: CoinDCXTypography.numberSm.copyWith(color: colors.generalForegroundPrimary, fontSize: 12)),
+                      Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 1),
+                        decoration: BoxDecoration(
+                          color: isPositive
+                              ? colors.positiveBackgroundPrimary.withValues(alpha: 0.12)
+                              : colors.negativeBackgroundPrimary.withValues(alpha: 0.12),
+                          borderRadius: BorderRadius.circular(4),
+                        ),
+                        child: Text(
+                          '${isPositive ? '+' : ''}${change.toStringAsFixed(1)}%',
+                          style: CoinDCXTypography.caption.copyWith(
+                            color: isPositive ? colors.positiveBackgroundPrimary : colors.negativeBackgroundPrimary,
+                            fontSize: 9, fontWeight: FontWeight.w600,
+                          ),
                         ),
                       ),
                     ],
@@ -256,12 +242,18 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
     );
   }
 
+  // ── Screening card ─────────────────────────────────────────────────
+
   Widget _buildScreeningCard(Map<String, dynamic> data, CoinDCXColorScheme colors) {
     final token = data['token'] as Map<String, dynamic>? ?? data;
     final grade = data['grade'] as String? ?? '?';
     final passed = data['passed'] as bool? ?? false;
+    final score = (data['aiConfidence'] as num?)?.toInt() ?? (data['score'] as num?)?.toInt() ?? 0;
     final reasons = (data['reasons'] as List<dynamic>?)?.cast<String>() ?? [];
-    final rugScore = (token['rugScore'] as num?)?.toInt() ?? (data['rugScore'] as num?)?.toInt() ?? 0;
+    final warnings = (data['warnings'] as List<dynamic>?)?.cast<String>() ?? [];
+    final allFlags = [...reasons, ...warnings];
+    final symbol = token['symbol'] as String? ?? '';
+    final imageUrl = token['imageUrl'] as String?;
 
     final gradeColor = grade == 'A' || grade == 'B'
         ? colors.positiveBackgroundPrimary
@@ -276,13 +268,15 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
       decoration: BoxDecoration(
         color: colors.generalBackgroundBgL3,
         borderRadius: BorderRadius.circular(CoinDCXSpacing.radiusSm),
-        border: Border.all(color: colors.generalStrokeL1),
+        border: Border.all(color: gradeColor.withValues(alpha: 0.2)),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Row(
             children: [
+              _buildMiniIcon(symbol, imageUrl, colors),
+              const SizedBox(width: CoinDCXSpacing.xs),
               Container(
                 padding: const EdgeInsets.symmetric(horizontal: CoinDCXSpacing.sm, vertical: CoinDCXSpacing.xxxs),
                 decoration: BoxDecoration(
@@ -298,43 +292,48 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
                   color: passed ? colors.positiveBackgroundSecondary : colors.negativeBackgroundSecondary,
                   borderRadius: BorderRadius.circular(CoinDCXSpacing.radiusFull),
                 ),
-                child: Text(
-                  passed ? 'PASSED' : 'FAILED',
+                child: Text(passed ? 'PASSED' : 'FAILED',
                   style: CoinDCXTypography.caption.copyWith(
                     color: passed ? colors.positiveBackgroundPrimary : colors.negativeBackgroundPrimary,
-                    fontWeight: FontWeight.w700,
-                  ),
-                ),
+                    fontWeight: FontWeight.w700)),
               ),
               const Spacer(),
-              Text('$rugScore/100', style: CoinDCXTypography.numberSm.copyWith(color: colors.generalForegroundSecondary)),
+              Text('$score/100', style: CoinDCXTypography.numberSm.copyWith(color: colors.generalForegroundSecondary)),
             ],
           ),
-          if (reasons.isNotEmpty) ...[
+          if (allFlags.isNotEmpty) ...[
             const SizedBox(height: CoinDCXSpacing.xs),
-            ...reasons.take(3).map((r) => Padding(
-              padding: const EdgeInsets.only(bottom: 2),
-              child: Row(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Icon(Icons.info_outline_rounded, size: 12, color: colors.alertBackgroundPrimary),
-                  const SizedBox(width: CoinDCXSpacing.xxs),
-                  Expanded(child: Text(r, style: CoinDCXTypography.caption.copyWith(color: colors.generalForegroundSecondary))),
-                ],
-              ),
-            )),
+            ...allFlags.take(4).map((r) {
+              final isReason = reasons.contains(r);
+              return Padding(
+                padding: const EdgeInsets.only(bottom: 2),
+                child: Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Icon(isReason ? Icons.warning_amber_rounded : Icons.info_outline_rounded,
+                      size: 12, color: isReason ? colors.negativeBackgroundPrimary : colors.alertBackgroundPrimary),
+                    const SizedBox(width: CoinDCXSpacing.xxs),
+                    Expanded(child: Text(r,
+                      style: CoinDCXTypography.caption.copyWith(color: colors.generalForegroundSecondary, fontSize: 10))),
+                  ],
+                ),
+              );
+            }),
           ],
         ],
       ),
     );
   }
 
+  // ── Token price card ───────────────────────────────────────────────
+
   Widget _buildTokenPriceCard(Map<String, dynamic> data, CoinDCXColorScheme colors) {
     final symbol = data['symbol'] as String? ?? '';
-    final price = (data['price'] as num?)?.toDouble() ?? 0;
+    final price = (data['price'] as num?)?.toDouble() ?? (data['priceUsd'] as num?)?.toDouble() ?? 0;
     final change = (data['priceChange24h'] as num?)?.toDouble() ?? 0;
     final volume = (data['volume24h'] as num?)?.toDouble() ?? 0;
     final mcap = (data['marketCap'] as num?)?.toDouble() ?? 0;
+    final imageUrl = data['imageUrl'] as String?;
     final isPositive = change >= 0;
 
     return Container(
@@ -350,9 +349,11 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
+              _buildMiniIcon(symbol, imageUrl, colors),
+              const SizedBox(width: CoinDCXSpacing.xs),
               Text(symbol, style: CoinDCXTypography.buttonMd.copyWith(color: colors.generalForegroundPrimary)),
+              const Spacer(),
               Text(_formatPrice(price), style: CoinDCXTypography.numberMd.copyWith(color: colors.generalForegroundPrimary)),
             ],
           ),
@@ -371,6 +372,8 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
       ),
     );
   }
+
+  // ── Trade preview card ─────────────────────────────────────────────
 
   Widget _buildTradePreviewCard(Map<String, dynamic> data, CoinDCXColorScheme colors) {
     final symbol = data['symbol'] as String? ?? '';
@@ -400,14 +403,8 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
           SizedBox(
             width: double.infinity,
             child: ElevatedButton(
-              onPressed: () {
-                _controller.text = 'confirm buy $symbol \$${amount.toStringAsFixed(0)}';
-                _sendMessage();
-              },
-              style: ElevatedButton.styleFrom(
-                backgroundColor: colors.positiveBackgroundPrimary,
-                minimumSize: const Size(double.infinity, 40),
-              ),
+              onPressed: () { _controller.text = 'confirm buy $symbol \$${amount.toStringAsFixed(0)}'; _sendMessage(); },
+              style: ElevatedButton.styleFrom(backgroundColor: colors.positiveBackgroundPrimary, minimumSize: const Size(double.infinity, 40)),
               child: Text('Confirm Buy', style: CoinDCXTypography.buttonMd.copyWith(color: Colors.white)),
             ),
           ),
@@ -415,6 +412,8 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
       ),
     );
   }
+
+  // ── Trade executed card ────────────────────────────────────────────
 
   Widget _buildTradeExecutedCard(Map<String, dynamic> data, CoinDCXColorScheme colors) {
     final symbol = data['symbol'] as String? ?? '';
@@ -461,6 +460,8 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
     );
   }
 
+  // ── Portfolio card ─────────────────────────────────────────────────
+
   Widget _buildPortfolioCard(Map<String, dynamic> data, CoinDCXColorScheme colors) {
     final positions = data['positions'] as List<dynamic>? ?? [];
     final totalInvested = (data['totalInvested'] as num?)?.toDouble() ?? 0;
@@ -504,10 +505,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
               return Padding(
                 padding: const EdgeInsets.symmetric(vertical: 2),
                 child: InkWell(
-                  onTap: () {
-                    _controller.text = 'sell $symbol';
-                    _sendMessage();
-                  },
+                  onTap: () { _controller.text = 'sell $symbol'; _sendMessage(); },
                   child: Row(
                     children: [
                       Text(symbol, style: CoinDCXTypography.buttonSm.copyWith(color: colors.generalForegroundPrimary, fontSize: 12)),
@@ -537,6 +535,53 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
         ],
       ),
     );
+  }
+
+  // ── Shared helpers ─────────────────────────────────────────────────
+
+  String _proxyUrl(String url) =>
+    'http://localhost:3000/api/v1/proxy/image?url=${Uri.encodeComponent(url)}';
+
+  Widget _buildMiniIcon(String symbol, String? imageUrl, CoinDCXColorScheme colors, {double size = 28}) {
+    if (imageUrl != null && imageUrl.isNotEmpty) {
+      return ClipRRect(
+        borderRadius: BorderRadius.circular(size),
+        child: Image.network(_proxyUrl(imageUrl), width: size, height: size, fit: BoxFit.cover,
+          errorBuilder: (_, __, ___) => _buildMiniIconFallback(symbol, colors, size)),
+      );
+    }
+    return _buildMiniIconFallback(symbol, colors, size);
+  }
+
+  Widget _buildMiniIconFallback(String symbol, CoinDCXColorScheme colors, double size) {
+    return Container(
+      width: size, height: size,
+      decoration: BoxDecoration(color: colors.actionBackgroundSecondary, borderRadius: BorderRadius.circular(size)),
+      child: Center(child: Text(
+        symbol.isNotEmpty ? symbol[0] : '?',
+        style: CoinDCXTypography.caption.copyWith(color: colors.actionBackgroundPrimary, fontWeight: FontWeight.w700, fontSize: size * 0.4),
+      )),
+    );
+  }
+
+  Widget _buildMarkdownText(String text, Color baseColor) {
+    final spans = <InlineSpan>[];
+    final boldRegex = RegExp(r'\*\*(.+?)\*\*');
+    int lastEnd = 0;
+    for (final match in boldRegex.allMatches(text)) {
+      if (match.start > lastEnd) {
+        spans.add(TextSpan(text: text.substring(lastEnd, match.start),
+          style: CoinDCXTypography.bodyMedium.copyWith(color: baseColor)));
+      }
+      spans.add(TextSpan(text: match.group(1),
+        style: CoinDCXTypography.bodyMedium.copyWith(color: baseColor, fontWeight: FontWeight.w700)));
+      lastEnd = match.end;
+    }
+    if (lastEnd < text.length) {
+      spans.add(TextSpan(text: text.substring(lastEnd),
+        style: CoinDCXTypography.bodyMedium.copyWith(color: baseColor)));
+    }
+    return RichText(text: TextSpan(children: spans));
   }
 
   Widget _statChip(String label, String value, Color valueColor, CoinDCXColorScheme colors) {
@@ -575,60 +620,20 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
     return '\$${value.toStringAsFixed(0)}';
   }
 
-  Widget _buildMarkdownText(String text, Color baseColor) {
-    final spans = <InlineSpan>[];
-    final boldRegex = RegExp(r'\*\*(.+?)\*\*');
-    int lastEnd = 0;
-
-    for (final match in boldRegex.allMatches(text)) {
-      if (match.start > lastEnd) {
-        spans.add(TextSpan(
-          text: text.substring(lastEnd, match.start),
-          style: CoinDCXTypography.bodyMedium.copyWith(color: baseColor),
-        ));
-      }
-      spans.add(TextSpan(
-        text: match.group(1),
-        style: CoinDCXTypography.bodyMedium.copyWith(color: baseColor, fontWeight: FontWeight.w700),
-      ));
-      lastEnd = match.end;
-    }
-    if (lastEnd < text.length) {
-      spans.add(TextSpan(
-        text: text.substring(lastEnd),
-        style: CoinDCXTypography.bodyMedium.copyWith(color: baseColor),
-      ));
-    }
-
-    return RichText(text: TextSpan(children: spans));
-  }
-
   Widget _buildTypingIndicator(CoinDCXColorScheme colors) {
     return Align(
       alignment: Alignment.centerLeft,
       child: Container(
         margin: const EdgeInsets.only(bottom: CoinDCXSpacing.sm),
         padding: const EdgeInsets.all(CoinDCXSpacing.sm),
-        decoration: BoxDecoration(
-          color: colors.generalBackgroundBgL2,
-          borderRadius: BorderRadius.circular(CoinDCXSpacing.radiusMd),
-        ),
+        decoration: BoxDecoration(color: colors.generalBackgroundBgL2, borderRadius: BorderRadius.circular(CoinDCXSpacing.radiusMd)),
         child: Row(
           mainAxisSize: MainAxisSize.min,
           children: [
-            SizedBox(
-              width: 16,
-              height: 16,
-              child: CircularProgressIndicator(
-                strokeWidth: 2,
-                color: colors.actionBackgroundPrimary,
-              ),
-            ),
+            SizedBox(width: 16, height: 16,
+              child: CircularProgressIndicator(strokeWidth: 2, color: colors.actionBackgroundPrimary)),
             const SizedBox(width: CoinDCXSpacing.xs),
-            Text(
-              'Thinking...',
-              style: CoinDCXTypography.bodySmall.copyWith(color: colors.generalForegroundTertiary),
-            ),
+            Text('Thinking...', style: CoinDCXTypography.bodySmall.copyWith(color: colors.generalForegroundTertiary)),
           ],
         ),
       ),
@@ -638,10 +643,8 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
   Widget _buildInputBar(CoinDCXColorScheme colors) {
     return Container(
       padding: EdgeInsets.only(
-        left: CoinDCXSpacing.md,
-        right: CoinDCXSpacing.md,
-        top: CoinDCXSpacing.sm,
-        bottom: CoinDCXSpacing.md + MediaQuery.of(context).padding.bottom,
+        left: CoinDCXSpacing.md, right: CoinDCXSpacing.md,
+        top: CoinDCXSpacing.sm, bottom: CoinDCXSpacing.md + MediaQuery.of(context).padding.bottom,
       ),
       decoration: BoxDecoration(
         color: colors.generalBackgroundBgL1,
@@ -663,10 +666,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
           ),
           const SizedBox(width: CoinDCXSpacing.xs),
           Container(
-            decoration: BoxDecoration(
-              color: colors.actionBackgroundPrimary,
-              borderRadius: BorderRadius.circular(CoinDCXSpacing.radiusMd),
-            ),
+            decoration: BoxDecoration(color: colors.actionBackgroundPrimary, borderRadius: BorderRadius.circular(CoinDCXSpacing.radiusMd)),
             child: IconButton(
               icon: Icon(Icons.send_rounded, color: colors.actionForegroundPrimary),
               onPressed: _isLoading ? null : _sendMessage,
