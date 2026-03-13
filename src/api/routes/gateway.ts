@@ -13,6 +13,7 @@ import { processDeposit } from '../../gateway/deposit-gateway.js';
 import { processWithdrawal } from '../../gateway/withdraw-gateway.js';
 import type { DepositEvent, WithdrawalRequest } from '../../gateway/types.js';
 import type { AuthContext, Chain } from '../../core/types.js';
+import { VALID_CHAINS } from '../../core/chain-registry.js';
 
 function getAuthContext(request: any): AuthContext {
   return {
@@ -29,8 +30,6 @@ function handlePermissionError(err: unknown, reply: FastifyReply): void {
     throw err;
   }
 }
-
-const VALID_CHAINS = new Set<Chain>(['solana', 'ethereum', 'polygon', 'base', 'arbitrum', 'hyperliquid']);
 
 export async function gatewayRoutes(app: FastifyInstance) {
   // ═══════════════════════════════════════════════

@@ -289,21 +289,21 @@ export const TOKEN_DB: Record<string, TokenMetrics> = {
   },
   // ── BNB Chain tokens ──
   BNB: {
-    symbol: 'BNB', name: 'BNB', chain: 'bsc',
+    symbol: 'BNB', name: 'BNB', chain: 'bnb',
     price: 610.20, priceChange5m: +0.04, priceChange1h: +0.5, priceChange24h: +2.8,
     volume24h: 1_200_000_000, marketCap: 91_000_000_000, liquidity: 500_000_000,
     ageMinutes: 999999, holders: 5000000, topHolderPct: 0.2,
     lpLocked: true, lpLockPct: 100, rugScore: 99, ctScore: 85,
   },
   CAKE: {
-    symbol: 'CAKE', name: 'PancakeSwap', chain: 'bsc',
+    symbol: 'CAKE', name: 'PancakeSwap', chain: 'bnb',
     price: 2.45, priceChange5m: +0.1, priceChange1h: +1.2, priceChange24h: +5.4,
     volume24h: 42_000_000, marketCap: 680_000_000, liquidity: 18_000_000,
     ageMinutes: 999999, holders: 320000, topHolderPct: 1.5,
     lpLocked: true, lpLockPct: 99, rugScore: 95, ctScore: 70,
   },
   BAKE: {
-    symbol: 'BAKE', name: 'BakeryToken', chain: 'bsc',
+    symbol: 'BAKE', name: 'BakeryToken', chain: 'bnb',
     price: 0.28, priceChange5m: +0.3, priceChange1h: +2.5, priceChange24h: +11.2,
     volume24h: 5_800_000, marketCap: 52_000_000, liquidity: 2_400_000,
     ageMinutes: 999999, holders: 45000, topHolderPct: 3.8,
@@ -347,9 +347,16 @@ export const TOKEN_DB: Record<string, TokenMetrics> = {
     ageMinutes: 43200, holders: 85000, topHolderPct: 2.2,
     lpLocked: true, lpLockPct: 94, rugScore: 84, ctScore: 73,
   },
-  // ── Fantom tokens ──
+  // ── Sonic tokens (formerly Fantom) ──
+  S: {
+    symbol: 'S', name: 'Sonic', chain: 'sonic',
+    price: 0.58, priceChange5m: +0.12, priceChange1h: +1.8, priceChange24h: +9.5,
+    volume24h: 65_000_000, marketCap: 1_800_000_000, liquidity: 25_000_000,
+    ageMinutes: 999999, holders: 450000, topHolderPct: 0.6,
+    lpLocked: true, lpLockPct: 100, rugScore: 96, ctScore: 72,
+  },
   FTM: {
-    symbol: 'FTM', name: 'Fantom', chain: 'fantom',
+    symbol: 'FTM', name: 'Fantom (Legacy)', chain: 'sonic',
     price: 0.72, priceChange5m: +0.1, priceChange1h: +1.5, priceChange24h: +6.2,
     volume24h: 85_000_000, marketCap: 2_000_000_000, liquidity: 28_000_000,
     ageMinutes: 999999, holders: 650000, topHolderPct: 0.7,
@@ -427,6 +434,58 @@ export const TOKEN_DB: Record<string, TokenMetrics> = {
     volume24h: 5_200_000, marketCap: 18_000_000, liquidity: 1_800_000,
     ageMinutes: 21600, holders: 12000, topHolderPct: 5.2,
     lpLocked: true, lpLockPct: 88, rugScore: 74, ctScore: 80,
+  },
+  // ── Berachain tokens ──
+  BERA: {
+    symbol: 'BERA', name: 'Berachain', chain: 'berachain',
+    price: 0.62, priceChange5m: +0.15, priceChange1h: +2.1, priceChange24h: +8.5,
+    volume24h: 85_000_000, marketCap: 330_000_000, liquidity: 18_000_000,
+    ageMinutes: 999999, holders: 185000, topHolderPct: 1.5,
+    lpLocked: true, lpLockPct: 100, rugScore: 94, ctScore: 82,
+  },
+  HONEY: {
+    symbol: 'HONEY', name: 'Honey', chain: 'berachain',
+    price: 1.00, priceChange5m: +0.01, priceChange1h: +0.05, priceChange24h: +0.1,
+    volume24h: 42_000_000, marketCap: 500_000_000, liquidity: 120_000_000,
+    ageMinutes: 999999, holders: 95000, topHolderPct: 0.8,
+    lpLocked: true, lpLockPct: 100, rugScore: 98, ctScore: 60,
+  },
+  KODIAK: {
+    symbol: 'KODIAK', name: 'Kodiak', chain: 'berachain',
+    price: 0.18, priceChange5m: +0.4, priceChange1h: +3.8, priceChange24h: +22.1,
+    volume24h: 12_000_000, marketCap: 48_000_000, liquidity: 4_200_000,
+    ageMinutes: 43200, holders: 28000, topHolderPct: 3.5,
+    lpLocked: true, lpLockPct: 92, rugScore: 82, ctScore: 76,
+  },
+  // ── Linea tokens ──
+  LINEA: {
+    symbol: 'LINEA', name: 'Linea', chain: 'linea',
+    price: 0.045, priceChange5m: +0.08, priceChange1h: +1.5, priceChange24h: +6.8,
+    volume24h: 18_000_000, marketCap: 180_000_000, liquidity: 8_500_000,
+    ageMinutes: 999999, holders: 65000, topHolderPct: 2.2,
+    lpLocked: true, lpLockPct: 100, rugScore: 90, ctScore: 68,
+  },
+  NILE: {
+    symbol: 'NILE', name: 'Nile Exchange', chain: 'linea',
+    price: 0.022, priceChange5m: +0.3, priceChange1h: +2.8, priceChange24h: +15.4,
+    volume24h: 5_200_000, marketCap: 22_000_000, liquidity: 2_800_000,
+    ageMinutes: 86400, holders: 15000, topHolderPct: 4.1,
+    lpLocked: true, lpLockPct: 90, rugScore: 80, ctScore: 62,
+  },
+  // ── Scroll tokens ──
+  SCR: {
+    symbol: 'SCR', name: 'Scroll', chain: 'scroll',
+    price: 0.52, priceChange5m: +0.1, priceChange1h: +1.8, priceChange24h: +7.2,
+    volume24h: 32_000_000, marketCap: 520_000_000, liquidity: 15_000_000,
+    ageMinutes: 999999, holders: 82000, topHolderPct: 1.8,
+    lpLocked: true, lpLockPct: 100, rugScore: 92, ctScore: 72,
+  },
+  AMBIENT: {
+    symbol: 'AMBIENT', name: 'Ambient Finance', chain: 'scroll',
+    price: 0.085, priceChange5m: +0.2, priceChange1h: +3.2, priceChange24h: +12.5,
+    volume24h: 4_800_000, marketCap: 35_000_000, liquidity: 2_500_000,
+    ageMinutes: 86400, holders: 12000, topHolderPct: 4.5,
+    lpLocked: true, lpLockPct: 88, rugScore: 78, ctScore: 65,
   },
   // ── MegaETH (Real-time EVM L2) ──
   MEGA: {

@@ -6,6 +6,7 @@
 
 import type { Chain, RiskLevel } from '../core/types.js';
 import type { Jurisdiction } from '../security/types.js';
+import { CHAIN_REGISTRY } from '../core/chain-registry.js';
 
 export interface SystemPromptContext {
   userId: string;
@@ -58,6 +59,13 @@ export function generateSystemPrompt(ctx: SystemPromptContext): string {
 - Total Value: $${ctx.portfolioValueUsd.toFixed(2)} USD
 - Cash Balance: $${ctx.cashBalanceUsd.toFixed(2)} USD
 - Allowed Chains: ${ctx.allowedChains.join(', ')}
+
+## SUPPORTED CHAINS & DEX VENUES
+${ctx.allowedChains.map((c) => {
+  const cfg = CHAIN_REGISTRY[c];
+  if (!cfg) return `- ${c}: unknown`;
+  return `- ${cfg.name} (${c}): ${cfg.defaultDexVenue}${cfg.fallbackDexVenue ? ` → ${cfg.fallbackDexVenue}` : ''} | ${cfg.nativeToken}`;
+}).join('\n')}
 
 ## STRATEGY CONFIGURATION
 ${ctx.strategyConfigJson}

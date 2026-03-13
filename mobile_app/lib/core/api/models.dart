@@ -283,6 +283,7 @@ class TradeRecord {
       symbol: json['symbol'] as String? ?? '',
       side: json['side'] as String? ?? '',
       amount: (json['amount'] as num?)?.toDouble()
+          ?? (json['amountUsd'] as num?)?.toDouble()
           ?? (json['quantity'] as num?)?.toDouble()
           ?? 0.0,
       price: (json['price'] as num?)?.toDouble() ?? 0.0,
@@ -290,6 +291,282 @@ class TradeRecord {
       chain: json['chain'] as String? ?? '',
       timestamp: (json['timestamp'] as num?)?.toInt() ?? DateTime.now().millisecondsSinceEpoch,
       txHash: json['txHash'] as String?,
+    );
+  }
+}
+
+// ─── Leaderboard ────────────────────────────────────────────
+
+class LeaderboardTrader {
+  final int rank;
+  final String walletAddress;
+  final String name;
+  final String? twitterUsername;
+  final double pnl7d;
+  final double pnl30d;
+  final double winRate7d;
+  final double winRate30d;
+  final double? sharpe;
+  final int copiers;
+  final String chain;
+  final List<String> tags;
+
+  const LeaderboardTrader({
+    required this.rank,
+    required this.walletAddress,
+    required this.name,
+    this.twitterUsername,
+    required this.pnl7d,
+    required this.pnl30d,
+    required this.winRate7d,
+    required this.winRate30d,
+    this.sharpe,
+    required this.copiers,
+    required this.chain,
+    required this.tags,
+  });
+
+  factory LeaderboardTrader.fromJson(Map<String, dynamic> json, int index) {
+    return LeaderboardTrader(
+      rank: (json['rank'] as num?)?.toInt() ?? index + 1,
+      walletAddress: json['walletAddress'] as String? ?? json['wallet'] as String? ?? '',
+      name: json['walletName'] as String? ?? json['name'] as String? ?? 'Trader',
+      twitterUsername: json['twitterUsername'] as String?,
+      pnl7d: (json['pnl7d'] as num?)?.toDouble() ?? 0,
+      pnl30d: (json['pnl30d'] as num?)?.toDouble() ?? 0,
+      winRate7d: (json['winRate7d'] as num?)?.toDouble() ?? 0,
+      winRate30d: (json['winRate30d'] as num?)?.toDouble() ?? 0,
+      sharpe: (json['sharpe'] as num?)?.toDouble(),
+      copiers: (json['copiers'] as num?)?.toInt() ?? 0,
+      chain: json['chain'] as String? ?? 'solana',
+      tags: (json['tags'] as List<dynamic>?)?.cast<String>() ?? [],
+    );
+  }
+}
+
+// ─── Copy Trading ───────────────────────────────────────────
+
+class CopyTradeConfig {
+  final String walletAddress;
+  final String walletName;
+  final String buyMode;
+  final double buyAmount;
+  final String sellMethod;
+  final bool enabled;
+  final double totalCopied;
+  final double totalPnl;
+
+  const CopyTradeConfig({
+    required this.walletAddress,
+    required this.walletName,
+    required this.buyMode,
+    required this.buyAmount,
+    required this.sellMethod,
+    required this.enabled,
+    required this.totalCopied,
+    required this.totalPnl,
+  });
+
+  factory CopyTradeConfig.fromJson(Map<String, dynamic> json) {
+    return CopyTradeConfig(
+      walletAddress: json['walletAddress'] as String? ?? '',
+      walletName: json['walletName'] as String? ?? 'Trader',
+      buyMode: json['buyMode'] as String? ?? 'fixed_buy',
+      buyAmount: (json['buyAmount'] as num?)?.toDouble() ?? 0,
+      sellMethod: json['sellMethod'] as String? ?? 'mirror_sell',
+      enabled: json['enabled'] as bool? ?? true,
+      totalCopied: (json['totalCopied'] as num?)?.toDouble() ?? 0,
+      totalPnl: (json['totalPnl'] as num?)?.toDouble() ?? 0,
+    );
+  }
+}
+
+class CopyActivity {
+  final String tokenSymbol;
+  final String side;
+  final double copyAmountUsd;
+  final String status;
+  final String? skipReason;
+  final String walletAddress;
+  final int timestamp;
+
+  const CopyActivity({
+    required this.tokenSymbol,
+    required this.side,
+    required this.copyAmountUsd,
+    required this.status,
+    this.skipReason,
+    required this.walletAddress,
+    required this.timestamp,
+  });
+
+  factory CopyActivity.fromJson(Map<String, dynamic> json) {
+    return CopyActivity(
+      tokenSymbol: json['tokenSymbol'] as String? ?? '',
+      side: json['side'] as String? ?? 'buy',
+      copyAmountUsd: (json['copyAmountUsd'] as num?)?.toDouble() ?? 0,
+      status: json['status'] as String? ?? '',
+      skipReason: json['skipReason'] as String?,
+      walletAddress: json['walletAddress'] as String? ?? '',
+      timestamp: (json['timestamp'] as num?)?.toInt() ?? 0,
+    );
+  }
+}
+
+// ─── Strategies ─────────────────────────────────────────────
+
+class StrategyTemplate {
+  final String type;
+  final String name;
+  final String description;
+  final String riskLevel;
+  final int simulated90dReturn;
+  final List<String> controls;
+
+  const StrategyTemplate({
+    required this.type,
+    required this.name,
+    required this.description,
+    required this.riskLevel,
+    required this.simulated90dReturn,
+    required this.controls,
+  });
+
+  factory StrategyTemplate.fromJson(Map<String, dynamic> json) {
+    return StrategyTemplate(
+      type: json['type'] as String? ?? '',
+      name: json['name'] as String? ?? '',
+      description: json['description'] as String? ?? '',
+      riskLevel: json['riskLevel'] as String? ?? 'moderate',
+      simulated90dReturn: (json['simulated90dReturn'] as num?)?.toInt() ?? 0,
+      controls: (json['controls'] as List<dynamic>?)?.cast<String>() ?? [],
+    );
+  }
+
+  String get icon {
+    switch (type) {
+      case 'dca': return '📊';
+      case 'momentum': return '🚀';
+      case 'grid': return '📈';
+      case 'mean-reversion': return '🔄';
+      default: return '⚡';
+    }
+  }
+}
+
+class Strategy {
+  final String id;
+  final String type;
+  final String name;
+  final String chain;
+  final List<String> tokens;
+  final double budgetUsd;
+  final String riskLevel;
+  final double maxPerTradePct;
+  final bool enabled;
+
+  const Strategy({
+    required this.id,
+    required this.type,
+    required this.name,
+    required this.chain,
+    required this.tokens,
+    required this.budgetUsd,
+    required this.riskLevel,
+    required this.maxPerTradePct,
+    required this.enabled,
+  });
+
+  factory Strategy.fromJson(Map<String, dynamic> json) {
+    return Strategy(
+      id: json['id'] as String? ?? '',
+      type: json['type'] as String? ?? '',
+      name: json['name'] as String? ?? '',
+      chain: json['chain'] as String? ?? 'solana',
+      tokens: (json['tokens'] as List<dynamic>?)?.cast<String>() ?? [],
+      budgetUsd: (json['budgetUsd'] as num?)?.toDouble() ?? 0,
+      riskLevel: json['riskLevel'] as String? ?? 'moderate',
+      maxPerTradePct: (json['maxPerTradePct'] as num?)?.toDouble() ?? 5,
+      enabled: json['enabled'] as bool? ?? true,
+    );
+  }
+}
+
+// ─── Agent & Risk ───────────────────────────────────────────
+
+class AgentStatus {
+  final bool running;
+  final String? startedAt;
+  final String? stoppedAt;
+  final bool globalHalt;
+
+  const AgentStatus({
+    required this.running,
+    this.startedAt,
+    this.stoppedAt,
+    required this.globalHalt,
+  });
+
+  factory AgentStatus.fromJson(Map<String, dynamic> json) {
+    return AgentStatus(
+      running: json['running'] as bool? ?? false,
+      startedAt: json['startedAt'] as String?,
+      stoppedAt: json['stoppedAt'] as String?,
+      globalHalt: json['globalHalt'] as bool? ?? false,
+    );
+  }
+}
+
+class RiskSettings {
+  final String riskLevel;
+  final double dailyLossLimitUsd;
+  final double maxPerTradePct;
+
+  const RiskSettings({
+    required this.riskLevel,
+    required this.dailyLossLimitUsd,
+    required this.maxPerTradePct,
+  });
+
+  factory RiskSettings.fromJson(Map<String, dynamic> json) {
+    return RiskSettings(
+      riskLevel: json['riskLevel'] as String? ?? 'moderate',
+      dailyLossLimitUsd: (json['dailyLossLimitUsd'] as num?)?.toDouble() ?? 1000,
+      maxPerTradePct: (json['maxPerTradePct'] as num?)?.toDouble() ?? 5,
+    );
+  }
+}
+
+// ─── Chains ─────────────────────────────────────────────────
+
+class ChainInfo {
+  final String id;
+  final String name;
+  final String family;
+  final int? chainId;
+  final String nativeToken;
+  final String? dexVenue;
+  final String? blockExplorer;
+
+  const ChainInfo({
+    required this.id,
+    required this.name,
+    required this.family,
+    this.chainId,
+    required this.nativeToken,
+    this.dexVenue,
+    this.blockExplorer,
+  });
+
+  factory ChainInfo.fromJson(Map<String, dynamic> json) {
+    return ChainInfo(
+      id: json['id'] as String? ?? '',
+      name: json['name'] as String? ?? '',
+      family: json['family'] as String? ?? 'evm',
+      chainId: (json['chainId'] as num?)?.toInt(),
+      nativeToken: json['nativeToken'] as String? ?? '',
+      dexVenue: json['dexVenue'] as String?,
+      blockExplorer: json['blockExplorer'] as String?,
     );
   }
 }

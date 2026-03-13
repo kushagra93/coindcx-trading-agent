@@ -2,7 +2,7 @@ import { ethers } from 'ethers';
 import { config } from '../core/config.js';
 import { createChildLogger } from '../core/logger.js';
 import type { TradeIntent, TradeResult, Quote, QuoteParams, Chain } from '../core/types.js';
-import { EVM_CHAIN_IDS } from '../core/types.js';
+import { getEvmChainId } from '../core/chain-registry.js';
 import type { OrderExecutor } from './types.js';
 import type { EncryptedKey } from '../wallet/types.js';
 import { getWallet } from '../wallet/evm-wallet.js';
@@ -30,7 +30,7 @@ interface OneInchSwapResponse {
 }
 
 function getChainId(chain: Chain): number {
-  return EVM_CHAIN_IDS[chain] ?? config.evm.defaultChainId;
+  return getEvmChainId(chain);
 }
 
 export class OneInchExecutor implements OrderExecutor {

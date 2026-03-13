@@ -3,32 +3,9 @@ import { createChildLogger } from '../core/logger.js';
 import { getProvider } from '../wallet/evm-wallet.js';
 import type { Chain } from '../core/types.js';
 import type { GasBudget } from './types.js';
+import { CHAIN_REGISTRY } from '../core/chain-registry.js';
 
 const log = createChildLogger('gas-manager');
-
-// Default gas budgets per chain
-const DEFAULT_GAS_BUDGETS: Record<string, GasBudget> = {
-  ethereum: {
-    maxGasPrice: ethers.parseUnits('100', 'gwei'),
-    maxGasUnits: 500_000n,
-    maxGasCostUsd: 50,
-  },
-  polygon: {
-    maxGasPrice: ethers.parseUnits('500', 'gwei'),
-    maxGasUnits: 500_000n,
-    maxGasCostUsd: 5,
-  },
-  base: {
-    maxGasPrice: ethers.parseUnits('10', 'gwei'),
-    maxGasUnits: 500_000n,
-    maxGasCostUsd: 5,
-  },
-  arbitrum: {
-    maxGasPrice: ethers.parseUnits('10', 'gwei'),
-    maxGasUnits: 2_000_000n,
-    maxGasCostUsd: 5,
-  },
-};
 
 /**
  * Check if current gas price is within budget for a chain.
@@ -38,7 +15,7 @@ export async function isGasWithinBudget(chain: Chain, chainId?: number): Promise
   currentGasPrice: bigint;
   maxGasPrice: bigint;
 }> {
-  const budget = DEFAULT_GAS_BUDGETS[chain] ?? DEFAULT_GAS_BUDGETS.polygon;
+  const budget = getGasBudget(chain);
   const provider = getProvider(chainId);
 
   const feeData = await provider.getFeeData();
@@ -81,7 +58,20 @@ export async function estimateGasCostUsd(
  * Get gas budget for a chain.
  */
 export function getGasBudget(chain: Chain): GasBudget {
-  return DEFAULT_GAS_BUDGETS[chain] ?? DEFAULT_GAS_BUDGETS.polygon;
+  const cfg = CHAIN_REGISTRY[chain];
+  if (cfg) {
+    return {
+      maxGasPrice: cfg.gasConfig.maxGasPrice,
+      maxGasUnits: cfg.gasConfig.maxGasUnits,
+      maxGasCostUsd: cfg.gasConfig.maxGasCostUsd,
+    };
+  }
+  // Fallback: conservative L2 defaults
+  return {
+    maxGasPrice: ethers.parseUnits('50', 'gwei'),
+    maxGasUnits: 500_000n,
+    maxGasCostUsd: 5,
+  };
 }
 
 /**

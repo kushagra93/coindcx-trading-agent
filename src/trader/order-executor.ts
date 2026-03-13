@@ -1,6 +1,7 @@
 import { createChildLogger } from '../core/logger.js';
 import type { TradeIntent, TradeResult, Quote, QuoteParams, TradeVenue, Chain } from '../core/types.js';
 import { getChainFamily } from '../core/types.js';
+import { CHAIN_REGISTRY } from '../core/chain-registry.js';
 import type { OrderExecutor } from './types.js';
 import type { EncryptedKey } from '../wallet/types.js';
 import { JupiterExecutor } from './jupiter-executor.js';
@@ -30,9 +31,12 @@ export function getExecutor(venue: TradeVenue): OrderExecutor {
 }
 
 /**
- * Get the default venue for a chain.
+ * Get the default venue for a chain (from chain registry).
  */
 export function getDefaultVenue(chain: Chain): TradeVenue {
+  const cfg = CHAIN_REGISTRY[chain];
+  if (cfg) return cfg.defaultDexVenue;
+  // Fallback for unknown chains
   const family = getChainFamily(chain);
   switch (family) {
     case 'solana': return 'jupiter';
@@ -43,25 +47,29 @@ export function getDefaultVenue(chain: Chain): TradeVenue {
 }
 
 /**
- * Get a quote from the best available venue.
+ * Get a quote from the best available venue (uses chain registry for venue selection).
  */
 export async function getBestQuote(params: QuoteParams): Promise<Quote> {
-  const family = getChainFamily(params.chain);
+  const cfg = CHAIN_REGISTRY[params.chain];
+  const primary = cfg?.defaultDexVenue ?? getDefaultVenue(params.chain);
+  const fallback = cfg?.fallbackDexVenue;
 
-  if (family === 'solana') {
-    return executors.jupiter.getQuote(params);
+  const primaryExecutor = executors[primary];
+  if (!primaryExecutor) {
+    throw new Error(`No executor for venue: ${primary}`);
   }
 
-  if (family === 'hyperliquid') {
-    return executors.hyperliquid.getQuote(params);
+  // If no fallback, use primary directly
+  if (!fallback) {
+    return primaryExecutor.getQuote(params);
   }
 
-  // EVM: try 1inch first, fall back to 0x
+  // Try primary, fall back to secondary
   try {
-    return await executors['1inch'].getQuote(params);
+    return await primaryExecutor.getQuote(params);
   } catch (err) {
-    log.warn({ err }, '1inch quote failed, trying 0x');
-    return executors['0x'].getQuote(params);
+    log.warn({ err, primary, fallback, chain: params.chain }, `${primary} quote failed, trying ${fallback}`);
+    return executors[fallback].getQuote(params);
   }
 }
 
