@@ -61,6 +61,23 @@ interface HLMeta {
   }>;
 }
 
+interface HLSpotMeta {
+  tokens: Array<{
+    name: string;
+    index: number;
+    szDecimals: number;
+  }>;
+  universe: Array<{
+    name: string;
+    tokens: number[];
+  }>;
+}
+
+interface HLSpotCtx {
+  midPx: string | null;
+  dayNtlVlm: string;
+}
+
 interface PerpPosition {
   id: string;
   symbol: string;
@@ -96,23 +113,28 @@ export async function perpsRoutes(app: FastifyInstance) {
   // ─── List available perps ───
   app.get('/api/v1/perps/assets', async () => {
     let hlAssets: HLMeta['universe'] = [];
+    let spotTokens: HLSpotMeta['tokens'] = [];
     try {
-      const meta = await hlInfoFetch<HLMeta>({ type: 'meta' });
+      const [meta, spotMeta] = await Promise.all([
+        hlInfoFetch<HLMeta>({ type: 'meta' }),
+        hlInfoFetch<HLSpotMeta>({ type: 'spotMeta' }),
+      ]);
       hlAssets = meta.universe;
+      spotTokens = spotMeta.tokens;
     } catch (e) {
       log.warn({ err: e }, 'Failed to fetch Hyperliquid meta');
     }
 
     const stocks = Object.entries(US_STOCK_PERPS).map(([ticker, info]) => {
-      const hlAsset = hlAssets.find(a => a.name === info.hlSymbol);
+      const spotToken = spotTokens.find(t => t.name === info.hlSymbol);
       return {
         symbol: ticker,
         name: info.name,
         sector: info.sector,
         type: 'stock' as const,
         chain: 'hyperliquid',
-        maxLeverage: hlAsset?.maxLeverage ?? 20,
-        available: !!hlAsset,
+        maxLeverage: 5, // Tokenized stocks typically lower leverage
+        available: !!spotToken,
       };
     });
 
@@ -157,6 +179,55 @@ export async function perpsRoutes(app: FastifyInstance) {
     }
 
     try {
+      // For stocks: use spot market data; for crypto: use perps data
+      if (stockInfo) {
+        const spotData = await hlInfoFetch<[HLSpotMeta, HLSpotCtx[]]>({ type: 'spotMetaAndAssetCtxs' });
+        const spotMeta = spotData[0];
+        const spotCtxs = spotData[1];
+        const tokenMap = new Map(spotMeta.tokens.map(t => [t.index, t.name]));
+
+        // Find the universe entry containing this stock token
+        let midPrice = 0;
+        let szDecimals = 2;
+        for (let i = 0; i < spotMeta.universe.length; i++) {
+          const pair = spotMeta.universe[i];
+          const pairNames = pair.tokens.map(idx => tokenMap.get(idx) ?? '');
+          if (pairNames.includes(hlSymbol)) {
+            const ctx = spotCtxs[i];
+            midPrice = ctx?.midPx ? parseFloat(ctx.midPx) : 0;
+            const token = spotMeta.tokens.find(t => t.name === hlSymbol);
+            szDecimals = token?.szDecimals ?? 2;
+            break;
+          }
+        }
+
+        if (midPrice === 0) {
+          reply.code(404).send({ error: `No spot price for ${hlSymbol} on Hyperliquid` });
+          return;
+        }
+
+        const maxLev = 5;
+        const clampedLeverage = Math.min(Math.max(leverage, 1), maxLev);
+
+        return {
+          symbol: symbol.toUpperCase(),
+          hlSymbol,
+          type: 'stock' as const,
+          name: stockInfo.name,
+          sector: stockInfo.sector,
+          markPrice: midPrice,
+          maxLeverage: maxLev,
+          requestedLeverage: clampedLeverage,
+          szDecimals,
+          fundingRate: 0,
+          fundingRate8h: 0,
+          venue: 'hyperliquid',
+          chain: 'hyperliquid',
+          market: 'spot-tokenized',
+        };
+      }
+
+      // Crypto perps
       const [meta, allMids] = await Promise.all([
         hlInfoFetch<HLMeta>({ type: 'meta' }),
         hlInfoFetch<Record<string, string>>({ type: 'allMids' }),
@@ -182,7 +253,6 @@ export async function perpsRoutes(app: FastifyInstance) {
         const fundingData = await hlInfoFetch<Array<{ coin: string; funding: string }>>({
           type: 'metaAndAssetCtxs',
         });
-        // metaAndAssetCtxs returns [meta, assetCtxs[]]
         const assetCtxs = Array.isArray(fundingData) ? fundingData[1] as Array<{ funding: string }> : [];
         const assetIdx = meta.universe.findIndex(u => u.name === hlSymbol);
         if (assetIdx >= 0 && assetCtxs[assetIdx]) {
@@ -195,15 +265,15 @@ export async function perpsRoutes(app: FastifyInstance) {
       return {
         symbol: symbol.toUpperCase(),
         hlSymbol,
-        type: stockInfo ? 'stock' : 'crypto',
-        name: stockInfo?.name ?? symbol.toUpperCase(),
-        sector: stockInfo?.sector ?? 'Crypto',
+        type: 'crypto' as const,
+        name: symbol.toUpperCase(),
+        sector: 'Crypto',
         markPrice: midPrice,
         maxLeverage: asset.maxLeverage,
         requestedLeverage: clampedLeverage,
         szDecimals: asset.szDecimals,
         fundingRate,
-        fundingRate8h: fundingRate * 100, // as percentage
+        fundingRate8h: fundingRate * 100,
         venue: 'hyperliquid',
         chain: 'hyperliquid',
       };
@@ -252,24 +322,51 @@ export async function perpsRoutes(app: FastifyInstance) {
     }
 
     try {
-      const [meta, allMids] = await Promise.all([
-        hlInfoFetch<HLMeta>({ type: 'meta' }),
-        hlInfoFetch<Record<string, string>>({ type: 'allMids' }),
-      ]);
+      let markPrice = 0;
+      let szDecimals = 2;
+      let maxLev = 50;
 
-      const asset = meta.universe.find(u => u.name === hlSymbol);
-      if (!asset) {
-        reply.code(404).send({ error: `${hlSymbol} not listed on Hyperliquid` });
-        return;
+      if (stockInfo) {
+        // Stock: get spot price
+        const spotData = await hlInfoFetch<[HLSpotMeta, HLSpotCtx[]]>({ type: 'spotMetaAndAssetCtxs' });
+        const spotMeta = spotData[0];
+        const spotCtxs = spotData[1];
+        const tokenMap = new Map(spotMeta.tokens.map(t => [t.index, t.name]));
+        maxLev = 5;
+
+        for (let i = 0; i < spotMeta.universe.length; i++) {
+          const pair = spotMeta.universe[i];
+          const pairNames = pair.tokens.map(idx => tokenMap.get(idx) ?? '');
+          if (pairNames.includes(hlSymbol)) {
+            const ctx = spotCtxs[i];
+            markPrice = ctx?.midPx ? parseFloat(ctx.midPx) : 0;
+            const token = spotMeta.tokens.find(t => t.name === hlSymbol);
+            szDecimals = token?.szDecimals ?? 2;
+            break;
+          }
+        }
+      } else {
+        // Crypto: get perp price
+        const [meta, allMids] = await Promise.all([
+          hlInfoFetch<HLMeta>({ type: 'meta' }),
+          hlInfoFetch<Record<string, string>>({ type: 'allMids' }),
+        ]);
+        const asset = meta.universe.find(u => u.name === hlSymbol);
+        if (!asset) {
+          reply.code(404).send({ error: `${hlSymbol} not listed on Hyperliquid` });
+          return;
+        }
+        markPrice = parseFloat(allMids[hlSymbol] ?? '0');
+        szDecimals = asset.szDecimals;
+        maxLev = asset.maxLeverage;
       }
 
-      const markPrice = parseFloat(allMids[hlSymbol] ?? '0');
       if (markPrice === 0) {
         reply.code(404).send({ error: `No price for ${hlSymbol}` });
         return;
       }
 
-      const clampedLeverage = Math.min(Math.max(leverage, 1), asset.maxLeverage);
+      const clampedLeverage = Math.min(Math.max(leverage, 1), maxLev);
       const notionalUsd = marginUsd * clampedLeverage;
       const positionSize = notionalUsd / markPrice;
 
@@ -285,7 +382,7 @@ export async function perpsRoutes(app: FastifyInstance) {
         symbol: symbol.toUpperCase(),
         type: stockInfo ? 'stock' : 'crypto',
         side,
-        size: parseFloat(positionSize.toFixed(asset.szDecimals)),
+        size: parseFloat(positionSize.toFixed(szDecimals)),
         entryPrice: markPrice,
         markPrice,
         leverage: clampedLeverage,
