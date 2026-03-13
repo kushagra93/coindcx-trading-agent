@@ -8,8 +8,32 @@ import {
   screenByAddress,
   getTokenBySymbol,
 } from '../../data/token-screener.js';
+import { CHAIN_REGISTRY, ALL_CHAIN_IDS, EVM_CHAINS } from '../../core/chain-registry.js';
+import { runChainHealthCheck } from '../../helpers/chain-test-agent.js';
 
 export async function tokenRoutes(app: FastifyInstance) {
+
+  // ── Chain Registry Endpoints ──
+
+  app.get('/api/v1/chains', async () => {
+    return {
+      chains: ALL_CHAIN_IDS.map((id) => ({
+        id: CHAIN_REGISTRY[id].id,
+        name: CHAIN_REGISTRY[id].name,
+        family: CHAIN_REGISTRY[id].family,
+        chainId: CHAIN_REGISTRY[id].chainId,
+        nativeToken: CHAIN_REGISTRY[id].nativeToken,
+        dexVenue: CHAIN_REGISTRY[id].defaultDexVenue,
+        blockExplorer: CHAIN_REGISTRY[id].blockExplorer,
+      })),
+      total: ALL_CHAIN_IDS.length,
+      evmChains: EVM_CHAINS.length,
+    };
+  });
+
+  app.get('/api/v1/chains/health', async () => {
+    return runChainHealthCheck();
+  });
 
   app.get<{ Querystring: { q: string } }>('/api/v1/tokens/search', async (request, reply) => {
     const query = request.query.q;

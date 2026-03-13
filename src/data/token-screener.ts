@@ -1,6 +1,11 @@
 import { LRUCache } from 'lru-cache';
 import { createChildLogger } from '../core/logger.js';
 import type { Chain } from '../core/types.js';
+import {
+  CHAIN_TO_DEXSCREENER,
+  DEXSCREENER_TO_CHAIN,
+  GOPLUS_CHAIN_IDS as REGISTRY_GOPLUS_CHAIN_IDS,
+} from '../core/chain-registry.js';
 
 const log = createChildLogger('token-screener');
 
@@ -94,18 +99,9 @@ interface DexScreenerPair {
   };
 }
 
-const DEXSCREENER_CHAIN_MAP: Record<string, string> = {
-  solana: 'solana',
-  ethereum: 'ethereum',
-  base: 'base',
-  arbitrum: 'arbitrum',
-  polygon: 'polygon',
-};
-
-const REVERSE_CHAIN_MAP: Record<string, string> = {};
-for (const [chain, dexId] of Object.entries(DEXSCREENER_CHAIN_MAP)) {
-  REVERSE_CHAIN_MAP[dexId] = chain;
-}
+// Derived from chain registry — all supported chains auto-included
+const DEXSCREENER_CHAIN_MAP: Record<string, string> = CHAIN_TO_DEXSCREENER;
+const REVERSE_CHAIN_MAP: Record<string, string> = DEXSCREENER_TO_CHAIN;
 
 const KNOWN_TOKEN_ADDRESSES: Record<string, string> = {
   SOL: 'So11111111111111111111111111111111111111112',
@@ -495,12 +491,8 @@ export async function fetchRugCheck(mintAddress: string): Promise<RugCheckFullRe
 
 const GOPLUS_BASE = 'https://api.gopluslabs.com/api/v1';
 
-const GOPLUS_CHAIN_IDS: Record<string, string> = {
-  ethereum: '1',
-  polygon: '137',
-  arbitrum: '42161',
-  base: '8453',
-};
+// Derived from chain registry — all GoPlus-supported chains auto-included
+const GOPLUS_CHAIN_IDS: Record<string, string> = REGISTRY_GOPLUS_CHAIN_IDS;
 
 export async function fetchGoPlus(contractAddress: string, chain: string): Promise<{
   rugScore: number;

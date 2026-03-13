@@ -4,6 +4,7 @@ import { createChildLogger } from '../core/logger.js';
 import { generateEncryptedKey, decryptKey } from './key-manager.js';
 import type { Chain } from '../core/types.js';
 import type { EncryptedKey, WalletInfo, TransferParams, TransferResult } from './types.js';
+import { CHAIN_REGISTRY, CHAIN_ID_TO_NAME, getChainRpcUrl, isNativeToken } from '../core/chain-registry.js';
 
 const log = createChildLogger('evm-wallet');
 
@@ -20,7 +21,12 @@ export function getProvider(chainId?: number): ethers.JsonRpcProvider {
   const id = chainId ?? config.evm.defaultChainId;
   let provider = providers.get(id);
   if (!provider) {
-    provider = new ethers.JsonRpcProvider(config.evm.rpcUrl);
+    // Resolve per-chain RPC URL from registry + env overrides
+    const chainName = CHAIN_ID_TO_NAME[id];
+    const rpcUrl = chainName
+      ? getChainRpcUrl(chainName)
+      : (config.evm.rpcUrl || 'https://eth.llamarpc.com');
+    provider = new ethers.JsonRpcProvider(rpcUrl);
     providers.set(id, provider);
   }
   return provider;
@@ -97,7 +103,7 @@ export async function transferEvm(
   const wallet = await getWallet(encryptedKey);
 
   try {
-    const isNative = params.token === 'ETH' || params.token === 'MATIC' || params.token === 'native';
+    const isNative = isNativeToken(params.chain, params.token);
 
     if (isNative) {
       const value = ethers.parseEther(params.amount);

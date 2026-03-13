@@ -1,6 +1,24 @@
 // ===== Chain & Network =====
 
-export type Chain = 'solana' | 'ethereum' | 'polygon' | 'base' | 'arbitrum' | 'hyperliquid';
+export type Chain =
+  | 'solana'
+  // EVM L1s
+  | 'ethereum'
+  | 'bnb'
+  | 'avalanche'
+  | 'sonic'
+  | 'berachain'
+  | 'monad'
+  // EVM L2s
+  | 'polygon'
+  | 'base'
+  | 'arbitrum'
+  | 'optimism'
+  | 'linea'
+  | 'scroll'
+  | 'megaeth'
+  // Derivatives
+  | 'hyperliquid';
 
 export type ChainFamily = 'solana' | 'evm' | 'hyperliquid';
 
@@ -10,12 +28,8 @@ export function getChainFamily(chain: Chain): ChainFamily {
   return 'evm';
 }
 
-export const EVM_CHAIN_IDS: Record<string, number> = {
-  ethereum: 1,
-  polygon: 137,
-  base: 8453,
-  arbitrum: 42161,
-};
+// Re-export from chain-registry for backwards compatibility
+export { EVM_CHAIN_IDS } from './chain-registry.js';
 
 // ===== User & Auth =====
 

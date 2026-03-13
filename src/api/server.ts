@@ -15,12 +15,12 @@ import { chatRoutes } from './routes/chat.js';
 import { tradeRoutes } from './routes/trade.js';
 import { brokerRoutes } from './routes/broker.js';
 import { gatewayRoutes } from './routes/gateway.js';
+import { VALID_CHAINS } from '../core/chain-registry.js';
 
 const log = createChildLogger('api-server');
 
 const VALID_TIERS = new Set(['admin', 'broker', 'ops', 'user']);
 const MAX_TOKEN_LENGTH = 4096;
-const VALID_CHAINS = new Set(['solana', 'ethereum', 'polygon', 'base', 'arbitrum', 'hyperliquid']);
 
 export async function createServer() {
   const app = Fastify({
@@ -42,7 +42,7 @@ export async function createServer() {
   app.addHook('onRequest', async (request, reply) => {
     // Skip auth for health checks and public API routes (hackathon mode)
     if (request.url === '/health' || request.url === '/ready') return;
-    if (request.url.startsWith('/api/v1/tokens/') || request.url.startsWith('/api/v1/chat') || request.url.startsWith('/api/v1/trade/') || request.url.startsWith('/api/v1/proxy/') || request.url.startsWith('/api/v1/leaderboard') || request.url.startsWith('/api/v1/copy')) return;
+    if (request.url.startsWith('/api/v1/tokens/') || request.url.startsWith('/api/v1/chains') || request.url.startsWith('/api/v1/chat') || request.url.startsWith('/api/v1/trade/') || request.url.startsWith('/api/v1/proxy/') || request.url.startsWith('/api/v1/leaderboard') || request.url.startsWith('/api/v1/copy')) return;
 
     const authHeader = request.headers.authorization;
     if (!authHeader?.startsWith('Bearer ')) {

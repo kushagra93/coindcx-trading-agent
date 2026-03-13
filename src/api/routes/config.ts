@@ -1,13 +1,13 @@
 import type { FastifyInstance } from 'fastify';
 import type { StrategyConfig, StrategyType, RiskLevel, Chain } from '../../core/types.js';
 import { PARAMETER_BOUNDS, clampPositionSize } from '../../risk/parameter-bounds.js';
+import { VALID_CHAINS } from '../../core/chain-registry.js';
 import { v4 as uuid } from 'uuid';
 
 // In-memory strategy store (production: PostgreSQL)
 const strategies = new Map<string, StrategyConfig>();
 
 const VALID_STRATEGY_TYPES: Set<string> = new Set(['dca', 'momentum', 'mean-reversion', 'grid', 'copy-trade', 'custom']);
-const VALID_CHAINS: Set<string> = new Set(['solana', 'ethereum', 'polygon', 'base', 'arbitrum', 'hyperliquid']);
 const VALID_RISK_LEVELS: Set<string> = new Set(['conservative', 'moderate', 'aggressive']);
 
 // Allowed fields for strategy update (prevents userId/id overwrite)

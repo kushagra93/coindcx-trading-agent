@@ -132,6 +132,9 @@ export interface AppConfig {
     archiveThresholdMs: number;
     sweepIntervalMs: number;
   };
+
+  /** Per-chain RPC URL overrides (env: CHAIN_RPC_{CHAIN_NAME}) */
+  chainRpcOverrides: Record<string, string>;
 }
 
 export function loadConfig(): AppConfig {
@@ -238,7 +241,21 @@ export function loadConfig(): AppConfig {
       archiveThresholdMs: parseInt(envOrDefault('HIBERNATION_ARCHIVE_THRESHOLD_MS', '86400000')),   // 24 hours
       sweepIntervalMs: parseInt(envOrDefault('HIBERNATION_SWEEP_INTERVAL_MS', '300000')),          // 5 min
     },
+
+    chainRpcOverrides: loadChainRpcOverrides(),
   };
+}
+
+/** Scan env vars for CHAIN_RPC_* overrides */
+function loadChainRpcOverrides(): Record<string, string> {
+  const overrides: Record<string, string> = {};
+  for (const [key, val] of Object.entries(process.env)) {
+    if (key.startsWith('CHAIN_RPC_') && val) {
+      const chain = key.replace('CHAIN_RPC_', '').toLowerCase();
+      overrides[chain] = val;
+    }
+  }
+  return overrides;
 }
 
 export const config = loadConfig();
