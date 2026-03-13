@@ -554,7 +554,7 @@ export async function fetchNewPairs(): Promise<TokenMetrics[]> {
       const cand = candidateMap.get(addr);
       if (cand?.icon && !m.imageUrl) m.imageUrl = cand.icon;
       if (cand?.boostAmt) m.boosts = cand.boostAmt;
-      if (m.marketCap >= 50_000 && m.liquidity >= 5_000) {
+      if (m.marketCap >= 50_000 && m.liquidity >= 5_000 && m.ageMinutes <= 240) {
         results.push(m);
       }
     }
