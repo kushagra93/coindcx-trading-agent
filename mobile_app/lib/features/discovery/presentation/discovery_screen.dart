@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../../core/theme/app_theme.dart';
 import '../../../core/providers/api_providers.dart';
@@ -18,6 +19,7 @@ class _DiscoveryScreenState extends ConsumerState<DiscoveryScreen> {
   String _searchQuery = '';
   String _activeFilter = '1D';
   bool _showMcap = true;
+  String _activeCategory = 'Gainers'; // 'Gainers' or 'New Pairs'
 
   @override
   void dispose() {
@@ -53,7 +55,11 @@ class _DiscoveryScreenState extends ConsumerState<DiscoveryScreen> {
 
   List<TokenMetrics> _sortedTokens(List<TokenMetrics> tokens) {
     final sorted = List<TokenMetrics>.from(tokens);
-    sorted.sort((a, b) => _getChangeForFilter(b).compareTo(_getChangeForFilter(a)));
+    if (_activeCategory == 'New Pairs') {
+      sorted.sort((a, b) => (a.pairAgeHours ?? 999999).compareTo(b.pairAgeHours ?? 999999));
+    } else {
+      sorted.sort((a, b) => _getChangeForFilter(b).compareTo(_getChangeForFilter(a)));
+    }
     return sorted;
   }
 
@@ -69,9 +75,11 @@ class _DiscoveryScreenState extends ConsumerState<DiscoveryScreen> {
   }
 
   Widget _buildMainView(CoinDCXColorScheme colors) {
-    final trendingAsync = ref.watch(trendingTokensProvider);
+    final dataAsync = _activeCategory == 'New Pairs'
+        ? ref.watch(newPairsProvider)
+        : ref.watch(trendingTokensProvider);
 
-    return trendingAsync.when(
+    return dataAsync.when(
       loading: () => const Center(child: CircularProgressIndicator()),
       error: (err, _) => Center(
         child: Column(
@@ -81,7 +89,10 @@ class _DiscoveryScreenState extends ConsumerState<DiscoveryScreen> {
             const SizedBox(height: CoinDCXSpacing.md),
             Text('Could not load tokens', style: CoinDCXTypography.bodyLarge.copyWith(color: colors.generalForegroundSecondary)),
             const SizedBox(height: CoinDCXSpacing.sm),
-            TextButton(onPressed: () => ref.invalidate(trendingTokensProvider), child: const Text('Retry')),
+            TextButton(onPressed: () {
+              ref.invalidate(trendingTokensProvider);
+              ref.invalidate(newPairsProvider);
+            }, child: const Text('Retry')),
           ],
         ),
       ),
@@ -124,7 +135,10 @@ class _DiscoveryScreenState extends ConsumerState<DiscoveryScreen> {
                 ),
                 const SizedBox(width: CoinDCXSpacing.sm),
                 GestureDetector(
-                  onTap: () => ref.invalidate(trendingTokensProvider),
+                  onTap: () {
+                    ref.invalidate(trendingTokensProvider);
+                    ref.invalidate(newPairsProvider);
+                  },
                   child: Icon(Icons.refresh_rounded, color: colors.generalForegroundSecondary, size: 22),
                 ),
               ],
@@ -132,8 +146,8 @@ class _DiscoveryScreenState extends ConsumerState<DiscoveryScreen> {
           ),
         ),
 
-        // "Hot Right Now"
-        if (hotTokens.isNotEmpty) ...[
+        // "Hot Right Now" — only show on Gainers tab
+        if (hotTokens.isNotEmpty && _activeCategory == 'Gainers') ...[
           SliverToBoxAdapter(
             child: Padding(
               padding: const EdgeInsets.fromLTRB(CoinDCXSpacing.md, CoinDCXSpacing.lg, CoinDCXSpacing.md, CoinDCXSpacing.sm),
@@ -163,17 +177,17 @@ class _DiscoveryScreenState extends ConsumerState<DiscoveryScreen> {
           ),
         ],
 
-        // Category + filters
+        // Category tabs + filters
         SliverToBoxAdapter(
           child: Padding(
             padding: const EdgeInsets.fromLTRB(CoinDCXSpacing.md, CoinDCXSpacing.lg, CoinDCXSpacing.md, CoinDCXSpacing.xs),
             child: Row(
               children: [
-                Icon(Icons.star_rounded, color: colors.alertBackgroundPrimary, size: 16),
-                const SizedBox(width: CoinDCXSpacing.xxs),
-                Text('Gainers', style: CoinDCXTypography.buttonSm.copyWith(color: colors.generalForegroundPrimary)),
+                _buildCategoryTab('Gainers', Icons.star_rounded, colors),
+                const SizedBox(width: CoinDCXSpacing.sm),
+                _buildCategoryTab('New Pairs', Icons.fiber_new_rounded, colors),
                 const Spacer(),
-                _buildTimeFilter(colors),
+                if (_activeCategory == 'Gainers') _buildTimeFilter(colors),
               ],
             ),
           ),
@@ -185,7 +199,10 @@ class _DiscoveryScreenState extends ConsumerState<DiscoveryScreen> {
             padding: const EdgeInsets.symmetric(horizontal: CoinDCXSpacing.md, vertical: CoinDCXSpacing.xs),
             child: Row(
               children: [
-                SizedBox(width: 160, child: Text('Name / Age', style: _hdr(colors))),
+                SizedBox(width: 160, child: Text(
+                  _activeCategory == 'New Pairs' ? 'Name / Age' : 'Name / Age',
+                  style: _hdr(colors),
+                )),
                 const Spacer(),
                 GestureDetector(
                   onTap: () => setState(() => _showMcap = !_showMcap),
@@ -205,17 +222,22 @@ class _DiscoveryScreenState extends ConsumerState<DiscoveryScreen> {
                   ),
                 ),
                 const SizedBox(width: CoinDCXSpacing.md),
-                SizedBox(width: 50, child: Text(_filterLabel(), style: _hdr(colors), textAlign: TextAlign.right)),
+                SizedBox(width: 50, child: Text(
+                  _activeCategory == 'New Pairs' ? 'Liq' : _filterLabel(),
+                  style: _hdr(colors), textAlign: TextAlign.right,
+                )),
               ],
             ),
           ),
         ),
         SliverToBoxAdapter(child: Divider(height: 1, color: colors.generalStrokeL1)),
 
-        // Token list — sorted by selected timeframe % change descending
+        // Token list
         SliverList(
           delegate: SliverChildBuilderDelegate(
-            (context, index) => _buildTokenRow(sorted[index], colors),
+            (context, index) => _activeCategory == 'New Pairs'
+                ? _buildNewPairRow(sorted[index], colors)
+                : _buildTokenRow(sorted[index], colors),
             childCount: sorted.length,
           ),
         ),
@@ -331,14 +353,11 @@ class _DiscoveryScreenState extends ConsumerState<DiscoveryScreen> {
                     ],
                   ),
                   const SizedBox(height: 2),
-                  Text(token.name.length > 18 ? '${token.name.substring(0, 18)}...' : token.name,
-                    style: CoinDCXTypography.caption.copyWith(color: colors.generalForegroundTertiary, fontSize: 10),
-                    overflow: TextOverflow.ellipsis),
+                  _buildAddressLabel(token, colors),
                 ],
               ),
             ),
             const SizedBox(width: CoinDCXSpacing.sm),
-            // M.Cap or Price (toggleable)
             SizedBox(
               width: 70,
               child: Text(
@@ -348,7 +367,6 @@ class _DiscoveryScreenState extends ConsumerState<DiscoveryScreen> {
               ),
             ),
             const SizedBox(width: CoinDCXSpacing.sm),
-            // % change for selected timeframe
             Container(
               width: 58,
               padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 2),
@@ -369,6 +387,36 @@ class _DiscoveryScreenState extends ConsumerState<DiscoveryScreen> {
           ],
         ),
       ),
+    );
+  }
+
+  Widget _buildAddressLabel(TokenMetrics token, CoinDCXColorScheme colors) {
+    if (token.address != null && token.address!.isNotEmpty) {
+      final addr = token.address!;
+      final short = '${addr.substring(0, 6)}...${addr.substring(addr.length - 4)}';
+      return GestureDetector(
+        onTap: () {
+          Clipboard.setData(ClipboardData(text: addr));
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text('${token.symbol.toUpperCase()} address copied'),
+              duration: const Duration(seconds: 1), behavior: SnackBarBehavior.floating),
+          );
+        },
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text(short, style: CoinDCXTypography.caption.copyWith(
+              color: colors.actionBackgroundPrimary, fontSize: 9)),
+            const SizedBox(width: 2),
+            Icon(Icons.copy_rounded, size: 9, color: colors.actionBackgroundPrimary),
+          ],
+        ),
+      );
+    }
+    return Text(
+      token.name.length > 18 ? '${token.name.substring(0, 18)}...' : token.name,
+      style: CoinDCXTypography.caption.copyWith(color: colors.generalForegroundTertiary, fontSize: 10),
+      overflow: TextOverflow.ellipsis,
     );
   }
 
@@ -394,6 +442,107 @@ class _DiscoveryScreenState extends ConsumerState<DiscoveryScreen> {
         token.symbol.isNotEmpty ? token.symbol[0].toUpperCase() : '?',
         style: CoinDCXTypography.buttonSm.copyWith(color: colors.actionBackgroundPrimary, fontSize: size * 0.38, fontWeight: FontWeight.w700),
       )),
+    );
+  }
+
+  Widget _buildCategoryTab(String label, IconData icon, CoinDCXColorScheme colors) {
+    final active = _activeCategory == label;
+    return GestureDetector(
+      onTap: () => setState(() => _activeCategory = label),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+        decoration: BoxDecoration(
+          color: active ? colors.actionBackgroundPrimary : Colors.transparent,
+          borderRadius: BorderRadius.circular(CoinDCXSpacing.radiusFull),
+          border: active ? null : Border.all(color: colors.generalStrokeL2),
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(icon, size: 14, color: active ? Colors.white : colors.generalForegroundTertiary),
+            const SizedBox(width: 4),
+            Text(label, style: CoinDCXTypography.buttonSm.copyWith(
+              color: active ? Colors.white : colors.generalForegroundTertiary,
+              fontSize: 11,
+            )),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildNewPairRow(TokenMetrics token, CoinDCXColorScheme colors) {
+    final age = _formatAge(token.pairAgeHours);
+    final liq = token.liquidity ?? 0;
+    final change = token.priceChange24h ?? 0;
+    final isPositive = change >= 0;
+
+    return GestureDetector(
+      onTap: () => Navigator.pushNamed(context, '/token-detail', arguments: token),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: CoinDCXSpacing.md, vertical: CoinDCXSpacing.sm),
+        decoration: BoxDecoration(
+          border: Border(bottom: BorderSide(color: colors.generalStrokeL1.withValues(alpha: 0.3))),
+        ),
+        child: Row(
+          children: [
+            _buildTokenIcon(token, colors, size: 36),
+            const SizedBox(width: CoinDCXSpacing.sm),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    children: [
+                      Flexible(child: Text(token.symbol.toUpperCase(),
+                        style: CoinDCXTypography.buttonSm.copyWith(color: colors.generalForegroundPrimary, fontSize: 13),
+                        overflow: TextOverflow.ellipsis)),
+                      if (age != null) ...[
+                        const SizedBox(width: 4),
+                        Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 2),
+                          decoration: BoxDecoration(
+                            color: colors.actionBackgroundPrimary.withValues(alpha: 0.15),
+                            borderRadius: BorderRadius.circular(4),
+                          ),
+                          child: Text(age, style: CoinDCXTypography.caption.copyWith(
+                            color: colors.actionBackgroundPrimary, fontSize: 9, fontWeight: FontWeight.w600)),
+                        ),
+                      ],
+                      if (token.boosts != null && token.boosts! > 0) ...[
+                        const SizedBox(width: 4),
+                        Icon(Icons.bolt_rounded, size: 12, color: colors.alertBackgroundPrimary),
+                      ],
+                    ],
+                  ),
+                  const SizedBox(height: 2),
+                  _buildAddressLabel(token, colors),
+                ],
+              ),
+            ),
+            const SizedBox(width: CoinDCXSpacing.sm),
+            SizedBox(
+              width: 70,
+              child: Text(
+                _showMcap ? _formatCompact(token.marketCap) : _formatPrice(token.priceUsd),
+                style: CoinDCXTypography.numberSm.copyWith(color: colors.generalForegroundPrimary, fontSize: 11),
+                textAlign: TextAlign.right,
+              ),
+            ),
+            const SizedBox(width: CoinDCXSpacing.sm),
+            SizedBox(
+              width: 58,
+              child: Text(
+                _formatCompact(liq),
+                style: CoinDCXTypography.numberSm.copyWith(
+                  color: isPositive ? colors.positiveBackgroundPrimary : colors.generalForegroundSecondary,
+                  fontSize: 11),
+                textAlign: TextAlign.center,
+              ),
+            ),
+          ],
+        ),
+      ),
     );
   }
 

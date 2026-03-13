@@ -13,6 +13,15 @@ final trendingTokensProvider = FutureProvider<List<TokenMetrics>>((ref) async {
   return tokens ?? [];
 });
 
+final newPairsProvider = FutureProvider<List<TokenMetrics>>((ref) async {
+  final api = ref.read(apiClientProvider);
+  final response = await api.get('/api/v1/tokens/new-pairs');
+  final tokens = (response['tokens'] as List<dynamic>?)
+      ?.map((t) => TokenMetrics.fromJson(t as Map<String, dynamic>))
+      .toList();
+  return tokens ?? [];
+});
+
 final tokenSearchProvider = FutureProvider.family<List<TokenMetrics>, String>((ref, query) async {
   if (query.isEmpty) return [];
   final api = ref.read(apiClientProvider);

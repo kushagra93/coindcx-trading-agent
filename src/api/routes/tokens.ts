@@ -4,6 +4,7 @@ import {
   lookupByAddress,
   fetchTrending,
   fetchGainers,
+  fetchNewPairs,
   screenBySymbol,
   screenByAddress,
   getTokenBySymbol,
@@ -33,6 +34,11 @@ export async function tokenRoutes(app: FastifyInstance) {
 
   app.get('/api/v1/tokens/gainers', async () => {
     const tokens = await fetchGainers();
+    return { tokens };
+  });
+
+  app.get('/api/v1/tokens/new-pairs', async () => {
+    const tokens = await fetchNewPairs();
     return { tokens };
   });
 

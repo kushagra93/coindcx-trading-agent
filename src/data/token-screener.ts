@@ -271,6 +271,66 @@ async function fetchBirdeyeTrending(): Promise<TokenMetrics[]> {
   }
 }
 
+async function fetchBirdeyeTopVolume(): Promise<TokenMetrics[]> {
+  const apiKey = process.env.BIRDEYE_API_KEY;
+  if (!apiKey) return [];
+
+  try {
+    const res = await fetch(
+      `${BIRDEYE_BASE}/defi/v3/token/list?sort_by=volume_24h_usd&sort_type=desc&offset=0&limit=30&min_volume_24h_usd=1000000`,
+      { headers: { 'X-API-KEY': apiKey, 'x-chain': 'solana' } },
+    );
+    if (!res.ok) return [];
+    const data = await res.json() as {
+      data?: {
+        items?: Array<{
+          address: string; symbol: string; name: string; logo_uri?: string;
+          price: number; market_cap?: number; fdv?: number;
+          volume_24h_usd?: number; price_change_24h_percent?: number;
+          liquidity?: number;
+        }>;
+      };
+    };
+
+    const stablecoins = new Set(['USDC', 'USDT', 'USD1', 'PYUSD', 'USDH', 'DAI', 'BUSD']);
+    const items = data.data?.items ?? [];
+    return items
+      .filter(t => {
+        const mcap = t.market_cap ?? t.fdv ?? 0;
+        if (mcap > 50_000_000_000) return false; // filter obvious scams with fake $50B+ mcap
+        if (mcap < 100_000) return false;
+        if (stablecoins.has(t.symbol.toUpperCase())) return false;
+        if ((t.price_change_24h_percent ?? 0) > 100_000) return false; // filter fake % change
+        return true;
+      })
+      .map(t => ({
+        symbol: t.symbol,
+        name: t.name,
+        chain: 'solana' as Chain | string,
+        address: t.address,
+        imageUrl: t.logo_uri ?? undefined,
+        price: t.price,
+        priceChange5m: 0,
+        priceChange1h: 0,
+        priceChange6h: 0,
+        priceChange24h: t.price_change_24h_percent ?? 0,
+        volume24h: t.volume_24h_usd ?? 0,
+        marketCap: t.market_cap ?? t.fdv ?? 0,
+        liquidity: t.liquidity ?? 0,
+        ageMinutes: 999999,
+        holders: 0,
+        topHolderPct: 0,
+        lpLocked: false,
+        lpLockPct: 0,
+        rugScore: 50,
+        ctScore: 50,
+      }));
+  } catch (e) {
+    log.warn({ err: e }, 'Birdeye top volume fetch failed');
+    return [];
+  }
+}
+
 async function fetchDexScreenerBoosted(): Promise<TokenMetrics[]> {
   try {
     const res = await fetch(`${DEXSCREENER_BASE}/token-boosts/top/v1`);
@@ -343,16 +403,20 @@ async function fetchDexScreenerBoosted(): Promise<TokenMetrics[]> {
 }
 
 export async function fetchTrending(): Promise<TokenMetrics[]> {
-  // Fetch from both Birdeye trending (algorithmic) and DexScreener boosts (paid) in parallel
-  const [birdeyeTokens, dexTokens] = await Promise.all([
+  const [birdeyeTokens, birdeyeVolume, dexTokens] = await Promise.all([
     fetchBirdeyeTrending(),
+    fetchBirdeyeTopVolume(),
     fetchDexScreenerBoosted(),
   ]);
 
-  // Merge, deduplicate by address, prefer DexScreener data (has richer multi-timeframe metrics)
   const merged = new Map<string, TokenMetrics>();
   for (const t of birdeyeTokens) {
     if (t.address) merged.set(t.address.toLowerCase(), t);
+  }
+  for (const t of birdeyeVolume) {
+    if (t.address && !merged.has(t.address.toLowerCase())) {
+      merged.set(t.address.toLowerCase(), t);
+    }
   }
   for (const t of dexTokens) {
     if (t.address) merged.set(t.address.toLowerCase(), t);
@@ -399,7 +463,7 @@ export async function fetchTrending(): Promise<TokenMetrics[]> {
 
   const results = Array.from(merged.values());
   results.sort((a, b) => b.volume24h - a.volume24h);
-  return results.slice(0, 30);
+  return results.slice(0, 50);
 }
 
 export async function fetchGainers(): Promise<TokenMetrics[]> {
@@ -407,6 +471,102 @@ export async function fetchGainers(): Promise<TokenMetrics[]> {
   return trending
     .filter(t => t.priceChange24h > 0)
     .sort((a, b) => b.priceChange24h - a.priceChange24h);
+}
+
+const newPairsCache = new LRUCache<string, TokenMetrics[]>({ max: 1, ttl: 2 * 60_000 });
+
+export async function fetchNewPairs(): Promise<TokenMetrics[]> {
+  const cached = newPairsCache.get('new');
+  if (cached) return cached;
+
+  try {
+    const [profilesRes, boostsRes] = await Promise.all([
+      fetch(`${DEXSCREENER_BASE}/token-profiles/latest/v1`).then(r => r.ok ? r.json() : []),
+      fetch(`${DEXSCREENER_BASE}/token-boosts/latest/v1`).then(r => r.ok ? r.json() : []),
+    ]);
+
+    const profiles = Array.isArray(profilesRes) ? profilesRes as Array<{
+      tokenAddress: string; chainId: string; icon?: string; description?: string;
+    }> : [];
+    const boosts = Array.isArray(boostsRes) ? boostsRes as Array<{
+      tokenAddress: string; chainId: string; amount?: number; icon?: string;
+    }> : [];
+
+    const seen = new Set<string>();
+    const candidates: Array<{ address: string; chain: string; icon?: string; boostAmt?: number }> = [];
+
+    for (const p of profiles) {
+      const key = `${p.chainId}:${p.tokenAddress}`.toLowerCase();
+      if (!seen.has(key)) {
+        seen.add(key);
+        candidates.push({ address: p.tokenAddress, chain: p.chainId, icon: p.icon });
+      }
+    }
+    for (const b of boosts) {
+      const key = `${b.chainId}:${b.tokenAddress}`.toLowerCase();
+      if (!seen.has(key)) {
+        seen.add(key);
+        candidates.push({ address: b.tokenAddress, chain: b.chainId, icon: b.icon, boostAmt: b.amount });
+      }
+    }
+
+    const byChain = new Map<string, string[]>();
+    for (const c of candidates) {
+      if (!byChain.has(c.chain)) byChain.set(c.chain, []);
+      byChain.get(c.chain)!.push(c.address);
+    }
+
+    const allPairs: DexScreenerPair[] = [];
+    for (const [chain, addrs] of byChain) {
+      const batches: string[][] = [];
+      for (let i = 0; i < addrs.length; i += 30) {
+        batches.push(addrs.slice(i, i + 30));
+      }
+      for (const batch of batches) {
+        try {
+          const res = await fetch(`${DEXSCREENER_BASE}/tokens/v1/${chain}/${batch.join(',')}`);
+          if (res.ok) {
+            const pairs = await res.json() as DexScreenerPair[];
+            if (Array.isArray(pairs)) allPairs.push(...pairs);
+          }
+        } catch (e) {
+          log.warn({ err: e, chain }, 'New pairs batch lookup failed');
+        }
+      }
+    }
+
+    const pairsByToken = new Map<string, DexScreenerPair[]>();
+    for (const pair of allPairs) {
+      const addr = pair.baseToken.address.toLowerCase();
+      if (!pairsByToken.has(addr)) pairsByToken.set(addr, []);
+      pairsByToken.get(addr)!.push(pair);
+    }
+
+    const candidateMap = new Map<string, typeof candidates[0]>();
+    for (const c of candidates) {
+      candidateMap.set(c.address.toLowerCase(), c);
+    }
+
+    const results: TokenMetrics[] = [];
+    for (const [addr, pairs] of pairsByToken) {
+      const best = pickBestPair(pairs);
+      const m = pairToMetrics(best);
+      const cand = candidateMap.get(addr);
+      if (cand?.icon && !m.imageUrl) m.imageUrl = cand.icon;
+      if (cand?.boostAmt) m.boosts = cand.boostAmt;
+      if (m.marketCap >= 50_000 && m.liquidity >= 5_000) {
+        results.push(m);
+      }
+    }
+
+    results.sort((a, b) => a.ageMinutes - b.ageMinutes);
+    const final_ = results.slice(0, 40);
+    newPairsCache.set('new', final_);
+    return final_;
+  } catch (e) {
+    log.warn({ err: e }, 'fetchNewPairs failed');
+    return [];
+  }
 }
 
 // ─── RugCheck (Solana) ────────────────────────────────────────────────

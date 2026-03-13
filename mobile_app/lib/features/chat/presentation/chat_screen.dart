@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../../core/api/api_client.dart';
 import '../../../core/api/models.dart';
@@ -127,6 +128,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
               },
             ),
           ),
+          _buildPersistentSuggestions(colors),
           _buildInputBar(colors),
         ],
       ),
@@ -245,6 +247,23 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
                         Text(symbol, style: CoinDCXTypography.buttonSm.copyWith(color: colors.generalForegroundPrimary, fontSize: 12)),
                         Text('${chain.toUpperCase()} · MCap ${_formatLargeNum(mcap)}',
                           style: CoinDCXTypography.caption.copyWith(color: colors.generalForegroundTertiary, fontSize: 9)),
+                        if (t['address'] != null && (t['address'] as String).isNotEmpty)
+                          GestureDetector(
+                            onTap: () {
+                              Clipboard.setData(ClipboardData(text: t['address'] as String));
+                              ScaffoldMessenger.of(context).showSnackBar(
+                                SnackBar(content: Text('$symbol address copied'), duration: const Duration(seconds: 1), behavior: SnackBarBehavior.floating),
+                              );
+                            },
+                            child: Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                Text(_truncAddr(t['address'] as String), style: CoinDCXTypography.caption.copyWith(color: colors.actionBackgroundPrimary, fontSize: 8)),
+                                const SizedBox(width: 2),
+                                Icon(Icons.copy_rounded, size: 8, color: colors.actionBackgroundPrimary),
+                              ],
+                            ),
+                          ),
                       ],
                     ),
                   ),
@@ -338,6 +357,26 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
               Text('$score/100', style: CoinDCXTypography.numberSm.copyWith(color: colors.generalForegroundSecondary)),
             ],
           ),
+          if (token['address'] != null && (token['address'] as String).isNotEmpty) ...[
+            const SizedBox(height: CoinDCXSpacing.xxs),
+            GestureDetector(
+              onTap: () {
+                Clipboard.setData(ClipboardData(text: token['address'] as String));
+                ScaffoldMessenger.of(context).showSnackBar(
+                  SnackBar(content: Text('$symbol address copied'), duration: const Duration(seconds: 1), behavior: SnackBarBehavior.floating),
+                );
+              },
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Text('CA: ${_truncAddr(token['address'] as String)}',
+                    style: CoinDCXTypography.caption.copyWith(color: colors.actionBackgroundPrimary, fontSize: 10)),
+                  const SizedBox(width: 4),
+                  Icon(Icons.copy_rounded, size: 10, color: colors.actionBackgroundPrimary),
+                ],
+              ),
+            ),
+          ],
           if (allFlags.isNotEmpty) ...[
             const SizedBox(height: CoinDCXSpacing.xs),
             ...allFlags.take(4).map((r) {
@@ -1822,6 +1861,11 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
     return '\$${value.toStringAsFixed(0)}';
   }
 
+  String _truncAddr(String addr) {
+    if (addr.length > 12) return '${addr.substring(0, 6)}...${addr.substring(addr.length - 4)}';
+    return addr;
+  }
+
   Widget _buildTypingIndicator(CoinDCXColorScheme colors) {
     return Align(
       alignment: Alignment.centerLeft,
@@ -1837,6 +1881,51 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
             const SizedBox(width: CoinDCXSpacing.xs),
             Text('Thinking...', style: CoinDCXTypography.bodySmall.copyWith(color: colors.generalForegroundTertiary)),
           ],
+        ),
+      ),
+    );
+  }
+
+  List<String> _getLatestSuggestions() {
+    for (int i = _messages.length - 1; i >= 0; i--) {
+      final msg = _messages[i];
+      if (!msg.isUser && msg.suggestions != null && msg.suggestions!.isNotEmpty) {
+        return msg.suggestions!;
+      }
+    }
+    return [];
+  }
+
+  Widget _buildPersistentSuggestions(CoinDCXColorScheme colors) {
+    final suggestions = _getLatestSuggestions();
+    if (suggestions.isEmpty || _isLoading) return const SizedBox.shrink();
+
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.symmetric(horizontal: CoinDCXSpacing.md, vertical: CoinDCXSpacing.xs),
+      decoration: BoxDecoration(
+        color: colors.generalBackgroundBgL1,
+        border: Border(top: BorderSide(color: colors.generalStrokeL1.withValues(alpha: 0.5))),
+      ),
+      child: SingleChildScrollView(
+        scrollDirection: Axis.horizontal,
+        physics: const BouncingScrollPhysics(),
+        child: Row(
+          children: suggestions.map((s) => Padding(
+            padding: const EdgeInsets.only(right: CoinDCXSpacing.xs),
+            child: GestureDetector(
+              onTap: () { _controller.text = s; _sendMessage(); },
+              child: Container(
+                padding: const EdgeInsets.symmetric(horizontal: CoinDCXSpacing.sm, vertical: CoinDCXSpacing.xxs),
+                decoration: BoxDecoration(
+                  color: colors.actionBackgroundPrimary.withValues(alpha: 0.1),
+                  borderRadius: BorderRadius.circular(CoinDCXSpacing.radiusFull),
+                  border: Border.all(color: colors.actionBackgroundPrimary.withValues(alpha: 0.3)),
+                ),
+                child: Text(s, style: CoinDCXTypography.caption.copyWith(color: colors.actionBackgroundPrimary)),
+              ),
+            ),
+          )).toList(),
         ),
       ),
     );

@@ -14,7 +14,7 @@ export interface Candle {
 
 export type Interval = '1m' | '5m' | '15m' | '1H' | '4H' | '1D';
 
-const cache = new LRUCache<string, { candles: Candle[]; ts: number }>({ max: 200, ttl: 60_000 });
+const cache = new LRUCache<string, { candles: Candle[]; ts: number }>({ max: 200, ttl: 5 * 60_000 });
 
 export async function fetchOHLCV(
   address: string,
@@ -36,36 +36,51 @@ export async function fetchOHLCV(
     '1m': 60, '5m': 300, '15m': 900, '1H': 3600, '4H': 14400, '1D': 86400,
   };
   const timeFrom = now - intervalSeconds[interval] * limit;
+  const url = `https://public-api.birdeye.so/defi/ohlcv?address=${address}&type=${interval}&time_from=${timeFrom}&time_to=${now}`;
 
-  try {
-    const url = `https://public-api.birdeye.so/defi/ohlcv?address=${address}&type=${interval}&time_from=${timeFrom}&time_to=${now}`;
-    const res = await fetch(url, {
-      headers: { 'X-API-KEY': apiKey, 'x-chain': 'solana' },
-    });
+  const maxRetries = 3;
+  for (let attempt = 0; attempt < maxRetries; attempt++) {
+    try {
+      const res = await fetch(url, {
+        headers: { 'X-API-KEY': apiKey, 'x-chain': 'solana' },
+      });
 
-    if (!res.ok) {
-      log.warn({ status: res.status }, 'Birdeye OHLCV fetch failed');
-      return [];
+      if (res.status === 429) {
+        const wait = Math.pow(2, attempt + 1) * 1000;
+        log.warn({ attempt, waitMs: wait }, 'Birdeye OHLCV rate limited, retrying');
+        await new Promise(r => setTimeout(r, wait));
+        continue;
+      }
+
+      if (!res.ok) {
+        log.warn({ status: res.status }, 'Birdeye OHLCV fetch failed');
+        return [];
+      }
+
+      const data = await res.json() as any;
+      const items = data?.data?.items ?? [];
+
+      const candles: Candle[] = items.map((item: any) => ({
+        o: item.o ?? 0,
+        h: item.h ?? 0,
+        l: item.l ?? 0,
+        c: item.c ?? 0,
+        v: item.v ?? 0,
+        t: item.unixTime ?? 0,
+      }));
+
+      cache.set(key, { candles, ts: Date.now() });
+      return candles;
+    } catch (err) {
+      log.warn({ err, attempt }, 'OHLCV fetch error');
+      if (attempt < maxRetries - 1) {
+        await new Promise(r => setTimeout(r, 2000));
+      }
     }
-
-    const data = await res.json() as any;
-    const items = data?.data?.items ?? [];
-
-    const candles: Candle[] = items.map((item: any) => ({
-      o: item.o ?? 0,
-      h: item.h ?? 0,
-      l: item.l ?? 0,
-      c: item.c ?? 0,
-      v: item.v ?? 0,
-      t: item.unixTime ?? 0,
-    }));
-
-    cache.set(key, { candles, ts: Date.now() });
-    return candles;
-  } catch (err) {
-    log.warn({ err }, 'OHLCV fetch error');
-    return [];
   }
+
+  log.warn({ address }, 'OHLCV fetch exhausted retries');
+  return [];
 }
 
 // ─── Technical Indicators ───────────────────────────────────────────
