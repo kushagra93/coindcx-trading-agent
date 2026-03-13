@@ -47,7 +47,8 @@ class PortfolioScreen extends ConsumerWidget {
           ),
         ),
         data: (portfolio) {
-          if (portfolio.holdings.isEmpty && portfolio.history.isEmpty) {
+          final hasWallet = portfolio.wallet != null && (portfolio.wallet!.sol > 0 || portfolio.wallet!.tokens.isNotEmpty);
+          if (portfolio.holdings.isEmpty && portfolio.history.isEmpty && !hasWallet) {
             return _buildEmptyState(context, colors);
           }
           return _buildPortfolio(context, portfolio, colors);
@@ -127,6 +128,48 @@ class PortfolioScreen extends ConsumerWidget {
         ),
 
         const SizedBox(height: CoinDCXSpacing.lg),
+
+        // On-chain wallet balances
+        if (portfolio.wallet != null) ...[
+          Row(
+            children: [
+              Text('Wallet', style: CoinDCXTypography.heading3.copyWith(color: colors.generalForegroundPrimary)),
+              const SizedBox(width: CoinDCXSpacing.xs),
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                decoration: BoxDecoration(
+                  color: const Color(0xFF9945FF).withValues(alpha: 0.2),
+                  borderRadius: BorderRadius.circular(CoinDCXSpacing.radiusFull),
+                ),
+                child: Text('ON-CHAIN', style: CoinDCXTypography.caption.copyWith(
+                  color: const Color(0xFF9945FF), fontSize: 8, fontWeight: FontWeight.w700)),
+              ),
+              const Spacer(),
+              GestureDetector(
+                onTap: () {
+                  Clipboard.setData(ClipboardData(text: portfolio.wallet!.viewUrl ?? portfolio.wallet!.publicKey));
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    const SnackBar(content: Text('Solscan URL copied!'), duration: Duration(seconds: 2)),
+                  );
+                },
+                child: Row(
+                  children: [
+                    Text(
+                      '${portfolio.wallet!.publicKey.substring(0, 4)}...${portfolio.wallet!.publicKey.substring(portfolio.wallet!.publicKey.length - 4)}',
+                      style: CoinDCXTypography.caption.copyWith(color: colors.actionBackgroundPrimary, fontSize: 10),
+                    ),
+                    const SizedBox(width: 2),
+                    Icon(Icons.open_in_new_rounded, size: 10, color: colors.actionBackgroundPrimary),
+                  ],
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: CoinDCXSpacing.sm),
+          _buildWalletBalanceRow('SOL', portfolio.wallet!.sol, null, colors),
+          ...portfolio.wallet!.tokens.map((t) => _buildWalletBalanceRow(t.symbol, t.uiAmount, t.mint, colors)),
+          const SizedBox(height: CoinDCXSpacing.lg),
+        ],
 
         // Holdings
         if (portfolio.holdings.isNotEmpty) ...[
@@ -328,28 +371,65 @@ class PortfolioScreen extends ConsumerWidget {
                 style: CoinDCXTypography.caption.copyWith(color: colors.generalForegroundTertiary, fontSize: 8)),
             ],
           ),
-          if (tx.txHash != null) ...[
+          if (tx.txHash != null || tx.txUrl != null) ...[
             const SizedBox(width: 4),
             GestureDetector(
               onTap: () {
-                final chain = tx.chain.toLowerCase();
-                final explorerUrl = chain == 'solana'
-                    ? 'https://solscan.io/tx/${tx.txHash}'
-                    : chain == 'ethereum'
-                        ? 'https://etherscan.io/tx/${tx.txHash}'
-                        : chain == 'base'
-                            ? 'https://basescan.org/tx/${tx.txHash}'
-                            : chain == 'arbitrum'
-                                ? 'https://arbiscan.io/tx/${tx.txHash}'
-                                : 'https://solscan.io/tx/${tx.txHash}';
+                final explorerUrl = tx.txUrl ?? 'https://solscan.io/tx/${tx.txHash}';
                 Clipboard.setData(ClipboardData(text: explorerUrl));
                 ScaffoldMessenger.of(context).showSnackBar(
-                  SnackBar(content: Text('Explorer URL copied: $explorerUrl'), duration: const Duration(seconds: 2)),
+                  SnackBar(content: Text('Solscan URL copied: $explorerUrl'), duration: const Duration(seconds: 2)),
                 );
               },
               child: Icon(Icons.open_in_new_rounded, size: 12, color: colors.actionBackgroundPrimary),
             ),
           ],
+        ],
+      ),
+    );
+  }
+
+  Widget _buildWalletBalanceRow(String symbol, double amount, String? mint, CoinDCXColorScheme colors) {
+    return Container(
+      margin: const EdgeInsets.only(bottom: CoinDCXSpacing.xxs),
+      padding: const EdgeInsets.symmetric(horizontal: CoinDCXSpacing.sm, vertical: CoinDCXSpacing.xs),
+      decoration: BoxDecoration(
+        color: colors.generalBackgroundBgL2,
+        borderRadius: BorderRadius.circular(CoinDCXSpacing.radiusSm),
+        border: Border.all(color: const Color(0xFF9945FF).withValues(alpha: 0.15)),
+      ),
+      child: Row(
+        children: [
+          Container(
+            width: 28, height: 28,
+            decoration: BoxDecoration(
+              gradient: const LinearGradient(colors: [Color(0xFF9945FF), Color(0xFF14F195)]),
+              borderRadius: BorderRadius.circular(CoinDCXSpacing.radiusFull),
+            ),
+            child: Center(
+              child: Text(
+                symbol.isNotEmpty ? symbol[0] : '?',
+                style: CoinDCXTypography.buttonSm.copyWith(color: Colors.white, fontSize: 12),
+              ),
+            ),
+          ),
+          const SizedBox(width: CoinDCXSpacing.sm),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(symbol, style: CoinDCXTypography.bodyLarge.copyWith(
+                  color: colors.generalForegroundPrimary, fontSize: 14)),
+                if (mint != null)
+                  Text('${mint.substring(0, 6)}...${mint.substring(mint.length - 4)}',
+                    style: CoinDCXTypography.caption.copyWith(color: colors.generalForegroundTertiary, fontSize: 9)),
+              ],
+            ),
+          ),
+          Text(
+            _formatAmount(amount),
+            style: CoinDCXTypography.numberMd.copyWith(color: colors.generalForegroundPrimary, fontSize: 14),
+          ),
         ],
       ),
     );

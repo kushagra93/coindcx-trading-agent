@@ -2,6 +2,28 @@ import { createChildLogger } from '../core/logger.js';
 
 const log = createChildLogger('wallet-monitor');
 
+const KNOWN_MINTS: Record<string, string> = {
+  'So11111111111111111111111111111111111111112': 'SOL',
+  'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v': 'USDC',
+  'Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB': 'USDT',
+  'JUPyiwrYJFskUPiHa7hkeR8VUtAeFoSYbKedZNsDvCN': 'JUP',
+  'DezXAZ8z7PnrnRJjz3wXBoRgixCa6xjnB7YaB1pPB263': 'BONK',
+  '6p6xgHyF7AeE6TZkSmFsko444wqoP15icUSqi2jfGiPN': 'TRUMP',
+  '4k3Dyjzvzp8eMZWUXbBCjEvwSkkk59S5iCNLY3QrkX6R': 'RAY',
+  'orcaEKTdK7LKz57vaAYr9QeNsVEPfiu6QeMU1kektZE': 'ORCA',
+  'rndrizKT3MK1iimdxRdWabcF7Zg7AR5T4nud4EkHBof': 'RENDER',
+  'HZ1JovNiVvGrGNiiYvEozEVgZ58xaU3RKwX8eACQBCt3': 'PYTH',
+  'J1toso1uCk3RLmjorhTtrVwY9HJ7X8V9yYac6Y7kGCPn': 'JITO',
+  '85VBFQZC9TZkfaptBWjvUw7YbZjy52A6mjtPGjstQAmQ': 'W',
+  'mSoLzYCxHdYgdzU16g5QSh3i5K3z3KZK7ytfqcJm7So': 'MSOL',
+};
+
+function resolveSymbol(mint: string, heliusSymbol?: string): string {
+  if (KNOWN_MINTS[mint]) return KNOWN_MINTS[mint];
+  if (heliusSymbol && heliusSymbol.length > 0 && heliusSymbol.length < 12) return heliusSymbol;
+  return mint.slice(0, 6);
+}
+
 export interface SwapEvent {
   walletAddress: string;
   signature: string;
@@ -145,9 +167,9 @@ function parseSwaps(tx: any, walletAddress: string): SwapEvent[] {
       signature: tx.signature,
       side: 'buy',
       tokenAddress: tokenOut.mint,
-      tokenSymbol: tokenOut.tokenStandard === 'Fungible' ? (tokenOut.symbol || tokenOut.mint.slice(0, 6)) : tokenOut.mint.slice(0, 6),
+      tokenSymbol: resolveSymbol(tokenOut.mint, tokenOut.symbol),
       amountSol: solAmount,
-      amountUsd: solAmount * 130, // rough SOL price estimate
+      amountUsd: solAmount * 130,
       timestamp: tx.timestamp * 1000,
       source: tx.source || 'unknown',
     });
@@ -161,7 +183,7 @@ function parseSwaps(tx: any, walletAddress: string): SwapEvent[] {
       signature: tx.signature,
       side: 'sell',
       tokenAddress: tokenIn.mint,
-      tokenSymbol: tokenIn.tokenStandard === 'Fungible' ? (tokenIn.symbol || tokenIn.mint.slice(0, 6)) : tokenIn.mint.slice(0, 6),
+      tokenSymbol: resolveSymbol(tokenIn.mint, tokenIn.symbol),
       amountSol: solAmount,
       amountUsd: solAmount * 130,
       timestamp: tx.timestamp * 1000,
@@ -199,7 +221,7 @@ function parseFromTransfers(tx: any, walletAddress: string): SwapEvent[] {
       signature: tx.signature,
       side: 'buy',
       tokenAddress: token.mint,
-      tokenSymbol: token.mint.slice(0, 6),
+      tokenSymbol: resolveSymbol(token.mint, token.symbol),
       amountSol: solOut,
       amountUsd: solOut * 130,
       timestamp: (tx.timestamp ?? Date.now() / 1000) * 1000,
@@ -214,7 +236,7 @@ function parseFromTransfers(tx: any, walletAddress: string): SwapEvent[] {
       signature: tx.signature,
       side: 'sell',
       tokenAddress: token.mint,
-      tokenSymbol: token.mint.slice(0, 6),
+      tokenSymbol: resolveSymbol(token.mint, token.symbol),
       amountSol: solIn,
       amountUsd: solIn * 130,
       timestamp: (tx.timestamp ?? Date.now() / 1000) * 1000,

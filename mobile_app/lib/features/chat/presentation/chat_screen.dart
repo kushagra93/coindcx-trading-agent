@@ -679,6 +679,9 @@ class _ChatScreenState extends ConsumerState<ChatScreen> with TickerProviderStat
     final price = (data['price'] as num?)?.toDouble() ?? 0;
     final status = data['status'] as String? ?? '';
     final chain = data['chain'] as String? ?? '';
+    final txUrl = data['txUrl'] as String?;
+    final txHash = data['txHash'] as String?;
+    final isOnChain = status == 'executed' && (txUrl != null || txHash != null);
 
     return Container(
       width: double.infinity,
@@ -696,7 +699,8 @@ class _ChatScreenState extends ConsumerState<ChatScreen> with TickerProviderStat
             children: [
               Icon(Icons.check_circle_rounded, size: 16, color: colors.positiveBackgroundPrimary),
               const SizedBox(width: CoinDCXSpacing.xxs),
-              Text('Trade Executed', style: CoinDCXTypography.buttonSm.copyWith(color: colors.positiveBackgroundPrimary)),
+              Text(isOnChain ? 'On-Chain Trade' : 'Trade Executed',
+                style: CoinDCXTypography.buttonSm.copyWith(color: colors.positiveBackgroundPrimary)),
               const Spacer(),
               Container(
                 padding: const EdgeInsets.symmetric(horizontal: CoinDCXSpacing.xs, vertical: 2),
@@ -713,6 +717,43 @@ class _ChatScreenState extends ConsumerState<ChatScreen> with TickerProviderStat
           _kvRow('Quantity', quantity.toStringAsFixed(6), colors),
           _kvRow('Price', _formatPrice(price), colors),
           _kvRow('Chain', chain, colors),
+          if (isOnChain) ...[
+            const SizedBox(height: CoinDCXSpacing.xs),
+            GestureDetector(
+              onTap: () {
+                final url = txUrl ?? 'https://solscan.io/tx/$txHash';
+                Clipboard.setData(ClipboardData(text: url));
+                ScaffoldMessenger.of(context).showSnackBar(
+                  SnackBar(content: Text('Solscan URL copied!'), duration: const Duration(seconds: 2)),
+                );
+              },
+              child: Container(
+                width: double.infinity,
+                padding: const EdgeInsets.symmetric(horizontal: CoinDCXSpacing.sm, vertical: CoinDCXSpacing.xxs),
+                decoration: BoxDecoration(
+                  color: colors.actionBackgroundPrimary.withValues(alpha: 0.1),
+                  borderRadius: BorderRadius.circular(CoinDCXSpacing.radiusSm),
+                  border: Border.all(color: colors.actionBackgroundPrimary.withValues(alpha: 0.3)),
+                ),
+                child: Row(
+                  children: [
+                    Icon(Icons.open_in_new_rounded, size: 12, color: colors.actionBackgroundPrimary),
+                    const SizedBox(width: 6),
+                    Expanded(
+                      child: Text(
+                        'View on Solscan',
+                        style: CoinDCXTypography.caption.copyWith(color: colors.actionBackgroundPrimary, fontWeight: FontWeight.w600),
+                      ),
+                    ),
+                    Text(
+                      txHash != null ? '${txHash!.substring(0, 8)}...' : '',
+                      style: CoinDCXTypography.caption.copyWith(color: colors.actionBackgroundPrimary.withValues(alpha: 0.6), fontSize: 9),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ],
         ],
       ),
     );
@@ -1231,16 +1272,16 @@ class _ChatScreenState extends ConsumerState<ChatScreen> with TickerProviderStat
               Container(
                 padding: const EdgeInsets.all(CoinDCXSpacing.sm),
                 decoration: BoxDecoration(
-                  color: colors.alertBackgroundPrimary.withValues(alpha: 0.08),
+                  color: colors.negativeBackgroundPrimary.withValues(alpha: 0.08),
                   borderRadius: BorderRadius.circular(CoinDCXSpacing.radiusSm),
-                  border: Border.all(color: colors.alertBackgroundPrimary.withValues(alpha: 0.2)),
+                  border: Border.all(color: colors.negativeBackgroundPrimary.withValues(alpha: 0.2)),
                 ),
                 child: Row(
                   children: [
-                    Icon(Icons.info_outline, size: 14, color: colors.alertBackgroundPrimary),
+                    Icon(Icons.warning_amber_rounded, size: 14, color: colors.negativeBackgroundPrimary),
                     const SizedBox(width: CoinDCXSpacing.xs),
-                    Expanded(child: Text('Trades are simulated (dry run mode). No real funds at risk.',
-                      style: CoinDCXTypography.caption.copyWith(color: colors.alertBackgroundPrimary, fontSize: 10))),
+                    Expanded(child: Text('Live mode: copy trades execute real on-chain swaps using your wallet. Max \$500 per trade.',
+                      style: CoinDCXTypography.caption.copyWith(color: colors.negativeBackgroundPrimary, fontSize: 10))),
                   ],
                 ),
               ),
@@ -1445,28 +1486,64 @@ class _ChatScreenState extends ConsumerState<ChatScreen> with TickerProviderStat
               final amount = (act['copyAmountUsd'] as num?)?.toDouble() ?? 0;
               final status = act['status'] as String? ?? '';
               final skipReason = act['skipReason'] as String? ?? '';
+              final txUrl = act['txUrl'] as String?;
               final isSkipped = status == 'skipped';
+              final isExecuted = status == 'executed';
 
               return Padding(
-                padding: const EdgeInsets.symmetric(vertical: 1),
-                child: Row(
+                padding: const EdgeInsets.symmetric(vertical: 2),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Icon(
-                      isSkipped ? Icons.block_rounded : (side == 'buy' ? Icons.arrow_upward_rounded : Icons.arrow_downward_rounded),
-                      size: 10,
-                      color: isSkipped
-                        ? colors.generalForegroundTertiary
-                        : (side == 'buy' ? colors.positiveBackgroundPrimary : colors.negativeBackgroundPrimary),
+                    Row(
+                      children: [
+                        Icon(
+                          isSkipped ? Icons.block_rounded
+                            : isExecuted ? Icons.check_circle_rounded
+                            : (side == 'buy' ? Icons.arrow_upward_rounded : Icons.arrow_downward_rounded),
+                          size: 10,
+                          color: isSkipped
+                            ? colors.generalForegroundTertiary
+                            : isExecuted
+                              ? colors.positiveBackgroundPrimary
+                              : (side == 'buy' ? colors.positiveBackgroundPrimary : colors.negativeBackgroundPrimary),
+                        ),
+                        const SizedBox(width: 4),
+                        Text('${side.toUpperCase()} $token',
+                          style: CoinDCXTypography.caption.copyWith(color: colors.generalForegroundPrimary, fontSize: 9)),
+                        if (isExecuted)
+                          Text(' ON-CHAIN', style: CoinDCXTypography.caption.copyWith(
+                            color: colors.positiveBackgroundPrimary, fontSize: 8, fontWeight: FontWeight.w600)),
+                        const Spacer(),
+                        if (isSkipped)
+                          Text(skipReason, style: CoinDCXTypography.caption.copyWith(color: colors.generalForegroundTertiary, fontSize: 8))
+                        else
+                          Text('\$${amount.toStringAsFixed(0)}',
+                            style: CoinDCXTypography.caption.copyWith(color: colors.positiveBackgroundPrimary, fontSize: 9)),
+                      ],
                     ),
-                    const SizedBox(width: 4),
-                    Text('${side.toUpperCase()} $token',
-                      style: CoinDCXTypography.caption.copyWith(color: colors.generalForegroundPrimary, fontSize: 9)),
-                    const Spacer(),
-                    if (isSkipped)
-                      Text(skipReason, style: CoinDCXTypography.caption.copyWith(color: colors.generalForegroundTertiary, fontSize: 8))
-                    else
-                      Text('\$${amount.toStringAsFixed(0)}',
-                        style: CoinDCXTypography.caption.copyWith(color: colors.positiveBackgroundPrimary, fontSize: 9)),
+                    if (isExecuted && txUrl != null)
+                      GestureDetector(
+                        onTap: () {
+                          Clipboard.setData(ClipboardData(text: txUrl));
+                          ScaffoldMessenger.of(context).showSnackBar(
+                            SnackBar(content: const Text('Solscan URL copied!'), duration: const Duration(seconds: 2), behavior: SnackBarBehavior.floating),
+                          );
+                        },
+                        child: Padding(
+                          padding: const EdgeInsets.only(left: 14, top: 2),
+                          child: Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Icon(Icons.open_in_new_rounded, size: 9, color: colors.actionBackgroundPrimary),
+                              const SizedBox(width: 3),
+                              Text('View on Solscan', style: CoinDCXTypography.caption.copyWith(
+                                color: colors.actionBackgroundPrimary, fontSize: 8, fontWeight: FontWeight.w600,
+                                decoration: TextDecoration.underline)),
+                            ],
+                          ),
+                        ),
+                      ),
                   ],
                 ),
               );

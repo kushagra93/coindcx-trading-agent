@@ -36,7 +36,12 @@ class _TokenDetailScreenState extends ConsumerState<TokenDetailScreen> {
         }),
       );
       if (response.statusCode >= 200 && response.statusCode < 300) {
-        setState(() => _buyResult = 'Bought \$${amountUsd.toStringAsFixed(0)} of ${token.symbol.toUpperCase()}');
+        final body = jsonDecode(response.body) as Map<String, dynamic>;
+        final txUrl = body['txUrl'] as String?;
+        final msg = txUrl != null
+            ? 'Bought \$${amountUsd.toStringAsFixed(0)} of ${token.symbol.toUpperCase()} — $txUrl'
+            : 'Bought \$${amountUsd.toStringAsFixed(0)} of ${token.symbol.toUpperCase()}';
+        setState(() => _buyResult = msg);
         ref.invalidate(portfolioProvider);
       } else {
         try {

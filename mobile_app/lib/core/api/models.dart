@@ -266,6 +266,7 @@ class TradeRecord {
   final String chain;
   final int timestamp;
   final String? txHash;
+  final String? txUrl;
   final double costBasis;
   final int tradeCount;
 
@@ -279,6 +280,7 @@ class TradeRecord {
     required this.chain,
     required this.timestamp,
     this.txHash,
+    this.txUrl,
     this.costBasis = 0,
     this.tradeCount = 1,
   });
@@ -299,8 +301,46 @@ class TradeRecord {
           ?? (json['firstBuyAt'] as num?)?.toInt()
           ?? DateTime.now().millisecondsSinceEpoch,
       txHash: json['txHash'] as String?,
+      txUrl: json['txUrl'] as String?,
       costBasis: (json['costBasis'] as num?)?.toDouble() ?? (json['amountUsd'] as num?)?.toDouble() ?? 0,
       tradeCount: (json['tradeCount'] as num?)?.toInt() ?? 1,
+    );
+  }
+}
+
+class WalletBalance {
+  final String symbol;
+  final double uiAmount;
+  final String mint;
+
+  const WalletBalance({required this.symbol, required this.uiAmount, required this.mint});
+
+  factory WalletBalance.fromJson(Map<String, dynamic> json) {
+    return WalletBalance(
+      symbol: json['symbol'] as String? ?? '',
+      uiAmount: (json['uiAmount'] as num?)?.toDouble() ?? 0,
+      mint: json['mint'] as String? ?? '',
+    );
+  }
+}
+
+class WalletInfo {
+  final String publicKey;
+  final double sol;
+  final List<WalletBalance> tokens;
+  final String? viewUrl;
+
+  const WalletInfo({required this.publicKey, required this.sol, required this.tokens, this.viewUrl});
+
+  factory WalletInfo.fromJson(Map<String, dynamic> json) {
+    final tokens = (json['tokens'] as List<dynamic>?)
+        ?.map((t) => WalletBalance.fromJson(t as Map<String, dynamic>))
+        .toList() ?? [];
+    return WalletInfo(
+      publicKey: json['publicKey'] as String? ?? '',
+      sol: (json['sol'] as num?)?.toDouble() ?? 0,
+      tokens: tokens,
+      viewUrl: json['viewUrl'] as String?,
     );
   }
 }
@@ -310,12 +350,14 @@ class PortfolioData {
   final List<TradeRecord> history;
   final double totalInvested;
   final double totalSold;
+  final WalletInfo? wallet;
 
   const PortfolioData({
     required this.holdings,
     required this.history,
     required this.totalInvested,
     required this.totalSold,
+    this.wallet,
   });
 
   factory PortfolioData.fromJson(Map<String, dynamic> json) {
@@ -325,11 +367,13 @@ class PortfolioData {
     final history = (json['history'] as List<dynamic>?)
         ?.map((t) => TradeRecord.fromJson(t as Map<String, dynamic>))
         .toList() ?? [];
+    final walletJson = json['wallet'] as Map<String, dynamic>?;
     return PortfolioData(
       holdings: holdings,
       history: history,
       totalInvested: (json['totalInvested'] as num?)?.toDouble() ?? 0,
       totalSold: (json['totalSold'] as num?)?.toDouble() ?? 0,
+      wallet: walletJson != null ? WalletInfo.fromJson(walletJson) : null,
     );
   }
 }

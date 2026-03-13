@@ -336,18 +336,21 @@ async function handleConfirmTrade(side: string, token: string, amountUsd: number
     const tradeData = await tradeRes.json() as any;
 
     if (!tradeRes.ok) {
+      const txUrl = tradeData.txUrl ? `\nFailed tx: ${tradeData.txUrl}` : '';
       return {
-        text: `Trade failed: ${tradeData.error ?? 'Unknown error'}`,
+        text: `Trade failed: ${tradeData.error ?? 'Unknown error'}${txUrl}`,
         intent: 'confirm_trade', cards: [], suggestions: ['trending', `screen ${token}`],
       };
     }
 
-    const context = `Trade EXECUTED successfully.\n${side.toUpperCase()} $${amount} of ${token} at ${formatPrice(tradeData.trade?.price ?? metrics.price)} on ${metrics.chain}.\nTrade ID: ${tradeData.trade?.id}\nStatus: ${tradeData.trade?.status}\nQuantity: ${tradeData.trade?.quantity?.toFixed(6)} ${token}\nPrice Impact: ${tradeData.priceImpact ?? 0}%\nSlippage: ${tradeData.slippage ?? 0}%`;
+    const txUrlLine = tradeData.txUrl ? `\nSolscan: ${tradeData.txUrl}` : '';
+    const statusLabel = tradeData.trade?.status === 'executed' ? 'EXECUTED ON-CHAIN' : 'EXECUTED (simulated)';
+    const context = `Trade ${statusLabel}.\n${side.toUpperCase()} $${amount} of ${token} at ${formatPrice(tradeData.trade?.price ?? metrics.price)} on ${metrics.chain}.\nTrade ID: ${tradeData.trade?.id}\nStatus: ${tradeData.trade?.status}\nQuantity: ${tradeData.trade?.quantity?.toFixed(6)} ${token}\nPrice Impact: ${tradeData.priceImpact ?? 0}%\nSlippage: ${tradeData.slippage ?? 0}%${txUrlLine}`;
     const text = await generateLLMResponse(userMsg, context, history);
 
     return {
       text, intent: 'confirm_trade',
-      cards: [{ type: 'trade_executed', data: tradeData.trade } as any],
+      cards: [{ type: 'trade_executed', data: { ...tradeData.trade, txUrl: tradeData.txUrl } } as any],
       suggestions: [`set stop loss ${token} 10%`, 'portfolio', 'trending'],
       token,
     };
@@ -875,9 +878,10 @@ async function handleCopyManager(params: Record<string, any>, userMsg: string, h
   }).join('\n');
 
   const actCtx = activities.length > 0
-    ? '\n\nRecent activity:\n' + activities.slice(0, 5).map(a =>
-        `• ${a.side.toUpperCase()} ${a.tokenSymbol} ($${a.copyAmountUsd.toFixed(0)}) — ${a.status}${a.skipReason ? ` (${a.skipReason})` : ''}`
-      ).join('\n')
+    ? '\n\nRecent activity:\n' + activities.slice(0, 5).map(a => {
+        const txLink = a.txUrl ? ` → ${a.txUrl}` : '';
+        return `• ${a.side.toUpperCase()} ${a.tokenSymbol} ($${a.copyAmountUsd.toFixed(0)}) — ${a.status.toUpperCase()}${a.skipReason ? ` (${a.skipReason})` : ''}${txLink}`;
+      }).join('\n')
     : '';
 
   const context = `Active copy trades:\n${configsCtx}${actCtx}`;
@@ -897,6 +901,7 @@ async function handleCopyManager(params: Record<string, any>, userMsg: string, h
           tokenSymbol: a.tokenSymbol, side: a.side,
           copyAmountUsd: a.copyAmountUsd, timestamp: a.timestamp,
           status: a.status, skipReason: a.skipReason,
+          txHash: a.txHash, txUrl: a.txUrl,
         })),
       },
     } as any],
