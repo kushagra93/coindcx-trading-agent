@@ -23,9 +23,15 @@ final tokenSearchProvider = FutureProvider.family<List<TokenMetrics>, String>((r
   return [];
 });
 
-final tokenScreenProvider = FutureProvider.family<ScreeningResult?, String>((ref, symbol) async {
+final tokenScreenProvider = FutureProvider.family<ScreeningResult?, String>((ref, symbolOrAddress) async {
   final api = ref.read(apiClientProvider);
-  final response = await api.get('/api/v1/tokens/screen/$symbol');
+  // If it looks like a contract address, use the address endpoint
+  final isAddress = symbolOrAddress.length > 20;
+  if (isAddress) {
+    final response = await api.post('/api/v1/tokens/screen-address', body: {'address': symbolOrAddress});
+    return ScreeningResult.fromJson(response);
+  }
+  final response = await api.get('/api/v1/tokens/screen/$symbolOrAddress');
   return ScreeningResult.fromJson(response);
 });
 

@@ -4,8 +4,11 @@ import {
   screenByAddress,
   getTokenBySymbol,
   fetchTrending,
+  fetchTopTraders,
+  fetchKOLs,
   type TokenMetrics,
   type ScreeningResult,
+  type TopTrader,
 } from '../../data/token-screener.js';
 import { chatCompletion, isLLMAvailable, type LLMMessage } from '../../data/llm.js';
 import { createChildLogger } from '../../core/logger.js';
@@ -17,11 +20,13 @@ const log = createChildLogger('chat');
 type Intent =
   | 'buy' | 'sell' | 'long' | 'short'
   | 'confirm_buy' | 'confirm_sell'
+  | 'limit_order'
   | 'screen' | 'analyze'
   | 'snipe' | 'dca'
   | 'positions' | 'pnl' | 'portfolio'
   | 'close' | 'exit'
   | 'trending' | 'hot'
+  | 'leaderboard' | 'kol' | 'copy_trade'
   | 'help' | 'price' | 'unknown';
 
 const ALL_TOKENS = /\b(sol|bonk|eth|wif|pepe|jup|aero|brett|btc|degen|toshi|fartcoin|popcat|myro|giga|mew|bome|mog|wen|arb|gmx|pendle|pol|aave|bnb|op|avax|shib|link|uni|sui|apt)\b/i;
@@ -32,6 +37,18 @@ function detectIntent(text: string): Intent {
   const t = text.toLowerCase();
   if (t.includes('confirm buy') || t.includes('confirm purchase') || (t.includes('confirm') && t.includes('buy'))) return 'confirm_buy';
   if (t.includes('confirm sell')) return 'confirm_sell';
+
+  // Conditional / limit orders — must match BEFORE bare "sell"/"buy"
+  if (t.match(/\b(take.?profit|stop.?loss|limit.?(order|sell|buy)|set.*(sell|buy|order|limit|tp|sl)|trail)/))
+    return 'limit_order';
+  if ((t.includes('sell') || t.includes('buy')) && t.match(/\b(at|when|if|once|after).+(%|percent|price|hits?|reaches?)/))
+    return 'limit_order';
+
+  // KOL / leaderboard / copy trade — before bare sell/buy to avoid false matches on "kol buys"
+  if (t.match(/\b(kol|influencer|follow.*kol|kol.*buy|kol.*trad)/)) return 'kol';
+  if (t.match(/\b(copy.?trad|follow.*wallet|mirror.*trad)/)) return 'copy_trade';
+  if (t.match(/\b(leader|top.?trader|smart.?money|whales?|best.?trader)/)) return 'leaderboard';
+
   if (t.includes('screen') || t.includes('safe') || t.includes('rug') || t.includes('check')) return 'screen';
   if (t.includes('price') || t.match(/\b(how much|what.*(cost|worth))\b/)) return 'price';
   if (t.includes('snipe') || t.includes('new token') || t.includes('launch')) return 'snipe';
@@ -43,7 +60,7 @@ function detectIntent(text: string): Intent {
   if (t.includes('analyz') || t.includes('research') || t.includes('tell me about')) return 'analyze';
   if (t.includes('dca')) return 'dca';
   if (t.includes('position') || t.includes('holding')) return 'positions';
-  if (t.includes('p&l') || t.includes('pnl') || t.includes('profit') || t.includes('performance')) return 'pnl';
+  if (t.includes('p&l') || t.includes('pnl') || t.includes('performance')) return 'pnl';
   if (t.includes('portfolio') || t.includes('balance') || t.includes('wallet')) return 'portfolio';
   if (t.includes('trend') || t.includes('hot') || t.includes('recommend') || t.includes('suggest') || t.includes('top') || t.includes('popular')) return 'trending';
   if (t.includes('help') || t.includes('what can')) return 'help';
@@ -461,6 +478,133 @@ async function handleSellFromPortfolio(token: string, userMsg: string, history: 
   return handleSell(token, userMsg, history);
 }
 
+async function handleLimitOrder(token: string | null, userMsg: string, history: LLMMessage[]): Promise<ChatResponse> {
+  const context = `User wants to set a conditional/limit order (take-profit, stop-loss, or limit sell/buy)${token ? ` for ${token}` : ''}.
+
+IMPORTANT: Limit orders, take-profit, and stop-loss are NOT yet supported in this version. Tell the user:
+1. You understand what they want (acknowledge the specific order type)
+2. This feature is coming soon — currently only market buys and sells are available
+3. Offer to execute a market sell now instead if they want to take profit immediately
+4. Or offer to set a price alert (manual check) as a workaround`;
+
+  const text = await generateLLMResponse(userMsg, context, history);
+
+  const suggestions: string[] = [];
+  if (token) {
+    suggestions.push(`sell ${token}`, `${token} price`);
+  }
+  suggestions.push('portfolio');
+
+  return { text, intent: 'limit_order', cards: [], suggestions, token: token ?? undefined };
+}
+
+async function handleLeaderboard(userMsg: string, history: LLMMessage[]): Promise<ChatResponse> {
+  const traders = await fetchTopTraders('7d', 'pnl_7d');
+  if (traders.length === 0) {
+    return { text: 'Could not load the leaderboard right now. Try again shortly.', intent: 'leaderboard', cards: [], suggestions: ['trending'] };
+  }
+
+  const top = traders.slice(0, 10);
+  const context = `Top 10 Solana traders (7d) from GMGN leaderboard:\n` +
+    top.map((t, i) => {
+      const addr = t.walletAddress;
+      const label = t.name || t.twitterUsername || `${addr.slice(0, 6)}...${addr.slice(-4)}`;
+      return `${i + 1}. ${label} — PnL $${t.realizedProfit7d.toLocaleString(undefined, { maximumFractionDigits: 0 })} | WR ${(t.winRate7d * 100).toFixed(0)}% | ${t.buys7d}B/${t.sells7d}S | Tags: ${t.tags.join(',')}`;
+    }).join('\n');
+
+  const text = await generateLLMResponse(userMsg, context, history);
+
+  return {
+    text,
+    intent: 'leaderboard',
+    cards: [{
+      type: 'leaderboard',
+      data: {
+        traders: top.map((t, i) => ({
+          rank: i + 1,
+          walletAddress: t.walletAddress,
+          name: t.name || t.twitterUsername || '',
+          twitterUsername: t.twitterUsername,
+          tags: t.tags,
+          avatar: t.avatar,
+          pnl7d: t.realizedProfit7d,
+          winRate7d: t.winRate7d,
+          buys7d: t.buys7d,
+          sells7d: t.sells7d,
+          volume7d: t.volume7d,
+          trades5xPlus: t.trades5xPlus,
+          trades2x5x: t.trades2x5x,
+        })),
+      },
+    }],
+    suggestions: ['copy trade #1', 'top traders 30d', 'trending'],
+  };
+}
+
+async function handleKOL(userMsg: string, history: LLMMessage[]): Promise<ChatResponse> {
+  const kols = await fetchKOLs();
+  if (kols.length === 0) {
+    return { text: 'Could not load KOL data right now. Try again shortly.', intent: 'kol', cards: [], suggestions: ['leaderboard'] };
+  }
+
+  const top = kols.slice(0, 10);
+  const context = `Top KOLs (Key Opinion Leaders / crypto influencers) on Solana right now:\n` +
+    top.map((t, i) => {
+      const name = t.name || t.twitterUsername || `${t.walletAddress.slice(0, 6)}...`;
+      return `${i + 1}. @${t.twitterUsername || '?'} (${name}) — PnL $${t.realizedProfit7d.toLocaleString(undefined, { maximumFractionDigits: 0 })} | WR ${(t.winRate7d * 100).toFixed(0)}% | ${t.buys7d} buys | 5x+ trades: ${t.trades5xPlus} | Tags: ${t.tags.join(',')}`;
+    }).join('\n') +
+    '\n\nUser can follow/copy-trade any KOL. Explain what each tag means if relevant (kol = verified influencer, smart_degen = high-risk/high-reward trader, top_followed = most tracked wallet).';
+
+  const text = await generateLLMResponse(userMsg, context, history);
+
+  return {
+    text,
+    intent: 'kol',
+    cards: [{
+      type: 'leaderboard',
+      data: {
+        title: 'KOL Wallets',
+        traders: top.map((t, i) => ({
+          rank: i + 1,
+          walletAddress: t.walletAddress,
+          name: t.name || t.twitterUsername || '',
+          twitterUsername: t.twitterUsername,
+          tags: t.tags,
+          avatar: t.avatar,
+          pnl7d: t.realizedProfit7d,
+          winRate7d: t.winRate7d,
+          buys7d: t.buys7d,
+          sells7d: t.sells7d,
+          volume7d: t.volume7d,
+          trades5xPlus: t.trades5xPlus,
+          trades2x5x: t.trades2x5x,
+        })),
+      },
+    }],
+    suggestions: ['copy trade #1', 'leaderboard', 'trending'],
+  };
+}
+
+async function handleCopyTrade(userMsg: string, history: LLMMessage[]): Promise<ChatResponse> {
+  const context = `User wants to copy-trade a wallet. Copy trading lets them mirror another trader's buys/sells automatically.
+
+Available options:
+1. "copy trade #1" — Copy the #1 trader from the leaderboard
+2. "copy trade <wallet address>" — Follow a specific wallet
+3. Show them the leaderboard first if they haven't seen it
+
+Note: Copy trading is in DRY_RUN mode — trades are simulated, not executed on-chain. Tell them this.`;
+
+  const text = await generateLLMResponse(userMsg, context, history);
+
+  return {
+    text,
+    intent: 'copy_trade',
+    cards: [],
+    suggestions: ['show leaderboard', 'portfolio', 'trending'],
+  };
+}
+
 async function handleTrending(userMsg: string, history: LLMMessage[]): Promise<ChatResponse> {
   const tokens = await fetchTrending();
   if (tokens.length === 0) {
@@ -548,6 +692,9 @@ export async function processChat(message: string, conversationId?: string): Pro
           ? await handleSellFromPortfolio(token, message, history)
           : { text: 'Which token do you want to sell? Try "sell SOL $100" or check your **portfolio** first.', intent: 'sell', cards: [], suggestions: ['portfolio', 'sell SOL $100'] };
         break;
+      case 'limit_order':
+        resp = await handleLimitOrder(token, message, history);
+        break;
       case 'analyze':
         resp = token
           ? await handleAnalyze(token, message, history)
@@ -561,6 +708,15 @@ export async function processChat(message: string, conversationId?: string): Pro
       case 'trending':
       case 'hot':
         resp = await handleTrending(message, history);
+        break;
+      case 'leaderboard':
+        resp = await handleLeaderboard(message, history);
+        break;
+      case 'kol':
+        resp = await handleKOL(message, history);
+        break;
+      case 'copy_trade':
+        resp = await handleCopyTrade(message, history);
         break;
       case 'help':
         resp = handleHelp();

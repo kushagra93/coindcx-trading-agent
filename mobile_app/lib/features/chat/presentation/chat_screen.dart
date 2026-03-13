@@ -23,10 +23,11 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
     super.initState();
     _messages.add(ChatMessage(
       text: 'Hey! I\'m your AI trading agent. I can discover tokens, run safety audits, '
-          'trade, and manage your portfolio. Try "trending", "screen SOL", "portfolio", or "buy ETH \$200".',
+          'trade, manage your portfolio, and show you the **top Solana traders** leaderboard. '
+          'Try "trending", "leaderboard", "screen SOL", or "buy ETH \$200".',
       isUser: false,
       timestamp: DateTime.now(),
-      suggestions: ['trending', 'portfolio', 'screen SOL', 'help'],
+      suggestions: ['trending', 'leaderboard', 'portfolio', 'screen SOL'],
     ));
   }
 
@@ -165,6 +166,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
       case 'trade_preview': return _buildTradePreviewCard(card.data, colors);
       case 'trade_executed': return _buildTradeExecutedCard(card.data, colors);
       case 'portfolio': return _buildPortfolioCard(card.data, colors);
+      case 'leaderboard': return _buildLeaderboardCard(card.data, colors);
       default: return const SizedBox.shrink();
     }
   }
@@ -532,6 +534,137 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
               padding: const EdgeInsets.only(top: CoinDCXSpacing.xs),
               child: Text('No positions yet', style: CoinDCXTypography.bodySmall.copyWith(color: colors.generalForegroundTertiary)),
             ),
+        ],
+      ),
+    );
+  }
+
+  // ── Leaderboard card ───────────────────────────────────────────────
+
+  Widget _buildLeaderboardCard(Map<String, dynamic> data, CoinDCXColorScheme colors) {
+    final traders = (data['traders'] as List<dynamic>?) ?? [];
+    final title = data['title'] as String? ?? 'Top Solana Traders (7d)';
+    final isKol = title.toLowerCase().contains('kol');
+
+    return Container(
+      width: double.infinity,
+      margin: const EdgeInsets.only(top: CoinDCXSpacing.xs),
+      padding: const EdgeInsets.all(CoinDCXSpacing.sm),
+      decoration: BoxDecoration(
+        color: colors.generalBackgroundBgL3,
+        borderRadius: BorderRadius.circular(CoinDCXSpacing.radiusSm),
+        border: Border.all(color: (isKol ? Colors.purple : colors.actionBackgroundPrimary).withValues(alpha: 0.3)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Icon(isKol ? Icons.star_rounded : Icons.emoji_events_rounded, size: 16, color: isKol ? Colors.purple : Colors.amber),
+              const SizedBox(width: 4),
+              Expanded(child: Text(title, style: CoinDCXTypography.buttonSm.copyWith(color: colors.generalForegroundPrimary))),
+              Text('via GMGN', style: CoinDCXTypography.caption.copyWith(color: colors.generalForegroundTertiary, fontSize: 9)),
+            ],
+          ),
+          const SizedBox(height: CoinDCXSpacing.sm),
+          // Column headers
+          Padding(
+            padding: const EdgeInsets.only(bottom: 4),
+            child: Row(
+              children: [
+                SizedBox(width: 22, child: Text('#', style: CoinDCXTypography.caption.copyWith(color: colors.generalForegroundTertiary, fontSize: 9))),
+                Expanded(child: Text('Wallet', style: CoinDCXTypography.caption.copyWith(color: colors.generalForegroundTertiary, fontSize: 9))),
+                SizedBox(width: 70, child: Text('PnL 7d', style: CoinDCXTypography.caption.copyWith(color: colors.generalForegroundTertiary, fontSize: 9), textAlign: TextAlign.right)),
+                SizedBox(width: 40, child: Text('Win%', style: CoinDCXTypography.caption.copyWith(color: colors.generalForegroundTertiary, fontSize: 9), textAlign: TextAlign.right)),
+                const SizedBox(width: 50),
+              ],
+            ),
+          ),
+          ...traders.take(10).map((t) {
+            final trader = t as Map<String, dynamic>;
+            final rank = trader['rank'] as int? ?? 0;
+            final addr = trader['walletAddress'] as String? ?? '';
+            final name = trader['name'] as String? ?? '';
+            final twitter = trader['twitterUsername'] as String? ?? '';
+            final pnl = (trader['pnl7d'] as num?)?.toDouble() ?? 0;
+            final wr = (trader['winRate7d'] as num?)?.toDouble() ?? 0;
+            final tags = (trader['tags'] as List<dynamic>?)?.cast<String>() ?? [];
+            final shortAddr = addr.length > 10 ? '${addr.substring(0, 4)}...${addr.substring(addr.length - 4)}' : addr;
+            final displayName = name.isNotEmpty ? name : shortAddr;
+            final hasTwitter = twitter.isNotEmpty;
+            final isTop3 = rank <= 3;
+
+            return InkWell(
+              onTap: () { _controller.text = 'copy trade $shortAddr'; _sendMessage(); },
+              child: Padding(
+                padding: const EdgeInsets.symmetric(vertical: 3),
+                child: Row(
+                  children: [
+                    SizedBox(
+                      width: 22,
+                      child: Text(
+                        isTop3 ? ['', '\u{1F947}', '\u{1F948}', '\u{1F949}'][rank] : '$rank',
+                        style: CoinDCXTypography.buttonSm.copyWith(
+                          color: isTop3 ? Colors.amber : colors.generalForegroundSecondary,
+                          fontSize: isTop3 ? 14 : 11,
+                        ),
+                      ),
+                    ),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(displayName, style: CoinDCXTypography.buttonSm.copyWith(
+                            color: colors.generalForegroundPrimary, fontSize: 11), overflow: TextOverflow.ellipsis),
+                          Row(
+                            children: [
+                              if (hasTwitter) ...[
+                                Text('@$twitter', style: CoinDCXTypography.caption.copyWith(
+                                  color: const Color(0xFF1DA1F2), fontSize: 8)),
+                                const SizedBox(width: 4),
+                              ],
+                              if (tags.isNotEmpty)
+                                Text(tags.where((t) => t == 'kol' || t == 'smart_degen' || t == 'top_followed').join(' · '),
+                                  style: CoinDCXTypography.caption.copyWith(
+                                    color: colors.actionBackgroundPrimary, fontSize: 8)),
+                            ],
+                          ),
+                        ],
+                      ),
+                    ),
+                    SizedBox(
+                      width: 70,
+                      child: Text(
+                        '\$${_formatLargeNum(pnl)}',
+                        style: CoinDCXTypography.numberSm.copyWith(
+                          color: pnl >= 0 ? colors.positiveBackgroundPrimary : colors.negativeBackgroundPrimary,
+                          fontSize: 11, fontWeight: FontWeight.w600),
+                        textAlign: TextAlign.right,
+                      ),
+                    ),
+                    SizedBox(
+                      width: 40,
+                      child: Text(
+                        '${(wr * 100).toStringAsFixed(0)}%',
+                        style: CoinDCXTypography.numberSm.copyWith(color: colors.generalForegroundSecondary, fontSize: 11),
+                        textAlign: TextAlign.right,
+                      ),
+                    ),
+                    const SizedBox(width: 6),
+                    Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                      decoration: BoxDecoration(
+                        color: (isKol ? Colors.purple : colors.actionBackgroundPrimary).withValues(alpha: 0.15),
+                        borderRadius: BorderRadius.circular(4),
+                      ),
+                      child: Text(isKol ? 'FOLLOW' : 'COPY', style: CoinDCXTypography.caption.copyWith(
+                        color: isKol ? Colors.purple : colors.actionBackgroundPrimary, fontSize: 8, fontWeight: FontWeight.w600)),
+                    ),
+                  ],
+                ),
+              ),
+            );
+          }),
         ],
       ),
     );

@@ -578,11 +578,12 @@ export async function fetchBirdeyeHolders(mintAddress: string): Promise<{
     };
 
     const items = data.data?.items ?? [];
-    const total = data.data?.total ?? items.length;
+    const total = data.data?.total ?? 0;
     const top10Pct = items.slice(0, 10).reduce((sum, h) => sum + (h.percentage ?? 0), 0);
 
+    // Only return holder count if Birdeye provides a real total, not items.length
     return {
-      holderCount: total,
+      holderCount: total > 0 ? total : 0,
       topHolderPct: items[0]?.percentage ?? 0,
       top10HolderPct: top10Pct,
       distribution: [],
@@ -708,11 +709,11 @@ async function enrichWithSecurity(metrics: TokenMetrics, contractAddress: string
       enriched._audit = rugData.audit;
     }
 
-    // Birdeye provides more accurate holder counts
+    // Birdeye holder counts — only use if Birdeye returned a real total
     if (birdeyeHolders) {
-      enriched.holders = birdeyeHolders.holderCount;
-      enriched.topHolderPct = birdeyeHolders.topHolderPct || enriched.topHolderPct;
-      enriched.top10HolderPct = birdeyeHolders.top10HolderPct;
+      if (birdeyeHolders.holderCount > 0) enriched.holders = birdeyeHolders.holderCount;
+      if (birdeyeHolders.topHolderPct > 0) enriched.topHolderPct = birdeyeHolders.topHolderPct;
+      if (birdeyeHolders.top10HolderPct > 0) enriched.top10HolderPct = birdeyeHolders.top10HolderPct;
     }
 
     if (birdeyeOverview) {
@@ -723,8 +724,13 @@ async function enrichWithSecurity(metrics: TokenMetrics, contractAddress: string
 
     // Helius gives us raw top holder addresses
     if (heliusHolders) {
-      if (!birdeyeHolders) enriched.holders = heliusHolders.holderCount;
+      if (heliusHolders.holderCount > enriched.holders) enriched.holders = heliusHolders.holderCount;
       enriched.topHolders = heliusHolders.topHolders;
+    }
+
+    // Final reconciliation: audit totalHolders is often the most accurate
+    if (enriched._audit?.totalHolders && enriched._audit.totalHolders > enriched.holders) {
+      enriched.holders = enriched._audit.totalHolders;
     }
   } else {
     const goplusData = await fetchGoPlus(contractAddress, metrics.chain);
@@ -870,4 +876,93 @@ export async function screenByAddress(address: string, chainHint?: string): Prom
   const metrics = await getTokenByAddress(address, chainHint);
   if (!metrics) return null;
   return screenToken(metrics);
+}
+
+// ─── GMGN Top Traders Leaderboard ─────────────────────────────────────
+
+export interface TopTrader {
+  walletAddress: string;
+  name: string;
+  twitterUsername: string;
+  tags: string[];
+  avatar: string;
+  pnl7d: number;
+  pnl30d: number;
+  realizedProfit7d: number;
+  realizedProfit30d: number;
+  winRate7d: number;
+  winRate30d: number;
+  buys7d: number;
+  sells7d: number;
+  volume7d: number;
+  avgCost7d: number;
+  trades5xPlus: number;
+  trades2x5x: number;
+  solBalance: number;
+  lastActive: number;
+}
+
+const leaderboardCache = new LRUCache<string, TopTrader[]>({ max: 5, ttl: 5 * 60_000 });
+
+export async function fetchTopTraders(
+  period: '7d' | '30d' = '7d',
+  orderBy: 'pnl_7d' | 'pnl_30d' | 'winrate_7d' | 'realized_profit_7d' = 'pnl_7d',
+): Promise<TopTrader[]> {
+  const cacheKey = `${period}_${orderBy}`;
+  const cached = leaderboardCache.get(cacheKey);
+  if (cached) return cached;
+
+  try {
+    const url = `https://gmgn.ai/defi/quotation/v1/rank/sol/wallets/${period}?orderby=${orderBy}&direction=desc`;
+    const resp = await fetch(url, {
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36',
+        'Accept': 'application/json',
+        'Referer': 'https://gmgn.ai/',
+      },
+    });
+
+    if (!resp.ok) {
+      log.warn({ status: resp.status }, 'GMGN leaderboard request failed');
+      return [];
+    }
+
+    const data = await resp.json() as any;
+    if (data.code !== 0 || !data.data?.rank) return [];
+
+    const traders: TopTrader[] = data.data.rank.slice(0, 50).map((w: any) => ({
+      walletAddress: w.wallet_address || w.address || '',
+      name: w.name || w.twitter_name || '',
+      twitterUsername: w.twitter_username || '',
+      tags: w.tags || [],
+      avatar: w.avatar || '',
+      pnl7d: parseFloat(w.pnl_7d) || 0,
+      pnl30d: parseFloat(w.pnl_30d) || 0,
+      realizedProfit7d: parseFloat(w.realized_profit_7d) || 0,
+      realizedProfit30d: parseFloat(w.realized_profit_30d) || 0,
+      winRate7d: parseFloat(w.winrate_7d) || 0,
+      winRate30d: parseFloat(w.winrate_30d) || 0,
+      buys7d: w.buy_7d || 0,
+      sells7d: w.sell_7d || 0,
+      volume7d: parseFloat(w.volume_7d) || 0,
+      avgCost7d: parseFloat(w.avg_cost_7d) || 0,
+      trades5xPlus: w.pnl_gt_5x_num_7d || 0,
+      trades2x5x: w.pnl_2x_5x_num_7d || 0,
+      solBalance: parseFloat(w.sol_balance) || 0,
+      lastActive: w.last_active || 0,
+    }));
+
+    leaderboardCache.set(cacheKey, traders);
+    return traders;
+  } catch (err) {
+    log.error({ err }, 'Failed to fetch GMGN leaderboard');
+    return [];
+  }
+}
+
+export async function fetchKOLs(): Promise<TopTrader[]> {
+  const all = await fetchTopTraders('7d', 'pnl_7d');
+  return all.filter(t =>
+    t.tags.includes('kol') || t.tags.includes('top_followed') || t.twitterUsername,
+  ).sort((a, b) => b.realizedProfit7d - a.realizedProfit7d);
 }
