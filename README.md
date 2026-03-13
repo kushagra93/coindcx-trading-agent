@@ -239,6 +239,7 @@ Agents transition through 4 states based on activity to optimize resource usage:
 ### AI Trading Agent (Chat Interface)
 - **Natural language trading** — "buy FARTCOIN $200", "screen POPCAT", "long TSLA 3x", "screen MON"
 - **18 intent types** — buy, sell, screen, analyze, copy, DCA, limit orders, trending, positions, P&L
+- **Dual LLM backend** — OpenRouter (MiniMax M2.5 / Gemini Flash) with SageMaker fine-tuned model fallback
 - **Contract address screening** — paste any EVM (0x...), Solana (base58), Sui/Aptos (0x + 64 hex), or Move module path to auto-screen
 - **Token name resolution** — 40+ known contracts auto-resolve across all supported chains
 
@@ -301,6 +302,13 @@ Agents transition through 4 states based on activity to optimize resource usage:
 - **Buy buttons** — one-tap $50/$200/$500 buy after screening
 - **Color-coded responses** — green (safe), yellow (warn), red (danger) for all data
 
+### ML Pipeline (SageMaker Fine-Tuning)
+- **Training data export** — extracts intent-classification pairs and trade outcome data from PostgreSQL to S3
+- **LoRA fine-tuning** — launches SageMaker training jobs using HuggingFace containers with QLoRA (Mistral-7B base)
+- **Model deployment** — deploys fine-tuned models as SageMaker real-time endpoints (HuggingFace TGI)
+- **Automatic fallback** — SageMaker inference with OpenRouter fallback if endpoint is unavailable
+- **Full pipeline** — one-click export → train → deploy via `POST /api/v1/ml/pipeline`
+
 ### Supervisor Dashboard (React, 9 Tabs)
 - **Agents** — full agent CRUD, lifecycle management, status monitoring
 - **Brokers** — regional broker cards (US/EU/APAC) with compliance and leverage details
@@ -345,7 +353,8 @@ coindcx-trading-agent/
 │   │       ├── admin.ts         # System overview
 │   │       ├── supervisor.ts    # Master agent management endpoints
 │   │       ├── broker.ts        # Broker CRUD, compliance, fees
-│   │       └── gateway.ts       # Deposit/withdraw gateway
+│   │       ├── gateway.ts       # Deposit/withdraw gateway
+│   │       └── ml.ts            # ML pipeline (export, train, deploy, inference)
 │   ├── audit/               # Immutable audit trail
 │   │   └── audit-logger.ts      # SHA-256 hash-chained entries (PostgreSQL)
 │   ├── broker/              # Regional Broker Agents (Tier 1)
@@ -374,9 +383,12 @@ coindcx-trading-agent/
 │   │   ├── dca-engine.ts        # Dollar-cost averaging plans
 │   │   ├── limit-orders.ts      # TP/SL/limit buy/sell (30s check loop)
 │   │   ├── conditional-rules.ts # RSI, MACD, volume, cross-token triggers
-│   │   ├── llm.ts               # OpenRouter LLM integration (MiniMax M2.5)
+│   │   ├── llm.ts               # Dual LLM: OpenRouter + SageMaker fallback
 │   │   ├── ohlcv.ts             # OHLCV candlestick data
 │   │   └── price-alerts.ts      # Price alert notifications
+│   ├── ml/                  # ML pipeline (SageMaker fine-tuning)
+│   │   ├── data-export.ts       # Export training data (intents + trade outcomes) to S3
+│   │   └── sagemaker.ts         # SageMaker training, deployment, inference
 │   ├── db/                  # Database layer
 │   │   ├── schema.ts            # 17 Drizzle ORM table definitions
 │   │   └── index.ts             # DB client init, isDbConfigured() guard
@@ -427,13 +439,14 @@ coindcx-trading-agent/
 │   │   ├── evm-wallet.ts        # EVM transaction signing
 │   │   └── deposit-withdraw.ts  # Balance checks + transfers
 │   └── index.ts             # Entry point (12 service modes)
-├── tests/                   # Unit tests (Vitest, 341 tests, 80%+ coverage)
+├── tests/                   # Unit tests (Vitest, 80%+ coverage)
 │   ├── helpers/mock-db.ts       # Proxy-based Drizzle ORM + Redis mock utilities
 │   ├── core/                    # config, ws-types, state-machine, chain-registry
 │   ├── security/                # message-signer, trust-chain, approval-token, data-isolation
 │   ├── risk/                    # circuit-breaker, risk-manager, parameter-bounds
 │   ├── trader/                  # fee-manager, nonce-manager, trade-memory, position-manager
 │   ├── supervisor/              # command-bus, event-collector, fee-ledger
+│   ├── ml/                      # data-export, sagemaker
 │   ├── audit/                   # audit-logger
 │   └── db/                      # db client
 ├── dashboard/               # React 19 + Vite supervisor dashboard
@@ -624,6 +637,18 @@ The application runs in one of 12 service modes, set via `SERVICE_MODE` environm
 | POST | `/api/v1/gateway/withdraw` | Withdraw (dual-sig) |
 | GET | `/api/v1/gateway/transactions` | Transaction history |
 
+### ML Pipeline
+| Method | Path | Description |
+|--------|------|-------------|
+| GET | `/api/v1/ml/status` | ML status (inference backend, endpoints, recent jobs) |
+| POST | `/api/v1/ml/export` | Export training data to S3 (intent / trades / all) |
+| POST | `/api/v1/ml/train` | Start SageMaker fine-tuning job |
+| GET | `/api/v1/ml/train/:jobName` | Training job status |
+| POST | `/api/v1/ml/deploy` | Deploy model as SageMaker endpoint |
+| GET | `/api/v1/ml/endpoints/:name` | Endpoint status |
+| DELETE | `/api/v1/ml/endpoints/:name` | Tear down endpoint |
+| POST | `/api/v1/ml/pipeline` | Full pipeline: export → train |
+
 ### Agent Control
 | Method | Path | Description |
 |--------|------|-------------|
@@ -732,6 +757,13 @@ docker-compose up -d
 | `EVM_RPC_URL` | For live trading | — | EVM RPC endpoint |
 | `GATEWAY_JWT_SECRET` | For production | dev default | JWT secret for WebSocket auth |
 | `SECURITY_MASTER_KEY_ID` | For production | — | Master HMAC signing key ID |
+| `SAGEMAKER_REGION` | For ML | `us-west-2` | AWS region for SageMaker |
+| `SAGEMAKER_ROLE_ARN` | For ML | — | IAM role for SageMaker jobs |
+| `SAGEMAKER_S3_BUCKET` | For ML | — | S3 bucket for training data |
+| `SAGEMAKER_BASE_MODEL` | For ML | `mistralai/Mistral-7B-Instruct-v0.3` | Base model for fine-tuning |
+| `SAGEMAKER_USE_INFERENCE` | For ML | `true` | Use SageMaker for inference (fallback to OpenRouter) |
+| `SAGEMAKER_INTENT_ENDPOINT` | For ML | — | SageMaker endpoint for intent classification |
+| `SAGEMAKER_CHAT_ENDPOINT` | For ML | — | SageMaker endpoint for chat completion |
 
 See `TRD.md` §4.9 for the complete list of 60+ environment variables.
 
@@ -767,7 +799,7 @@ cd dashboard && npm run build   # Production build
 
 ### Test Suite
 
-341 unit tests across 27 test files with **80.6% statement coverage**:
+Unit tests across 29 test files with **80%+ statement coverage**:
 
 | Domain | Tests | Coverage Areas |
 |--------|-------|----------------|
@@ -776,6 +808,7 @@ cd dashboard && npm run build   # Production build
 | Risk | 4 files | circuit-breaker, risk-manager, parameter-bounds, types |
 | Trader | 4 files | fee-manager, nonce-manager, trade-memory, position-manager |
 | Supervisor | 3 files | command-bus, event-collector, fee-ledger |
+| ML | 2 files | data-export (training data extraction, tool call parsing), sagemaker (schema building, text parsing) |
 | Audit | 1 file | audit-logger |
 | DB | 1 file | db client + isDbConfigured |
 
@@ -818,7 +851,7 @@ Set `HOST_APP_ADAPTER=coindcx` or `HOST_APP_ADAPTER=generic` to switch implement
 
 | Layer | Technologies |
 |-------|-------------|
-| **Backend** | TypeScript, Fastify, Drizzle ORM, PostgreSQL, Redis (Streams + Pub/Sub), Pino |
+| **Backend** | TypeScript, Fastify, Drizzle ORM, PostgreSQL, Redis (Streams + Pub/Sub), Pino, AWS SageMaker |
 | **Dashboard** | React 19, Vite, TypeScript, Recharts, Lucide Icons |
 | **Mobile** | Flutter 3.32, Dart, Riverpod, CoinDCX Design System |
 | **Blockchain** | @solana/web3.js, ethers.js, Jupiter v6 API, Hyperliquid SDK |
@@ -860,6 +893,14 @@ Set `HOST_APP_ADAPTER=coindcx` or `HOST_APP_ADAPTER=generic` to switch implement
 
 ## Changelog
 
+### v0.6.0 — ML Pipeline + SageMaker Fine-Tuning (2026-03-13)
+- **ML training pipeline**: Export chat intents and trade outcomes to S3 as JSONL for supervised fine-tuning
+- **SageMaker integration**: Launch LoRA/QLoRA training jobs on HuggingFace containers (Mistral-7B base)
+- **Model deployment**: Deploy fine-tuned models as SageMaker real-time endpoints with HuggingFace TGI
+- **Dual inference**: SageMaker endpoint for intent classification and chat, with automatic OpenRouter fallback
+- **ML API routes**: 8 endpoints for status, export, train, deploy, delete, and full pipeline orchestration
+- **Separate intent model**: Gemini 2.5 Flash for intent classification, MiniMax M2.5 for chat responses
+
 ### v0.5.0 — Stateless Architecture + Security + Tests (2026-03-13)
 - **Stateless refactor**: Migrated all in-memory state to PostgreSQL (durable) and Redis (ephemeral) for horizontal scalability
 - **Redis communication backbone**: WebSocket Gateway Cluster pattern with Redis Pub/Sub and Streams for inter-agent messaging
@@ -867,7 +908,7 @@ Set `HOST_APP_ADAPTER=coindcx` or `HOST_APP_ADAPTER=generic` to switch implement
 - **Host app adapters**: Pluggable `HostAppAdapter` interface for CoinDCX or any finance app integration
 - **Database schema**: 17 PostgreSQL tables via Drizzle ORM with migrations
 - **Graceful degradation**: App starts without PostgreSQL/Redis using `isDbConfigured()` guards
-- **Unit test suite**: 341 tests across 27 files with 80.6% statement coverage (Vitest + V8)
+- **Unit test suite**: 29 test files with 80%+ statement coverage (Vitest + V8)
 
 ### v0.4.0 — DexScreener Trending Feed (2026-03-12)
 - **Discovery overhaul**: Replaced hardcoded token list with DexScreener Token Boosts API (`/token-boosts/top/v1`)
