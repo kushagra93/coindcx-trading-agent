@@ -13,32 +13,35 @@ class ChatScreen extends ConsumerStatefulWidget {
   ConsumerState<ChatScreen> createState() => _ChatScreenState();
 }
 
-class _ChatScreenState extends ConsumerState<ChatScreen> {
+class _ChatScreenState extends ConsumerState<ChatScreen> with TickerProviderStateMixin {
   final _controller = TextEditingController();
   final _scrollController = ScrollController();
   final List<ChatMessage> _messages = [];
   bool _isLoading = false;
+  int _messageCount = 0;
+  late AnimationController _pulseController;
+  late Animation<double> _pulseAnimation;
 
   @override
   void initState() {
     super.initState();
+    _pulseController = AnimationController(vsync: this, duration: const Duration(milliseconds: 1500))..repeat(reverse: true);
+    _pulseAnimation = Tween<double>(begin: 0.6, end: 1.0).animate(CurvedAnimation(parent: _pulseController, curve: Curves.easeInOut));
+    _addWelcomeMessage();
+  }
+
+  void _addWelcomeMessage() {
     _messages.add(ChatMessage(
-      text: 'Hey! I\'m your **AI trading agent** — talk to me like a friend, I understand natural language.\n\n'
-          '🔄 **Trade** — _"buy SOL \$200"_ or _"ape 500 into ETH"_\n'
-          '📊 **Smart Rules** — _"buy SOL when it drops 40%"_ or _"buy when RSI below 30"_\n'
-          '📈 **TA Indicators** — _"RSI SOL"_ or _"technical analysis ETH"_\n'
-          '🔍 **Discover** — _"new tokens today"_, _"trending"_, _"low cap gems"_\n'
-          '🛡️ **Screen** — paste any **contract address** to auto-audit\n'
-          '🧠 **Smart Money** — _"leaderboard"_, _"copy trade #1"_\n\n'
-          'Type **help** for the full command guide. Let\'s trade!',
+      text: '',
       isUser: false,
       timestamp: DateTime.now(),
-      suggestions: ['trending', 'RSI SOL', 'new tokens today', 'leaderboard', 'help'],
+      isWelcome: true,
     ));
   }
 
   @override
   void dispose() {
+    _pulseController.dispose();
     _controller.dispose();
     _scrollController.dispose();
     super.dispose();
@@ -48,6 +51,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
     final text = _controller.text.trim();
     if (text.isEmpty || _isLoading) return;
 
+    _messageCount++;
     _controller.clear();
     setState(() {
       _messages.add(ChatMessage(text: text, isUser: true, timestamp: DateTime.now()));
@@ -124,12 +128,190 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
               itemCount: _messages.length + (_isLoading ? 1 : 0),
               itemBuilder: (context, index) {
                 if (index == _messages.length) return _buildTypingIndicator(colors);
-                return _buildMessageBubble(_messages[index], colors);
+                final msg = _messages[index];
+                if (msg.isWelcome) return _buildWelcomeCard(colors);
+                return _buildMessageBubble(msg, colors);
               },
             ),
           ),
           _buildPersistentSuggestions(colors),
           _buildInputBar(colors),
+        ],
+      ),
+    );
+  }
+
+  // ── Inline Welcome Card ──────────────────────────────────────────
+
+  Widget _buildWelcomeCard(CoinDCXColorScheme colors) {
+    return Container(
+      margin: const EdgeInsets.only(bottom: CoinDCXSpacing.md),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          // Agent greeting
+          Container(
+            padding: const EdgeInsets.all(14),
+            decoration: BoxDecoration(
+              color: colors.generalBackgroundBgL2,
+              borderRadius: const BorderRadius.only(
+                topLeft: Radius.circular(16),
+                topRight: Radius.circular(16),
+                bottomLeft: Radius.circular(4),
+                bottomRight: Radius.circular(16),
+              ),
+            ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  children: [
+                    Container(
+                      width: 32, height: 32,
+                      decoration: BoxDecoration(
+                        gradient: const LinearGradient(colors: [Color(0xFF6366f1), Color(0xFF8b5cf6)]),
+                        borderRadius: BorderRadius.circular(10),
+                      ),
+                      child: const Icon(Icons.auto_awesome, size: 18, color: Colors.white),
+                    ),
+                    const SizedBox(width: 10),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text('CoinDCX Trading Agent', style: CoinDCXTypography.heading3.copyWith(
+                            color: colors.generalForegroundPrimary, fontSize: 15)),
+                          Text('AI-powered · Solana-focused', style: CoinDCXTypography.caption.copyWith(
+                            color: colors.generalForegroundTertiary, fontSize: 10)),
+                        ],
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 12),
+                Text(
+                  'I can trade, analyze, and discover tokens for you — just type what you want in plain English.',
+                  style: CoinDCXTypography.bodyMedium.copyWith(
+                    color: colors.generalForegroundPrimary, fontSize: 13, height: 1.4),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(height: 10),
+
+          // Quick-start action grid
+          _buildWelcomeSection(
+            colors,
+            icon: Icons.rocket_launch_rounded,
+            gradient: const [Color(0xFF10b981), Color(0xFF059669)],
+            title: 'Quick Start',
+            actions: [
+              _WelcomeAction('Buy SOL \$100', 'buy SOL \$100', Icons.shopping_cart_rounded),
+              _WelcomeAction('What\'s trending?', 'trending', Icons.trending_up_rounded),
+              _WelcomeAction('Screen a token', 'screen SOL', Icons.verified_user_rounded),
+              _WelcomeAction('My portfolio', 'portfolio', Icons.account_balance_wallet_rounded),
+            ],
+          ),
+          const SizedBox(height: 8),
+          _buildWelcomeSection(
+            colors,
+            icon: Icons.auto_awesome_rounded,
+            gradient: const [Color(0xFF7c3aed), Color(0xFF6d28d9)],
+            title: 'Advanced',
+            actions: [
+              _WelcomeAction('RSI analysis', 'RSI SOL', Icons.candlestick_chart_rounded),
+              _WelcomeAction('Smart rules', 'buy SOL when it drops 10%', Icons.rule_rounded),
+              _WelcomeAction('Copy top traders', 'leaderboard', Icons.emoji_events_rounded),
+              _WelcomeAction('New tokens', 'new tokens today', Icons.fiber_new_rounded),
+            ],
+          ),
+          const SizedBox(height: 8),
+
+          // Hint
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+            decoration: BoxDecoration(
+              color: colors.actionBackgroundPrimary.withValues(alpha: 0.06),
+              borderRadius: BorderRadius.circular(10),
+              border: Border.all(color: colors.actionBackgroundPrimary.withValues(alpha: 0.15)),
+            ),
+            child: Row(
+              children: [
+                Icon(Icons.lightbulb_outline_rounded, size: 14, color: colors.actionBackgroundPrimary),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Text(
+                    'Tip: You can also paste any Solana contract address to instantly screen it.',
+                    style: CoinDCXTypography.caption.copyWith(
+                      color: colors.actionBackgroundPrimary.withValues(alpha: 0.8), fontSize: 11),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildWelcomeSection(CoinDCXColorScheme colors, {
+    required IconData icon,
+    required List<Color> gradient,
+    required String title,
+    required List<_WelcomeAction> actions,
+  }) {
+    return Container(
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: gradient[0].withValues(alpha: 0.06),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: gradient[0].withValues(alpha: 0.15)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Container(
+                width: 22, height: 22,
+                decoration: BoxDecoration(
+                  gradient: LinearGradient(colors: gradient),
+                  borderRadius: BorderRadius.circular(6),
+                ),
+                child: Icon(icon, size: 13, color: Colors.white),
+              ),
+              const SizedBox(width: 8),
+              Text(title, style: CoinDCXTypography.heading3.copyWith(
+                color: colors.generalForegroundPrimary, fontSize: 13)),
+            ],
+          ),
+          const SizedBox(height: 10),
+          Wrap(
+            spacing: 6,
+            runSpacing: 6,
+            children: actions.map((a) => GestureDetector(
+              onTap: () { _controller.text = a.command; _sendMessage(); },
+              child: Container(
+                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 7),
+                decoration: BoxDecoration(
+                  color: colors.generalBackgroundBgL2,
+                  borderRadius: BorderRadius.circular(10),
+                  border: Border.all(color: gradient[0].withValues(alpha: 0.25)),
+                ),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Icon(a.icon, size: 13, color: gradient[0]),
+                    const SizedBox(width: 6),
+                    Flexible(
+                      child: Text(a.label, style: CoinDCXTypography.bodyMedium.copyWith(
+                        color: colors.generalForegroundPrimary, fontSize: 12, fontWeight: FontWeight.w500)),
+                    ),
+                  ],
+                ),
+              ),
+            )).toList(),
+          ),
         ],
       ),
     );
@@ -540,9 +722,11 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
 
   Widget _buildPortfolioCard(Map<String, dynamic> data, CoinDCXColorScheme colors) {
     final positions = data['positions'] as List<dynamic>? ?? [];
+    final history = data['history'] as List<dynamic>? ?? [];
     final totalInvested = (data['totalInvested'] as num?)?.toDouble() ?? 0;
     final totalSold = (data['totalSold'] as num?)?.toDouble() ?? 0;
-    final buys = positions.where((p) => (p as Map<String, dynamic>)['side'] == 'buy').toList();
+    final holdings = positions.where((p) => (p as Map<String, dynamic>)['side'] == 'buy').toList();
+    final netValue = totalInvested - totalSold;
 
     return Container(
       width: double.infinity,
@@ -556,47 +740,103 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
+          // Header
           Row(
             children: [
               Icon(Icons.account_balance_wallet_rounded, size: 16, color: colors.actionBackgroundPrimary),
               const SizedBox(width: 4),
               Text('Portfolio', style: CoinDCXTypography.buttonSm.copyWith(color: colors.generalForegroundPrimary)),
+              const Spacer(),
+              Text('${history.length} trades', style: CoinDCXTypography.caption.copyWith(
+                color: colors.generalForegroundTertiary, fontSize: 9)),
             ],
           ),
           const SizedBox(height: CoinDCXSpacing.xs),
-          Row(
-            children: [
-              _statChip('Invested', _formatLargeNum(totalInvested), colors.generalForegroundPrimary, colors),
-              const SizedBox(width: CoinDCXSpacing.md),
-              _statChip('Sold', _formatLargeNum(totalSold), colors.generalForegroundSecondary, colors),
-            ],
+
+          // Summary stats
+          Container(
+            padding: const EdgeInsets.all(CoinDCXSpacing.xs),
+            decoration: BoxDecoration(
+              color: colors.generalBackgroundBgL2,
+              borderRadius: BorderRadius.circular(CoinDCXSpacing.radiusSm),
+            ),
+            child: Row(
+              children: [
+                Expanded(child: _portfolioStat('Invested', _formatLargeNum(totalInvested), colors.generalForegroundPrimary, colors)),
+                Container(width: 1, height: 24, color: colors.generalStrokeL1),
+                Expanded(child: _portfolioStat('Sold', _formatLargeNum(totalSold), colors.generalForegroundSecondary, colors)),
+                Container(width: 1, height: 24, color: colors.generalStrokeL1),
+                Expanded(child: _portfolioStat('Net', _formatLargeNum(netValue), colors.actionBackgroundPrimary, colors)),
+              ],
+            ),
           ),
-          if (buys.isNotEmpty) ...[
+
+          // Aggregated holdings
+          if (holdings.isNotEmpty) ...[
             const SizedBox(height: CoinDCXSpacing.sm),
-            ...buys.take(5).map((p) {
+            Text('HOLDINGS', style: CoinDCXTypography.caption.copyWith(
+              color: colors.generalForegroundTertiary, fontSize: 9, fontWeight: FontWeight.w700, letterSpacing: 1)),
+            const SizedBox(height: 4),
+            ...holdings.take(8).map((p) {
               final pos = p as Map<String, dynamic>;
               final symbol = pos['symbol'] as String? ?? '';
               final amount = (pos['amount'] as num?)?.toDouble() ?? 0;
-              final price = (pos['price'] as num?)?.toDouble() ?? 0;
-              return Padding(
-                padding: const EdgeInsets.symmetric(vertical: 2),
+              final avgPrice = (pos['price'] as num?)?.toDouble() ?? 0;
+              final costBasis = (pos['costBasis'] as num?)?.toDouble() ?? 0;
+              final tradeCount = (pos['tradeCount'] as num?)?.toInt() ?? 1;
+              return Container(
+                margin: const EdgeInsets.only(bottom: 4),
+                padding: const EdgeInsets.all(CoinDCXSpacing.xs),
+                decoration: BoxDecoration(
+                  color: colors.generalBackgroundBgL2,
+                  borderRadius: BorderRadius.circular(CoinDCXSpacing.radiusSm),
+                ),
                 child: InkWell(
                   onTap: () { _controller.text = 'sell $symbol'; _sendMessage(); },
                   child: Row(
                     children: [
-                      Text(symbol, style: CoinDCXTypography.buttonSm.copyWith(color: colors.generalForegroundPrimary, fontSize: 12)),
-                      const Spacer(),
-                      Text('${amount.toStringAsFixed(4)} @ ${_formatPrice(price)}',
-                        style: CoinDCXTypography.numberSm.copyWith(color: colors.generalForegroundSecondary, fontSize: 11)),
-                      const SizedBox(width: 8),
-                      Container(
-                        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-                        decoration: BoxDecoration(
-                          color: colors.negativeBackgroundPrimary.withValues(alpha: 0.15),
-                          borderRadius: BorderRadius.circular(4),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Row(
+                              children: [
+                                Text(symbol, style: CoinDCXTypography.buttonSm.copyWith(
+                                  color: colors.generalForegroundPrimary, fontSize: 13)),
+                                const SizedBox(width: 6),
+                                if (tradeCount > 1)
+                                  Container(
+                                    padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 1),
+                                    decoration: BoxDecoration(
+                                      color: colors.actionBackgroundPrimary.withValues(alpha: 0.12),
+                                      borderRadius: BorderRadius.circular(3),
+                                    ),
+                                    child: Text('$tradeCount buys', style: CoinDCXTypography.caption.copyWith(
+                                      color: colors.actionBackgroundPrimary, fontSize: 8, fontWeight: FontWeight.w600)),
+                                  ),
+                              ],
+                            ),
+                            Text('${amount.toStringAsFixed(4)} @ avg ${_formatPrice(avgPrice)}',
+                              style: CoinDCXTypography.caption.copyWith(color: colors.generalForegroundTertiary, fontSize: 9)),
+                          ],
                         ),
-                        child: Text('SELL', style: CoinDCXTypography.caption.copyWith(
-                          color: colors.negativeBackgroundPrimary, fontSize: 9, fontWeight: FontWeight.w600)),
+                      ),
+                      Column(
+                        crossAxisAlignment: CrossAxisAlignment.end,
+                        children: [
+                          Text(_formatLargeNum(costBasis),
+                            style: CoinDCXTypography.numberSm.copyWith(color: colors.generalForegroundPrimary, fontSize: 12)),
+                          const SizedBox(height: 2),
+                          Container(
+                            padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                            decoration: BoxDecoration(
+                              color: colors.negativeBackgroundPrimary.withValues(alpha: 0.15),
+                              borderRadius: BorderRadius.circular(4),
+                            ),
+                            child: Text('SELL', style: CoinDCXTypography.caption.copyWith(
+                              color: colors.negativeBackgroundPrimary, fontSize: 9, fontWeight: FontWeight.w600)),
+                          ),
+                        ],
                       ),
                     ],
                   ),
@@ -606,10 +846,93 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
           ] else
             Padding(
               padding: const EdgeInsets.only(top: CoinDCXSpacing.xs),
-              child: Text('No positions yet', style: CoinDCXTypography.bodySmall.copyWith(color: colors.generalForegroundTertiary)),
+              child: Text('No active holdings', style: CoinDCXTypography.bodySmall.copyWith(color: colors.generalForegroundTertiary)),
             ),
+
+          // Transaction history
+          if (history.isNotEmpty) ...[
+            const SizedBox(height: CoinDCXSpacing.sm),
+            Row(
+              children: [
+                Text('TRANSACTION HISTORY', style: CoinDCXTypography.caption.copyWith(
+                  color: colors.generalForegroundTertiary, fontSize: 9, fontWeight: FontWeight.w700, letterSpacing: 1)),
+                const Spacer(),
+                Text('latest ${history.length > 10 ? 10 : history.length} of ${history.length}', style: CoinDCXTypography.caption.copyWith(
+                  color: colors.generalForegroundTertiary, fontSize: 8)),
+              ],
+            ),
+            const SizedBox(height: 4),
+            ...history.take(10).map((t) {
+              final tx = t as Map<String, dynamic>;
+              final symbol = tx['symbol'] as String? ?? '';
+              final side = tx['side'] as String? ?? '';
+              final amountUsd = (tx['amountUsd'] as num?)?.toDouble() ?? 0;
+              final price = (tx['price'] as num?)?.toDouble() ?? 0;
+              final quantity = (tx['quantity'] as num?)?.toDouble() ?? 0;
+              final timestamp = (tx['timestamp'] as num?)?.toInt() ?? 0;
+              final isBuy = side == 'buy';
+              final time = DateTime.fromMillisecondsSinceEpoch(timestamp);
+              final timeStr = '${time.hour.toString().padLeft(2, '0')}:${time.minute.toString().padLeft(2, '0')}';
+              final dateStr = '${time.day}/${time.month}';
+
+              return Padding(
+                padding: const EdgeInsets.symmetric(vertical: 2),
+                child: Row(
+                  children: [
+                    Container(
+                      width: 18, height: 18,
+                      decoration: BoxDecoration(
+                        color: isBuy
+                          ? colors.positiveBackgroundPrimary.withValues(alpha: 0.12)
+                          : colors.negativeBackgroundPrimary.withValues(alpha: 0.12),
+                        borderRadius: BorderRadius.circular(4),
+                      ),
+                      child: Icon(
+                        isBuy ? Icons.arrow_downward_rounded : Icons.arrow_upward_rounded,
+                        size: 11,
+                        color: isBuy ? colors.positiveBackgroundPrimary : colors.negativeBackgroundPrimary,
+                      ),
+                    ),
+                    const SizedBox(width: 6),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text('${side.toUpperCase()} $symbol',
+                            style: CoinDCXTypography.caption.copyWith(
+                              color: isBuy ? colors.positiveBackgroundPrimary : colors.negativeBackgroundPrimary,
+                              fontSize: 10, fontWeight: FontWeight.w600)),
+                          Text('${quantity.toStringAsFixed(4)} @ ${_formatPrice(price)}',
+                            style: CoinDCXTypography.caption.copyWith(color: colors.generalForegroundTertiary, fontSize: 8)),
+                        ],
+                      ),
+                    ),
+                    Column(
+                      crossAxisAlignment: CrossAxisAlignment.end,
+                      children: [
+                        Text('\$${amountUsd.toStringAsFixed(0)}',
+                          style: CoinDCXTypography.numberSm.copyWith(color: colors.generalForegroundPrimary, fontSize: 10)),
+                        Text('$dateStr $timeStr',
+                          style: CoinDCXTypography.caption.copyWith(color: colors.generalForegroundTertiary, fontSize: 8)),
+                      ],
+                    ),
+                  ],
+                ),
+              );
+            }),
+          ],
         ],
       ),
+    );
+  }
+
+  Widget _portfolioStat(String label, String value, Color valueColor, CoinDCXColorScheme colors) {
+    return Column(
+      children: [
+        Text(label, style: CoinDCXTypography.caption.copyWith(color: colors.generalForegroundTertiary, fontSize: 9)),
+        const SizedBox(height: 2),
+        Text(value, style: CoinDCXTypography.numberSm.copyWith(color: valueColor, fontSize: 12, fontWeight: FontWeight.w600)),
+      ],
     );
   }
 
@@ -1944,13 +2267,14 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
+          if (_messageCount < 3) _buildCoachMark(colors),
           // Quick action chips
           SizedBox(
             height: 30,
             child: ListView(
               scrollDirection: Axis.horizontal,
               children: [
-                _quickAction('📈 Trending', 'trending', colors),
+                _quickAction('📈 Trending', 'trending', colors, pulse: _messageCount < 2),
                 _quickAction('🔍 Screen', 'screen SOL', colors),
                 _quickAction('📊 TA', 'RSI SOL', colors),
                 _quickAction('💰 Portfolio', 'portfolio', colors),
@@ -2004,22 +2328,72 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
     );
   }
 
-  Widget _quickAction(String label, String command, CoinDCXColorScheme colors) {
-    return Padding(
+  Widget _buildCoachMark(CoinDCXColorScheme colors) {
+    return AnimatedBuilder(
+      animation: _pulseAnimation,
+      builder: (ctx, child) => Container(
+        margin: const EdgeInsets.only(bottom: 6),
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+        decoration: BoxDecoration(
+          color: colors.actionBackgroundPrimary.withValues(alpha: 0.08 + 0.04 * _pulseAnimation.value),
+          borderRadius: BorderRadius.circular(10),
+          border: Border.all(color: colors.actionBackgroundPrimary.withValues(alpha: 0.25)),
+        ),
+        child: Row(
+          children: [
+            Icon(Icons.touch_app_rounded, size: 16, color: colors.actionBackgroundPrimary),
+            const SizedBox(width: 8),
+            Expanded(
+              child: Text(
+                'Tap a shortcut below or type anything — I understand natural language!',
+                style: CoinDCXTypography.caption.copyWith(
+                  color: colors.actionBackgroundPrimary, fontSize: 11, fontWeight: FontWeight.w500),
+              ),
+            ),
+            GestureDetector(
+              onTap: () => setState(() => _messageCount = 3),
+              child: Icon(Icons.close_rounded, size: 14, color: colors.actionBackgroundPrimary.withValues(alpha: 0.5)),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _quickAction(String label, String command, CoinDCXColorScheme colors, {bool pulse = false}) {
+    final chip = Padding(
       padding: const EdgeInsets.only(right: 6),
       child: GestureDetector(
         onTap: () { _controller.text = command; _sendMessage(); },
         child: Container(
           padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
           decoration: BoxDecoration(
-            color: colors.generalBackgroundBgL2,
+            color: pulse
+              ? colors.actionBackgroundPrimary.withValues(alpha: 0.12)
+              : colors.generalBackgroundBgL2,
             borderRadius: BorderRadius.circular(CoinDCXSpacing.radiusFull),
-            border: Border.all(color: colors.generalStrokeL2),
+            border: Border.all(
+              color: pulse ? colors.actionBackgroundPrimary.withValues(alpha: 0.5) : colors.generalStrokeL2,
+            ),
           ),
           child: Text(label, style: CoinDCXTypography.caption.copyWith(
-            color: colors.generalForegroundSecondary, fontSize: 11)),
+            color: pulse ? colors.actionBackgroundPrimary : colors.generalForegroundSecondary, fontSize: 11)),
         ),
       ),
     );
+
+    if (!pulse) return chip;
+    return AnimatedBuilder(
+      animation: _pulseAnimation,
+      builder: (ctx, child) => Transform.scale(scale: 0.96 + 0.04 * _pulseAnimation.value, child: child),
+      child: chip,
+    );
   }
+}
+
+class _WelcomeAction {
+  final String label;
+  final String command;
+  final IconData icon;
+  const _WelcomeAction(this.label, this.command, this.icon);
 }

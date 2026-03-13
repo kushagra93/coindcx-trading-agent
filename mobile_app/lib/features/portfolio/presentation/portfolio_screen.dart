@@ -46,11 +46,11 @@ class PortfolioScreen extends ConsumerWidget {
             ),
           ),
         ),
-        data: (positions) {
-          if (positions.isEmpty) {
+        data: (portfolio) {
+          if (portfolio.holdings.isEmpty && portfolio.history.isEmpty) {
             return _buildEmptyState(context, colors);
           }
-          return _buildPositions(context, positions, colors);
+          return _buildPortfolio(context, portfolio, colors);
         },
       ),
     );
@@ -86,7 +86,9 @@ class PortfolioScreen extends ConsumerWidget {
     );
   }
 
-  Widget _buildPositions(BuildContext context, List<TradeRecord> positions, CoinDCXColorScheme colors) {
+  Widget _buildPortfolio(BuildContext context, PortfolioData portfolio, CoinDCXColorScheme colors) {
+    final net = portfolio.totalInvested - portfolio.totalSold;
+
     return ListView(
       padding: const EdgeInsets.all(CoinDCXSpacing.md),
       children: [
@@ -101,39 +103,186 @@ class PortfolioScreen extends ConsumerWidget {
           child: Column(
             children: [
               Text(
-                '${positions.length} Active Positions',
-                style: CoinDCXTypography.bodyLarge.copyWith(color: colors.generalForegroundPrimary),
-              ),
-              const SizedBox(height: CoinDCXSpacing.xxs),
-              Text(
-                '\$${_totalValue(positions).toStringAsFixed(2)}',
+                '\$${portfolio.totalInvested.toStringAsFixed(2)}',
                 style: CoinDCXTypography.numberLg.copyWith(
                   color: colors.generalForegroundPrimary,
                   fontSize: 28,
                 ),
               ),
               Text(
-                'Total Value',
+                'Total Invested',
                 style: CoinDCXTypography.caption.copyWith(color: colors.generalForegroundTertiary),
+              ),
+              const SizedBox(height: CoinDCXSpacing.sm),
+              Row(
+                mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+                children: [
+                  _summaryChip('Invested', '\$${portfolio.totalInvested.toStringAsFixed(0)}', colors.actionBackgroundPrimary, colors),
+                  _summaryChip('Sold', '\$${portfolio.totalSold.toStringAsFixed(0)}', colors.negativeBackgroundPrimary, colors),
+                  _summaryChip('Net', '\$${net.toStringAsFixed(0)}', net >= 0 ? colors.positiveBackgroundPrimary : colors.negativeBackgroundPrimary, colors),
+                ],
               ),
             ],
           ),
         ),
+
         const SizedBox(height: CoinDCXSpacing.lg),
-        Text(
-          'Positions',
-          style: CoinDCXTypography.heading3.copyWith(color: colors.generalForegroundPrimary),
-        ),
-        const SizedBox(height: CoinDCXSpacing.sm),
-        ...positions.where((p) => p.side == 'buy').map((p) => _buildPositionCard(context, p, colors)),
+
+        // Holdings
+        if (portfolio.holdings.isNotEmpty) ...[
+          Row(
+            children: [
+              Text(
+                'Holdings',
+                style: CoinDCXTypography.heading3.copyWith(color: colors.generalForegroundPrimary),
+              ),
+              const SizedBox(width: CoinDCXSpacing.xs),
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                decoration: BoxDecoration(
+                  color: colors.actionBackgroundPrimary.withValues(alpha: 0.2),
+                  borderRadius: BorderRadius.circular(CoinDCXSpacing.radiusFull),
+                ),
+                child: Text(
+                  '${portfolio.holdings.length}',
+                  style: CoinDCXTypography.caption.copyWith(color: colors.actionBackgroundPrimary, fontWeight: FontWeight.w600),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: CoinDCXSpacing.sm),
+          ...portfolio.holdings.map((h) => _buildHoldingCard(context, h, colors)),
+        ],
+
         const SizedBox(height: CoinDCXSpacing.lg),
-        Text(
-          'Transaction History',
-          style: CoinDCXTypography.heading3.copyWith(color: colors.generalForegroundPrimary),
-        ),
-        const SizedBox(height: CoinDCXSpacing.sm),
-        ...positions.map((p) => _buildTransactionRow(context, p, colors)),
+
+        // Transaction History
+        if (portfolio.history.isNotEmpty) ...[
+          Row(
+            children: [
+              Text(
+                'Transaction History',
+                style: CoinDCXTypography.heading3.copyWith(color: colors.generalForegroundPrimary),
+              ),
+              const SizedBox(width: CoinDCXSpacing.xs),
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                decoration: BoxDecoration(
+                  color: colors.generalForegroundTertiary.withValues(alpha: 0.2),
+                  borderRadius: BorderRadius.circular(CoinDCXSpacing.radiusFull),
+                ),
+                child: Text(
+                  '${portfolio.history.length}',
+                  style: CoinDCXTypography.caption.copyWith(color: colors.generalForegroundTertiary, fontWeight: FontWeight.w600),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: CoinDCXSpacing.sm),
+          ...portfolio.history.map((t) => _buildTransactionRow(context, t, colors)),
+        ],
       ],
+    );
+  }
+
+  Widget _summaryChip(String label, String value, Color accent, CoinDCXColorScheme colors) {
+    return Column(
+      children: [
+        Text(value, style: CoinDCXTypography.numberSm.copyWith(color: accent, fontSize: 14, fontWeight: FontWeight.w700)),
+        Text(label, style: CoinDCXTypography.caption.copyWith(color: colors.generalForegroundTertiary, fontSize: 10)),
+      ],
+    );
+  }
+
+  Widget _buildHoldingCard(BuildContext context, TradeRecord holding, CoinDCXColorScheme colors) {
+    return Container(
+      margin: const EdgeInsets.only(bottom: CoinDCXSpacing.xs),
+      padding: const EdgeInsets.all(CoinDCXSpacing.md),
+      decoration: BoxDecoration(
+        color: colors.generalBackgroundBgL2,
+        borderRadius: BorderRadius.circular(CoinDCXSpacing.radiusMd),
+        border: Border.all(color: colors.generalStrokeL1),
+      ),
+      child: Row(
+        children: [
+          Container(
+            width: 40,
+            height: 40,
+            decoration: BoxDecoration(
+              color: colors.positiveBackgroundSecondary,
+              borderRadius: BorderRadius.circular(CoinDCXSpacing.radiusFull),
+            ),
+            child: Center(
+              child: Text(
+                holding.symbol.isNotEmpty ? holding.symbol[0].toUpperCase() : '?',
+                style: CoinDCXTypography.heading3.copyWith(color: colors.positiveBackgroundPrimary),
+              ),
+            ),
+          ),
+          const SizedBox(width: CoinDCXSpacing.sm),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  children: [
+                    Flexible(
+                      child: Text(
+                        holding.symbol.toUpperCase(),
+                        style: CoinDCXTypography.bodyLarge.copyWith(color: colors.generalForegroundPrimary),
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                    ),
+                    if (holding.tradeCount > 1) ...[
+                      const SizedBox(width: 6),
+                      Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 1),
+                        decoration: BoxDecoration(
+                          color: colors.actionBackgroundPrimary.withValues(alpha: 0.15),
+                          borderRadius: BorderRadius.circular(CoinDCXSpacing.radiusFull),
+                        ),
+                        child: Text(
+                          '${holding.tradeCount} buys',
+                          style: CoinDCXTypography.caption.copyWith(color: colors.actionBackgroundPrimary, fontSize: 9, fontWeight: FontWeight.w600),
+                        ),
+                      ),
+                    ],
+                  ],
+                ),
+                Text(
+                  '${holding.chain} · Avg \$${holding.price.toStringAsFixed(holding.price < 0.01 ? 8 : 4)}',
+                  style: CoinDCXTypography.caption.copyWith(color: colors.generalForegroundTertiary),
+                ),
+              ],
+            ),
+          ),
+          Column(
+            crossAxisAlignment: CrossAxisAlignment.end,
+            children: [
+              Text(
+                '\$${holding.costBasis.toStringAsFixed(2)}',
+                style: CoinDCXTypography.numberMd.copyWith(color: colors.generalForegroundPrimary),
+              ),
+              Text(
+                _formatAmount(holding.amount),
+                style: CoinDCXTypography.caption.copyWith(color: colors.generalForegroundTertiary),
+              ),
+              const SizedBox(height: CoinDCXSpacing.xxs),
+              GestureDetector(
+                onTap: () => Navigator.pushNamed(context, '/chat'),
+                child: Container(
+                  padding: const EdgeInsets.symmetric(horizontal: CoinDCXSpacing.sm, vertical: CoinDCXSpacing.xxxs),
+                  decoration: BoxDecoration(
+                    color: colors.negativeBackgroundSecondary,
+                    borderRadius: BorderRadius.circular(CoinDCXSpacing.radiusFull),
+                  ),
+                  child: Text('Sell', style: CoinDCXTypography.caption.copyWith(color: colors.negativeBackgroundPrimary, fontWeight: FontWeight.w600)),
+                ),
+              ),
+            ],
+          ),
+        ],
+      ),
     );
   }
 
@@ -172,10 +321,10 @@ class PortfolioScreen extends ConsumerWidget {
           Column(
             crossAxisAlignment: CrossAxisAlignment.end,
             children: [
-              Text('\$${(tx.amount * tx.price).toStringAsFixed(2)}',
+              Text('\$${tx.costBasis.toStringAsFixed(2)}',
                 style: CoinDCXTypography.numberSm.copyWith(
                   color: isBuy ? colors.positiveBackgroundPrimary : colors.negativeBackgroundPrimary, fontSize: 11)),
-              Text('${tx.amount.toStringAsFixed(4)} @ \$${tx.price.toStringAsFixed(4)}',
+              Text('${_formatAmount(tx.amount)} @ \$${tx.price.toStringAsFixed(tx.price < 0.01 ? 8 : 4)}',
                 style: CoinDCXTypography.caption.copyWith(color: colors.generalForegroundTertiary, fontSize: 8)),
             ],
           ),
@@ -206,83 +355,10 @@ class PortfolioScreen extends ConsumerWidget {
     );
   }
 
-  Widget _buildPositionCard(BuildContext context, TradeRecord position, CoinDCXColorScheme colors) {
-    return Container(
-      margin: const EdgeInsets.only(bottom: CoinDCXSpacing.xs),
-      padding: const EdgeInsets.all(CoinDCXSpacing.md),
-      decoration: BoxDecoration(
-        color: colors.generalBackgroundBgL2,
-        borderRadius: BorderRadius.circular(CoinDCXSpacing.radiusMd),
-        border: Border.all(color: colors.generalStrokeL1),
-      ),
-      child: Row(
-        children: [
-          Container(
-            width: 40,
-            height: 40,
-            decoration: BoxDecoration(
-              color: position.side == 'buy'
-                  ? colors.positiveBackgroundSecondary
-                  : colors.negativeBackgroundSecondary,
-              borderRadius: BorderRadius.circular(CoinDCXSpacing.radiusFull),
-            ),
-            child: Icon(
-              position.side == 'buy' ? Icons.arrow_upward_rounded : Icons.arrow_downward_rounded,
-              color: position.side == 'buy'
-                  ? colors.positiveBackgroundPrimary
-                  : colors.negativeBackgroundPrimary,
-              size: 20,
-            ),
-          ),
-          const SizedBox(width: CoinDCXSpacing.sm),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  position.symbol.toUpperCase(),
-                  style: CoinDCXTypography.bodyLarge.copyWith(color: colors.generalForegroundPrimary),
-                ),
-                Text(
-                  '${position.side.toUpperCase()} · ${position.chain}',
-                  style: CoinDCXTypography.caption.copyWith(color: colors.generalForegroundTertiary),
-                ),
-              ],
-            ),
-          ),
-          Column(
-            crossAxisAlignment: CrossAxisAlignment.end,
-            children: [
-              Text(
-                '\$${(position.amount * position.price).toStringAsFixed(2)}',
-                style: CoinDCXTypography.numberMd.copyWith(color: colors.generalForegroundPrimary),
-              ),
-              Text(
-                '${position.amount.toStringAsFixed(4)} @ \$${position.price.toStringAsFixed(4)}',
-                style: CoinDCXTypography.caption.copyWith(color: colors.generalForegroundTertiary),
-              ),
-              if (position.side == 'buy') ...[
-                const SizedBox(height: CoinDCXSpacing.xxs),
-                GestureDetector(
-                  onTap: () => Navigator.pushNamed(context, '/chat'),
-                  child: Container(
-                    padding: const EdgeInsets.symmetric(horizontal: CoinDCXSpacing.sm, vertical: CoinDCXSpacing.xxxs),
-                    decoration: BoxDecoration(
-                      color: colors.negativeBackgroundSecondary,
-                      borderRadius: BorderRadius.circular(CoinDCXSpacing.radiusFull),
-                    ),
-                    child: Text('Sell', style: CoinDCXTypography.caption.copyWith(color: colors.negativeBackgroundPrimary, fontWeight: FontWeight.w600)),
-                  ),
-                ),
-              ],
-            ],
-          ),
-        ],
-      ),
-    );
-  }
-
-  double _totalValue(List<TradeRecord> positions) {
-    return positions.fold(0.0, (sum, p) => sum + (p.amount * p.price));
+  String _formatAmount(double amount) {
+    if (amount >= 1000000) return '${(amount / 1000000).toStringAsFixed(2)}M';
+    if (amount >= 1000) return '${(amount / 1000).toStringAsFixed(2)}K';
+    if (amount >= 1) return amount.toStringAsFixed(4);
+    return amount.toStringAsFixed(8);
   }
 }

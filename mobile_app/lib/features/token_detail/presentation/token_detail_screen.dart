@@ -39,7 +39,12 @@ class _TokenDetailScreenState extends ConsumerState<TokenDetailScreen> {
         setState(() => _buyResult = 'Bought \$${amountUsd.toStringAsFixed(0)} of ${token.symbol.toUpperCase()}');
         ref.invalidate(portfolioProvider);
       } else {
-        setState(() => _buyResult = 'Trade failed');
+        try {
+          final body = jsonDecode(response.body) as Map<String, dynamic>;
+          setState(() => _buyResult = body['error'] as String? ?? 'Trade failed (${response.statusCode})');
+        } catch (_) {
+          setState(() => _buyResult = 'Trade failed (${response.statusCode})');
+        }
       }
     } catch (e) {
       setState(() => _buyResult = 'Error: $e');

@@ -111,15 +111,26 @@ const KNOWN_TOKEN_ADDRESSES: Record<string, string> = {
   SOL: 'So11111111111111111111111111111111111111112',
   ETH: '0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2',
   BTC: '0x2260FAC5E5542a773Aa44fBCfeDf7C193bc2C599',
+  TRUMP: '6p6xgHyF7AeE6TZkSmFsko444wqoP15icUSqi2jfGiPN',
   BONK: 'DezXAZ8z7PnrnRJjz3wXBoRgixCa6xjnB7YaB1pPB263',
   WIF: 'EKpQGSJtjMFqKZ9KQanSqYXRcF8fBopzLHYxdM65zcjm',
+  POPCAT: '7GCihgDB8fe6KNjn2MYtkzZcRjQy3t9GHdC8uHYmW2hr',
+  FARTCOIN: '9BB6NFEcjBCtnNLFko2FqVQBq8HHM13kCyYcdQbgpump',
+  JUP: 'JUPyiwrYJFskUPiHa7hkeR8VUtAeFoSYbKedZNsDvCN',
+  RAY: '4k3Dyjzvzp8eMZWUXbBCjEvwSkkk59S5iCNLY3QrkX6R',
+  ORCA: 'orcaEKTdK7LKz57vaAYr9QeNsVEPfiu6QeMU1kektZE',
+  RENDER: 'rndrizKT3MK1iimdxRdWabcF7Zg7AR5T4nud4EkHBof',
+  PYTH: 'HZ1JovNiVvGrGNiiYvEozEVgZ58xaU3RKwX8eACQBCt3',
+  JITO: 'jtojtomepa8beP8AuQc6eXt5FriJwfFMwQx2v2f9mCL',
+  W: '85VBFQZC9TZkfaptBWjvUw7YbZjy52A6mjtPGjstQAmQ',
+  MOODENG: 'ED5nyyWEzpPPiWimP8vYm7sD7TD3LAt3Q3gRTWHzPJBY',
+  AI16Z: 'HeLp6NuQkmYB4pYWo2zYs22mESHXPQYzXbB8n4V98jwC',
+  PENGU: '2zMMhcVQEXDtdE6vsFS7S7D5oUodfJHE8vd1gnBouauv',
   PEPE: '0x6982508145454Ce325dDbE47a25d4ec3d2311933',
   DEGEN: '0x4ed4E862860beD51a9570b96d89aF5E1B0Efefed',
   BRETT: '0x532f27101965dd16442E59d40670FaF5eBB142E4',
   AERO: '0x940181a94A35A4569E4529A3CDfB74e38FD98631',
   ARB: '0x912CE59144191C1204E64559FE8253a0e49E6548',
-  POPCAT: '7GCihgDB8fe6KNjn2MYtkzZcRjQy3t9GHdC8uHYmW2hr',
-  FARTCOIN: '9BB6NFEcjBCtnNLFko2FqVQBq8HHM13kCyYcdQbgpump',
   SHIB: '0x95aD61b0a150d79219dCF64E1E6Cc01f0B64C4cE',
   LINK: '0x514910771AF9Ca656af840dff83E8264EcF986CA',
   UNI: '0x1f9840a85d5aF5bf1D1762F925BDADdC4201F984',
@@ -127,17 +138,23 @@ const KNOWN_TOKEN_ADDRESSES: Record<string, string> = {
 };
 
 function pickBestPair(pairs: DexScreenerPair[], symbolHint?: string): DexScreenerPair {
+  let candidates = pairs;
+
   if (symbolHint) {
-    const upper = symbolHint.toUpperCase();
-    const matching = pairs.filter(
-      p => p.baseToken.symbol.toUpperCase() === upper
-        || p.baseToken.symbol.toUpperCase() === `W${upper}`
-    );
-    if (matching.length > 0) {
-      return matching.sort((a, b) => (b.liquidity?.usd ?? 0) - (a.liquidity?.usd ?? 0))[0];
-    }
+    const upper = symbolHint.trim().toUpperCase();
+    const matching = pairs.filter(p => {
+      const sym = p.baseToken.symbol.trim().toUpperCase();
+      return sym === upper || sym === `W${upper}`;
+    });
+    if (matching.length > 0) candidates = matching;
   }
-  return pairs.sort((a, b) => (b.liquidity?.usd ?? 0) - (a.liquidity?.usd ?? 0))[0];
+
+  // Prefer Solana pairs when available (this is a Solana-focused app)
+  const solanaPairs = candidates.filter(p => p.chainId === 'solana');
+  if (solanaPairs.length > 0) candidates = solanaPairs;
+
+  // Sort by 24h volume (more reliable than liquidity which can be inflated)
+  return candidates.sort((a, b) => (b.volume?.h24 ?? 0) - (a.volume?.h24 ?? 0))[0];
 }
 
 function pairToMetrics(pair: DexScreenerPair, symbolOverride?: string): TokenMetrics {
@@ -195,7 +212,10 @@ export async function searchToken(query: string): Promise<{ metrics: TokenMetric
     const data = await res.json() as { pairs?: DexScreenerPair[] };
     if (!data.pairs || data.pairs.length === 0) return null;
 
-    const best = pickBestPair(data.pairs, upper);
+    // Filter to Solana pairs first; fall back to all pairs if none on Solana
+    const solanaPairs = data.pairs.filter(p => p.chainId === 'solana');
+    const searchPool = solanaPairs.length > 0 ? solanaPairs : data.pairs;
+    const best = pickBestPair(searchPool, upper);
     return { metrics: pairToMetrics(best, upper), address: best.baseToken.address ?? null };
   } catch (e) {
     log.warn({ err: e, query }, 'DexScreener search failed');
@@ -758,6 +778,10 @@ export async function fetchBirdeyeOverview(mintAddress: string): Promise<{
   trade24hCount: number;
   uniqueWallets24h: number;
   buyPressure: number;
+  volume24h: number;
+  holderCount: number;
+  liquidity: number;
+  marketCap: number;
 } | null> {
   const apiKey = process.env.BIRDEYE_API_KEY;
   if (!apiKey) return null;
@@ -773,6 +797,11 @@ export async function fetchBirdeyeOverview(mintAddress: string): Promise<{
         uniqueWallet24h?: number;
         buy24h?: number;
         sell24h?: number;
+        v24hUSD?: number;
+        holder?: number;
+        liquidity?: number;
+        mc?: number;
+        realMc?: number;
       };
     };
 
@@ -787,6 +816,10 @@ export async function fetchBirdeyeOverview(mintAddress: string): Promise<{
       trade24hCount: d.trade24h ?? 0,
       uniqueWallets24h: d.uniqueWallet24h ?? 0,
       buyPressure: total > 0 ? Math.round((buys / total) * 100) : 50,
+      volume24h: d.v24hUSD ?? 0,
+      holderCount: d.holder ?? 0,
+      liquidity: d.liquidity ?? 0,
+      marketCap: d.realMc ?? d.mc ?? 0,
     };
   } catch (e) {
     log.warn({ err: e, mintAddress }, 'Birdeye overview failed');
@@ -880,6 +913,12 @@ async function enrichWithSecurity(metrics: TokenMetrics, contractAddress: string
       enriched.trade24hCount = birdeyeOverview.trade24hCount;
       enriched.uniqueWallets24h = birdeyeOverview.uniqueWallets24h;
       enriched.buyPressure = birdeyeOverview.buyPressure;
+
+      // Birdeye aggregates volume/liquidity/mcap across ALL DEXes — more accurate than single-pair DexScreener data
+      if (birdeyeOverview.volume24h > 0) enriched.volume24h = birdeyeOverview.volume24h;
+      if (birdeyeOverview.liquidity > 0) enriched.liquidity = birdeyeOverview.liquidity;
+      if (birdeyeOverview.marketCap > 0) enriched.marketCap = birdeyeOverview.marketCap;
+      if (birdeyeOverview.holderCount > enriched.holders) enriched.holders = birdeyeOverview.holderCount;
     }
 
     // Helius gives us raw top holder addresses
