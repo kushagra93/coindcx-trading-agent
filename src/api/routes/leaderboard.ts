@@ -1,141 +1,120 @@
 import type { FastifyInstance } from 'fastify';
-import type { LeadTrader, CopyConfig } from '../../core/types.js';
-import { v4 as uuid } from 'uuid';
-
-// In-memory stores (production: PostgreSQL)
-const leadTraders = new Map<string, LeadTrader>();
-const copyConfigs = new Map<string, CopyConfig>(); // key: `${userId}:${leadTraderId}`
-
-// Seed sample lead traders for development
-function seedLeadTraders() {
-  if (leadTraders.size > 0) return;
-
-  const samples: LeadTrader[] = [
-    {
-      id: 'lt-001',
-      name: 'SolanaWhale',
-      walletAddresses: { solana: 'DummyAddress1', ethereum: '', polygon: '', base: '', arbitrum: '', hyperliquid: '' },
-      pnl30d: 18.5,
-      pnl90d: 42.3,
-      winRate: 0.72,
-      maxDrawdown: -8.2,
-      sharpeRatio: 2.1,
-      copiersCount: 234,
-      aumUsd: 1_500_000,
-      trackRecordDays: 120,
-      verified: true,
-    },
-    {
-      id: 'lt-002',
-      name: 'DeFiMaster',
-      walletAddresses: { solana: '', ethereum: 'DummyAddress2', polygon: 'DummyAddress3', base: '', arbitrum: '', hyperliquid: '' },
-      pnl30d: 12.1,
-      pnl90d: 35.8,
-      winRate: 0.68,
-      maxDrawdown: -12.5,
-      sharpeRatio: 1.8,
-      copiersCount: 156,
-      aumUsd: 800_000,
-      trackRecordDays: 90,
-      verified: true,
-    },
-  ];
-
-  for (const trader of samples) {
-    leadTraders.set(trader.id, trader);
-  }
-}
+import { fetchTopTraders, fetchKOLs, type TopTrader } from '../../data/token-screener.js';
+import {
+  startCopyTrading,
+  stopCopyTrading,
+  pauseCopyTrading,
+  resumeCopyTrading,
+  getCopyConfigs,
+  getCopyConfig,
+  getRecentActivity,
+  type CopyTradeConfig,
+  type BuyMode,
+  type SellMethod,
+} from '../../data/copy-engine.js';
 
 export async function leaderboardRoutes(app: FastifyInstance) {
-  seedLeadTraders();
 
-  // Get leaderboard (ranked by Sharpe ratio)
-  app.get<{ Querystring: { sort?: string; page?: string; limit?: string } }>(
+  // Live leaderboard powered by GMGN
+  app.get<{ Querystring: { sort?: string; period?: string; limit?: string } }>(
     '/api/v1/leaderboard',
     async (request) => {
-      const sort = request.query.sort ?? 'sharpe';
-      const page = parseInt(request.query.page ?? '1');
-      const limit = Math.min(parseInt(request.query.limit ?? '20'), 50);
+      const period = (request.query.period === '30d' ? '30d' : '7d') as '7d' | '30d';
+      const sortMap: Record<string, any> = {
+        pnl: period === '30d' ? 'pnl_30d' : 'pnl_7d',
+        winrate: period === '30d' ? 'winrate_30d' as any : 'winrate_7d' as any,
+        profit: 'realized_profit_7d',
+      };
+      const orderBy = sortMap[request.query.sort ?? 'pnl'] ?? 'pnl_7d';
+      const limit = Math.min(parseInt(request.query.limit ?? '30'), 50);
 
-      let traders = Array.from(leadTraders.values())
-        .filter(t => t.verified && t.trackRecordDays >= 30);
-
-      // Sort
-      switch (sort) {
-        case 'pnl30d': traders.sort((a, b) => b.pnl30d - a.pnl30d); break;
-        case 'pnl90d': traders.sort((a, b) => b.pnl90d - a.pnl90d); break;
-        case 'winRate': traders.sort((a, b) => b.winRate - a.winRate); break;
-        case 'copiers': traders.sort((a, b) => b.copiersCount - a.copiersCount); break;
-        default: traders.sort((a, b) => b.sharpeRatio - a.sharpeRatio);
-      }
-
-      const start = (page - 1) * limit;
-      const paginated = traders.slice(start, start + limit);
+      const traders = await fetchTopTraders(period, orderBy);
 
       return {
-        traders: paginated.map(t => ({
-          id: t.id,
-          name: t.name,
-          pnl30d: t.pnl30d,
-          pnl90d: t.pnl90d,
-          winRate: t.winRate,
-          maxDrawdown: t.maxDrawdown,
-          sharpeRatio: t.sharpeRatio,
-          copiersCount: t.copiersCount,
-          aumUsd: t.aumUsd,
-          verified: t.verified,
-        })),
-        pagination: { page, limit, total: traders.length },
+        traders: traders.slice(0, limit),
+        period,
+        total: traders.length,
       };
     }
   );
 
-  // Get trader profile
-  app.get<{ Params: { id: string } }>('/api/v1/leaderboard/:id', async (request) => {
-    const trader = leadTraders.get(request.params.id);
-    if (!trader) {
-      return { error: 'Trader not found' };
-    }
-    return { trader };
+  // KOL-only leaderboard
+  app.get('/api/v1/leaderboard/kols', async () => {
+    const kols = await fetchKOLs();
+    return { traders: kols, total: kols.length };
   });
 
-  // One-click copy
+  // Start copy trading with full config
   app.post<{
-    Params: { leaderId: string };
-    Body: { budgetUsd: number; maxPerTradePct?: number };
-  }>('/api/v1/copy/:leaderId', async (request) => {
-    const userId = (request as any).userId as string;
-    const leader = leadTraders.get(request.params.leaderId);
+    Body: {
+      walletAddress: string;
+      walletName?: string;
+      buyMode?: BuyMode;
+      buyAmount?: number;
+      sellMethod?: SellMethod;
+    };
+  }>('/api/v1/copy', async (request) => {
+    const { walletAddress, walletName, buyMode, buyAmount, sellMethod } = request.body ?? {};
+    if (!walletAddress) return { error: 'walletAddress is required' };
 
-    if (!leader) {
-      return { error: 'Leader not found' };
-    }
-
-    const key = `${userId}:${leader.id}`;
-    const copyConfig: CopyConfig = {
-      userId,
-      leadTraderId: leader.id,
-      budgetUsd: request.body.budgetUsd,
-      maxPerTradePct: request.body.maxPerTradePct ?? 10,
+    const config: CopyTradeConfig = {
+      walletAddress,
+      walletName: walletName || `${walletAddress.slice(0, 6)}...${walletAddress.slice(-4)}`,
+      buyMode: buyMode || 'fixed_buy',
+      buyAmount: buyAmount ?? 50,
+      sellMethod: sellMethod || 'mirror_sell',
       enabled: true,
-      createdAt: new Date(),
+      createdAt: Date.now(),
+      totalCopied: 0,
+      totalPnl: 0,
     };
 
-    copyConfigs.set(key, copyConfig);
-
-    return { message: 'Copy trading started', config: copyConfig };
+    const result = startCopyTrading(config);
+    return { message: 'Copy trading started', config: result };
   });
 
-  // Stop copying
-  app.delete<{ Params: { leaderId: string } }>('/api/v1/copy/:leaderId', async (request) => {
-    const userId = (request as any).userId as string;
-    const key = `${userId}:${request.params.leaderId}`;
+  // Stop copying a wallet
+  app.delete<{ Params: { wallet: string } }>('/api/v1/copy/:wallet', async (request) => {
+    const wallet = request.params.wallet;
+    const stopped = stopCopyTrading(wallet);
+    if (!stopped) return { error: 'Not copying this wallet' };
+    return { message: 'Stopped copy-trading', wallet };
+  });
 
-    if (!copyConfigs.has(key)) {
-      return { error: 'Not copying this leader' };
+  // Pause copy trading
+  app.post<{ Params: { wallet: string } }>('/api/v1/copy/:wallet/pause', async (request) => {
+    const paused = pauseCopyTrading(request.params.wallet);
+    if (!paused) return { error: 'Not copying this wallet' };
+    return { message: 'Copy trading paused', wallet: request.params.wallet };
+  });
+
+  // Resume copy trading
+  app.post<{ Params: { wallet: string } }>('/api/v1/copy/:wallet/resume', async (request) => {
+    const resumed = resumeCopyTrading(request.params.wallet);
+    if (!resumed) return { error: 'Not copying this wallet' };
+    return { message: 'Copy trading resumed', wallet: request.params.wallet };
+  });
+
+  // List all copy trade configs
+  app.get('/api/v1/copy', async () => {
+    const configs = getCopyConfigs();
+    return { following: configs, total: configs.length };
+  });
+
+  // Get single copy config
+  app.get<{ Params: { wallet: string } }>('/api/v1/copy/:wallet', async (request) => {
+    const config = getCopyConfig(request.params.wallet);
+    if (!config) return { error: 'Not copying this wallet' };
+    return { config };
+  });
+
+  // Recent copy trade activity feed
+  app.get<{ Querystring: { limit?: string; wallet?: string } }>(
+    '/api/v1/copy/activity',
+    async (request) => {
+      const limit = Math.min(parseInt(request.query.limit ?? '20'), 50);
+      const activities = getRecentActivity(limit, request.query.wallet);
+      return { activities, total: activities.length };
     }
-
-    copyConfigs.delete(key);
-    return { message: 'Copy trading stopped' };
-  });
+  );
 }

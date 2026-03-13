@@ -58,7 +58,8 @@ class _TokenDetailScreenState extends ConsumerState<TokenDetailScreen> {
   @override
   Widget build(BuildContext context) {
     final colors = CoinDCXTheme.of(context);
-    final screeningAsync = ref.watch(tokenScreenProvider(token.symbol));
+    final screenKey = (token.address != null && token.address!.isNotEmpty) ? token.address! : token.symbol;
+    final screeningAsync = ref.watch(tokenScreenProvider(screenKey));
 
     return Scaffold(
       backgroundColor: colors.generalBackgroundBgL1,
@@ -84,7 +85,7 @@ class _TokenDetailScreenState extends ConsumerState<TokenDetailScreen> {
         actions: [
           IconButton(
             icon: const Icon(Icons.refresh_rounded),
-            onPressed: () => ref.invalidate(tokenScreenProvider(token.symbol)),
+            onPressed: () => ref.invalidate(tokenScreenProvider(screenKey)),
           ),
         ],
       ),
@@ -655,7 +656,10 @@ class _TokenDetailScreenState extends ConsumerState<TokenDetailScreen> {
         children: [
           Text('Screening unavailable', style: CoinDCXTypography.bodySmall.copyWith(color: colors.negativeBackgroundPrimary)),
           const Spacer(),
-          TextButton(onPressed: () => ref.invalidate(tokenScreenProvider(token.symbol)), child: const Text('Retry')),
+          TextButton(onPressed: () {
+            final key = (token.address != null && token.address!.isNotEmpty) ? token.address! : token.symbol;
+            ref.invalidate(tokenScreenProvider(key));
+          }, child: const Text('Retry')),
         ],
       ),
     );

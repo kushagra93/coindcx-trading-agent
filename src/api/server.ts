@@ -42,7 +42,7 @@ export async function createServer() {
   app.addHook('onRequest', async (request, reply) => {
     // Skip auth for health checks and public API routes (hackathon mode)
     if (request.url === '/health' || request.url === '/ready') return;
-    if (request.url.startsWith('/api/v1/tokens/') || request.url.startsWith('/api/v1/chat') || request.url.startsWith('/api/v1/trade/') || request.url.startsWith('/api/v1/proxy/')) return;
+    if (request.url.startsWith('/api/v1/tokens/') || request.url.startsWith('/api/v1/chat') || request.url.startsWith('/api/v1/trade/') || request.url.startsWith('/api/v1/proxy/') || request.url.startsWith('/api/v1/leaderboard') || request.url.startsWith('/api/v1/copy')) return;
 
     const authHeader = request.headers.authorization;
     if (!authHeader?.startsWith('Bearer ')) {

@@ -22,11 +22,18 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
   void initState() {
     super.initState();
     _messages.add(ChatMessage(
-      text: 'Hey! I\'m your AI trading agent. I can discover tokens, run safety audits, '
-          'trade, and manage your portfolio. Try "trending", "screen SOL", "portfolio", or "buy ETH \$200".',
+      text: 'Hey! I\'m your **AI trading agent** for Web3. Here\'s what I can do:\n\n'
+          '**Discover** — trending tokens, hot picks, real-time prices\n'
+          '**Screen** — full safety audit (rug check, mint authority, LP burn, top holders, insiders)\n'
+          '**Trade** — buy & sell tokens with one message (dry-run mode)\n'
+          '**Portfolio** — track your holdings, P&L, and trade history\n'
+          '**Leaderboard** — top Solana traders ranked by PnL & win rate (via GMGN)\n'
+          '**KOL Tracking** — follow crypto influencer wallets & see their trades\n'
+          '**Copy Trading** — mirror any top trader\'s buys/sells automatically\n\n'
+          'Paste any **contract address** and I\'ll auto-screen it. Just ask!',
       isUser: false,
       timestamp: DateTime.now(),
-      suggestions: ['trending', 'portfolio', 'screen SOL', 'help'],
+      suggestions: ['trending', 'leaderboard', 'kol wallets', 'copy trade #1', 'portfolio'],
     ));
   }
 
@@ -165,6 +172,9 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
       case 'trade_preview': return _buildTradePreviewCard(card.data, colors);
       case 'trade_executed': return _buildTradeExecutedCard(card.data, colors);
       case 'portfolio': return _buildPortfolioCard(card.data, colors);
+      case 'leaderboard': return _buildLeaderboardCard(card.data, colors);
+      case 'copy_trade_config': return _buildCopyTradeConfigCard(card.data, colors);
+      case 'copy_trade_manager': return _buildCopyTradeManagerCard(card.data, colors);
       default: return const SizedBox.shrink();
     }
   }
@@ -532,6 +542,547 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
               padding: const EdgeInsets.only(top: CoinDCXSpacing.xs),
               child: Text('No positions yet', style: CoinDCXTypography.bodySmall.copyWith(color: colors.generalForegroundTertiary)),
             ),
+        ],
+      ),
+    );
+  }
+
+  // ── Leaderboard card ───────────────────────────────────────────────
+
+  Widget _buildLeaderboardCard(Map<String, dynamic> data, CoinDCXColorScheme colors) {
+    final traders = (data['traders'] as List<dynamic>?) ?? [];
+    final title = data['title'] as String? ?? 'Top Solana Traders (7d)';
+    final isKol = title.toLowerCase().contains('kol');
+
+    return Container(
+      width: double.infinity,
+      margin: const EdgeInsets.only(top: CoinDCXSpacing.xs),
+      padding: const EdgeInsets.all(CoinDCXSpacing.sm),
+      decoration: BoxDecoration(
+        color: colors.generalBackgroundBgL3,
+        borderRadius: BorderRadius.circular(CoinDCXSpacing.radiusSm),
+        border: Border.all(color: (isKol ? Colors.purple : colors.actionBackgroundPrimary).withValues(alpha: 0.3)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Icon(isKol ? Icons.star_rounded : Icons.emoji_events_rounded, size: 16, color: isKol ? Colors.purple : Colors.amber),
+              const SizedBox(width: 4),
+              Expanded(child: Text(title, style: CoinDCXTypography.buttonSm.copyWith(color: colors.generalForegroundPrimary))),
+              Text('via GMGN', style: CoinDCXTypography.caption.copyWith(color: colors.generalForegroundTertiary, fontSize: 9)),
+            ],
+          ),
+          const SizedBox(height: CoinDCXSpacing.sm),
+          // Column headers
+          Padding(
+            padding: const EdgeInsets.only(bottom: 4),
+            child: Row(
+              children: [
+                SizedBox(width: 22, child: Text('#', style: CoinDCXTypography.caption.copyWith(color: colors.generalForegroundTertiary, fontSize: 9))),
+                Expanded(child: Text('Wallet', style: CoinDCXTypography.caption.copyWith(color: colors.generalForegroundTertiary, fontSize: 9))),
+                SizedBox(width: 70, child: Text('PnL 7d', style: CoinDCXTypography.caption.copyWith(color: colors.generalForegroundTertiary, fontSize: 9), textAlign: TextAlign.right)),
+                SizedBox(width: 40, child: Text('Win%', style: CoinDCXTypography.caption.copyWith(color: colors.generalForegroundTertiary, fontSize: 9), textAlign: TextAlign.right)),
+                const SizedBox(width: 50),
+              ],
+            ),
+          ),
+          ...traders.take(10).map((t) {
+            final trader = t as Map<String, dynamic>;
+            final rank = trader['rank'] as int? ?? 0;
+            final addr = trader['walletAddress'] as String? ?? '';
+            final name = trader['name'] as String? ?? '';
+            final twitter = trader['twitterUsername'] as String? ?? '';
+            final pnl = (trader['pnl7d'] as num?)?.toDouble() ?? 0;
+            final wr = (trader['winRate7d'] as num?)?.toDouble() ?? 0;
+            final tags = (trader['tags'] as List<dynamic>?)?.cast<String>() ?? [];
+            final shortAddr = addr.length > 10 ? '${addr.substring(0, 4)}...${addr.substring(addr.length - 4)}' : addr;
+            final displayName = name.isNotEmpty ? name : shortAddr;
+            final hasTwitter = twitter.isNotEmpty;
+            final isTop3 = rank <= 3;
+
+            return InkWell(
+              onTap: () { _controller.text = 'copy trade $shortAddr'; _sendMessage(); },
+              child: Padding(
+                padding: const EdgeInsets.symmetric(vertical: 3),
+                child: Row(
+                  children: [
+                    SizedBox(
+                      width: 22,
+                      child: Text(
+                        isTop3 ? ['', '\u{1F947}', '\u{1F948}', '\u{1F949}'][rank] : '$rank',
+                        style: CoinDCXTypography.buttonSm.copyWith(
+                          color: isTop3 ? Colors.amber : colors.generalForegroundSecondary,
+                          fontSize: isTop3 ? 14 : 11,
+                        ),
+                      ),
+                    ),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(displayName, style: CoinDCXTypography.buttonSm.copyWith(
+                            color: colors.generalForegroundPrimary, fontSize: 11), overflow: TextOverflow.ellipsis),
+                          Row(
+                            children: [
+                              if (hasTwitter) ...[
+                                Text('@$twitter', style: CoinDCXTypography.caption.copyWith(
+                                  color: const Color(0xFF1DA1F2), fontSize: 8)),
+                                const SizedBox(width: 4),
+                              ],
+                              if (tags.isNotEmpty)
+                                Text(tags.where((t) => t == 'kol' || t == 'smart_degen' || t == 'top_followed').join(' · '),
+                                  style: CoinDCXTypography.caption.copyWith(
+                                    color: colors.actionBackgroundPrimary, fontSize: 8)),
+                            ],
+                          ),
+                        ],
+                      ),
+                    ),
+                    SizedBox(
+                      width: 70,
+                      child: Text(
+                        '\$${_formatLargeNum(pnl)}',
+                        style: CoinDCXTypography.numberSm.copyWith(
+                          color: pnl >= 0 ? colors.positiveBackgroundPrimary : colors.negativeBackgroundPrimary,
+                          fontSize: 11, fontWeight: FontWeight.w600),
+                        textAlign: TextAlign.right,
+                      ),
+                    ),
+                    SizedBox(
+                      width: 40,
+                      child: Text(
+                        '${(wr * 100).toStringAsFixed(0)}%',
+                        style: CoinDCXTypography.numberSm.copyWith(color: colors.generalForegroundSecondary, fontSize: 11),
+                        textAlign: TextAlign.right,
+                      ),
+                    ),
+                    const SizedBox(width: 6),
+                    Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                      decoration: BoxDecoration(
+                        color: (isKol ? Colors.purple : colors.actionBackgroundPrimary).withValues(alpha: 0.15),
+                        borderRadius: BorderRadius.circular(4),
+                      ),
+                      child: Text(isKol ? 'FOLLOW' : 'COPY', style: CoinDCXTypography.caption.copyWith(
+                        color: isKol ? Colors.purple : colors.actionBackgroundPrimary, fontSize: 8, fontWeight: FontWeight.w600)),
+                    ),
+                  ],
+                ),
+              ),
+            );
+          }),
+        ],
+      ),
+    );
+  }
+
+  // ── Copy Trade Config card (triggers modal) ───────────────────────
+
+  Widget _buildCopyTradeConfigCard(Map<String, dynamic> data, CoinDCXColorScheme colors) {
+    final walletAddress = data['walletAddress'] as String? ?? '';
+    final walletName = data['walletName'] as String? ?? '';
+    final defaults = data['defaults'] as Map<String, dynamic>? ?? {};
+
+    return Container(
+      width: double.infinity,
+      margin: const EdgeInsets.only(top: CoinDCXSpacing.xs),
+      padding: const EdgeInsets.all(CoinDCXSpacing.sm),
+      decoration: BoxDecoration(
+        gradient: LinearGradient(
+          colors: [colors.actionBackgroundPrimary.withValues(alpha: 0.08), colors.generalBackgroundBgL3],
+          begin: Alignment.topLeft, end: Alignment.bottomRight,
+        ),
+        borderRadius: BorderRadius.circular(CoinDCXSpacing.radiusSm),
+        border: Border.all(color: colors.actionBackgroundPrimary.withValues(alpha: 0.3)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Icon(Icons.content_copy_rounded, size: 16, color: colors.actionBackgroundPrimary),
+              const SizedBox(width: 4),
+              Text('Copy Trade Setup', style: CoinDCXTypography.buttonSm.copyWith(color: colors.actionBackgroundPrimary)),
+            ],
+          ),
+          const SizedBox(height: CoinDCXSpacing.xs),
+          Row(
+            children: [
+              _buildMiniIconFallback(walletName, colors, 32),
+              const SizedBox(width: CoinDCXSpacing.xs),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(walletName, style: CoinDCXTypography.buttonSm.copyWith(color: colors.generalForegroundPrimary)),
+                    Text(walletAddress.length > 12
+                      ? '${walletAddress.substring(0, 6)}...${walletAddress.substring(walletAddress.length - 4)}'
+                      : walletAddress,
+                      style: CoinDCXTypography.caption.copyWith(color: colors.generalForegroundTertiary, fontSize: 10)),
+                  ],
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: CoinDCXSpacing.sm),
+          SizedBox(
+            width: double.infinity,
+            child: ElevatedButton.icon(
+              onPressed: () => _showCopyTradeModal(walletAddress, walletName, defaults),
+              icon: const Icon(Icons.tune_rounded, size: 16),
+              label: Text('Configure Copy Trade', style: CoinDCXTypography.buttonSm.copyWith(color: Colors.white)),
+              style: ElevatedButton.styleFrom(
+                backgroundColor: colors.actionBackgroundPrimary,
+                minimumSize: const Size(double.infinity, 42),
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(CoinDCXSpacing.radiusSm)),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  void _showCopyTradeModal(String walletAddress, String walletName, Map<String, dynamic> defaults) {
+    String buyMode = defaults['buyMode'] as String? ?? 'fixed_buy';
+    double buyAmount = (defaults['buyAmount'] as num?)?.toDouble() ?? 50;
+    String sellMethod = defaults['sellMethod'] as String? ?? 'mirror_sell';
+    final amountController = TextEditingController(text: buyAmount.toStringAsFixed(0));
+    final colors = CoinDCXTheme.of(context);
+
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, setModalState) => Container(
+          padding: EdgeInsets.only(
+            left: CoinDCXSpacing.md, right: CoinDCXSpacing.md,
+            top: CoinDCXSpacing.md, bottom: MediaQuery.of(ctx).viewInsets.bottom + CoinDCXSpacing.lg,
+          ),
+          decoration: BoxDecoration(
+            color: colors.generalBackgroundBgL2,
+            borderRadius: const BorderRadius.vertical(top: Radius.circular(20)),
+          ),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Center(
+                child: Container(width: 40, height: 4,
+                  decoration: BoxDecoration(color: colors.generalStrokeL1, borderRadius: BorderRadius.circular(2))),
+              ),
+              const SizedBox(height: CoinDCXSpacing.md),
+              Row(
+                children: [
+                  Icon(Icons.content_copy_rounded, size: 20, color: colors.actionBackgroundPrimary),
+                  const SizedBox(width: CoinDCXSpacing.xs),
+                  Expanded(
+                    child: Text('Copy Trade: $walletName',
+                      style: CoinDCXTypography.heading3.copyWith(color: colors.generalForegroundPrimary, fontSize: 16)),
+                  ),
+                ],
+              ),
+              const SizedBox(height: CoinDCXSpacing.md),
+
+              // Buy Mode
+              Text('Buy Mode', style: CoinDCXTypography.buttonSm.copyWith(color: colors.generalForegroundSecondary)),
+              const SizedBox(height: CoinDCXSpacing.xs),
+              Row(
+                children: [
+                  _modeChip('Fixed Buy', 'fixed_buy', buyMode, colors, (v) => setModalState(() => buyMode = v)),
+                  const SizedBox(width: CoinDCXSpacing.xs),
+                  _modeChip('Max Buy', 'max_buy', buyMode, colors, (v) => setModalState(() => buyMode = v)),
+                  const SizedBox(width: CoinDCXSpacing.xs),
+                  _modeChip('Ratio', 'fixed_ratio', buyMode, colors, (v) => setModalState(() => buyMode = v)),
+                ],
+              ),
+              const SizedBox(height: CoinDCXSpacing.sm),
+
+              // Buy Amount
+              Text(
+                buyMode == 'fixed_ratio' ? 'Copy Ratio (0.0 - 1.0)' : 'Amount (USD)',
+                style: CoinDCXTypography.buttonSm.copyWith(color: colors.generalForegroundSecondary),
+              ),
+              const SizedBox(height: CoinDCXSpacing.xs),
+              TextField(
+                controller: amountController,
+                keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                style: CoinDCXTypography.numberMd.copyWith(color: colors.generalForegroundPrimary),
+                decoration: InputDecoration(
+                  prefixText: buyMode == 'fixed_ratio' ? '' : '\$ ',
+                  prefixStyle: CoinDCXTypography.numberMd.copyWith(color: colors.generalForegroundTertiary),
+                  filled: true,
+                  fillColor: colors.generalBackgroundBgL3,
+                  border: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(CoinDCXSpacing.radiusSm),
+                    borderSide: BorderSide(color: colors.generalStrokeL1),
+                  ),
+                  contentPadding: const EdgeInsets.symmetric(horizontal: CoinDCXSpacing.sm, vertical: CoinDCXSpacing.sm),
+                ),
+                onChanged: (v) => buyAmount = double.tryParse(v) ?? buyAmount,
+              ),
+              const SizedBox(height: CoinDCXSpacing.sm),
+
+              // Sell Method
+              Text('Sell Method', style: CoinDCXTypography.buttonSm.copyWith(color: colors.generalForegroundSecondary)),
+              const SizedBox(height: CoinDCXSpacing.xs),
+              Row(
+                children: [
+                  _modeChip('Mirror Sells', 'mirror_sell', sellMethod, colors, (v) => setModalState(() => sellMethod = v)),
+                  const SizedBox(width: CoinDCXSpacing.xs),
+                  _modeChip('Manual Only', 'manual', sellMethod, colors, (v) => setModalState(() => sellMethod = v)),
+                ],
+              ),
+              const SizedBox(height: CoinDCXSpacing.sm),
+
+              // Info box
+              Container(
+                padding: const EdgeInsets.all(CoinDCXSpacing.sm),
+                decoration: BoxDecoration(
+                  color: colors.alertBackgroundPrimary.withValues(alpha: 0.08),
+                  borderRadius: BorderRadius.circular(CoinDCXSpacing.radiusSm),
+                  border: Border.all(color: colors.alertBackgroundPrimary.withValues(alpha: 0.2)),
+                ),
+                child: Row(
+                  children: [
+                    Icon(Icons.info_outline, size: 14, color: colors.alertBackgroundPrimary),
+                    const SizedBox(width: CoinDCXSpacing.xs),
+                    Expanded(child: Text('Trades are simulated (dry run mode). No real funds at risk.',
+                      style: CoinDCXTypography.caption.copyWith(color: colors.alertBackgroundPrimary, fontSize: 10))),
+                  ],
+                ),
+              ),
+              const SizedBox(height: CoinDCXSpacing.md),
+
+              // Confirm button
+              SizedBox(
+                width: double.infinity,
+                child: ElevatedButton(
+                  onPressed: () async {
+                    Navigator.of(ctx).pop();
+                    await _confirmCopyTrade(walletAddress, walletName, buyMode, double.tryParse(amountController.text) ?? buyAmount, sellMethod);
+                  },
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: colors.positiveBackgroundPrimary,
+                    minimumSize: const Size(double.infinity, 48),
+                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(CoinDCXSpacing.radiusSm)),
+                  ),
+                  child: Text('Start Copy Trading', style: CoinDCXTypography.buttonMd.copyWith(color: Colors.white)),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _modeChip(String label, String value, String selected, CoinDCXColorScheme colors, ValueChanged<String> onTap) {
+    final isSelected = value == selected;
+    return Expanded(
+      child: GestureDetector(
+        onTap: () => onTap(value),
+        child: Container(
+          padding: const EdgeInsets.symmetric(vertical: CoinDCXSpacing.xs),
+          decoration: BoxDecoration(
+            color: isSelected ? colors.actionBackgroundPrimary : colors.generalBackgroundBgL3,
+            borderRadius: BorderRadius.circular(CoinDCXSpacing.radiusSm),
+            border: Border.all(color: isSelected ? colors.actionBackgroundPrimary : colors.generalStrokeL1),
+          ),
+          child: Center(child: Text(label, style: CoinDCXTypography.buttonSm.copyWith(
+            color: isSelected ? Colors.white : colors.generalForegroundSecondary, fontSize: 11))),
+        ),
+      ),
+    );
+  }
+
+  Future<void> _confirmCopyTrade(String walletAddress, String walletName, String buyMode, double buyAmount, String sellMethod) async {
+    setState(() => _isLoading = true);
+    try {
+      final api = ref.read(apiClientProvider);
+      final response = await api.post('/api/v1/chat/copy-confirm', body: {
+        'walletAddress': walletAddress,
+        'walletName': walletName,
+        'buyMode': buyMode,
+        'buyAmount': buyAmount,
+        'sellMethod': sellMethod,
+      });
+      final reply = ChatMessage.fromApiResponse(response);
+      setState(() => _messages.add(reply));
+    } catch (e) {
+      setState(() => _messages.add(ChatMessage(
+        text: 'Failed to start copy trading. Try again.',
+        isUser: false, timestamp: DateTime.now(),
+      )));
+    } finally {
+      setState(() => _isLoading = false);
+      _scrollToBottom();
+    }
+  }
+
+  // ── Copy Trade Manager card ──────────────────────────────────────
+
+  Widget _buildCopyTradeManagerCard(Map<String, dynamic> data, CoinDCXColorScheme colors) {
+    final configs = (data['configs'] as List<dynamic>?) ?? [];
+    final activities = (data['recentActivity'] as List<dynamic>?) ?? [];
+
+    return Container(
+      width: double.infinity,
+      margin: const EdgeInsets.only(top: CoinDCXSpacing.xs),
+      padding: const EdgeInsets.all(CoinDCXSpacing.sm),
+      decoration: BoxDecoration(
+        color: colors.generalBackgroundBgL3,
+        borderRadius: BorderRadius.circular(CoinDCXSpacing.radiusSm),
+        border: Border.all(color: colors.actionBackgroundPrimary.withValues(alpha: 0.3)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Icon(Icons.content_copy_rounded, size: 16, color: colors.actionBackgroundPrimary),
+              const SizedBox(width: 4),
+              Text('My Copy Trades', style: CoinDCXTypography.buttonSm.copyWith(color: colors.generalForegroundPrimary)),
+              const Spacer(),
+              Text('${configs.length} active', style: CoinDCXTypography.caption.copyWith(
+                color: colors.actionBackgroundPrimary, fontSize: 10)),
+            ],
+          ),
+          const SizedBox(height: CoinDCXSpacing.sm),
+
+          // Active configs
+          ...configs.map((c) {
+            final config = c as Map<String, dynamic>;
+            final addr = config['walletAddress'] as String? ?? '';
+            final name = config['walletName'] as String? ?? '';
+            final enabled = config['enabled'] as bool? ?? true;
+            final buyMode = config['buyMode'] as String? ?? '';
+            final buyAmt = (config['buyAmount'] as num?)?.toDouble() ?? 0;
+            final sellMeth = config['sellMethod'] as String? ?? '';
+            final copied = (config['totalCopied'] as num?)?.toDouble() ?? 0;
+            final shortAddr = addr.length > 10 ? '${addr.substring(0, 6)}...${addr.substring(addr.length - 4)}' : addr;
+
+            return Container(
+              margin: const EdgeInsets.only(bottom: CoinDCXSpacing.xs),
+              padding: const EdgeInsets.all(CoinDCXSpacing.xs),
+              decoration: BoxDecoration(
+                color: colors.generalBackgroundBgL2,
+                borderRadius: BorderRadius.circular(CoinDCXSpacing.radiusSm),
+                border: Border.all(color: enabled
+                  ? colors.positiveBackgroundPrimary.withValues(alpha: 0.2)
+                  : colors.generalStrokeL1),
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    children: [
+                      Container(
+                        width: 8, height: 8,
+                        decoration: BoxDecoration(
+                          color: enabled ? colors.positiveBackgroundPrimary : colors.generalForegroundTertiary,
+                          shape: BoxShape.circle,
+                        ),
+                      ),
+                      const SizedBox(width: 6),
+                      Expanded(
+                        child: Text(name.isNotEmpty ? name : shortAddr,
+                          style: CoinDCXTypography.buttonSm.copyWith(color: colors.generalForegroundPrimary, fontSize: 12)),
+                      ),
+                      // Pause/Resume toggle
+                      GestureDetector(
+                        onTap: () {
+                          final cmd = enabled ? 'pause' : 'resume';
+                          _controller.text = '$cmd copy $addr';
+                          _sendMessage();
+                        },
+                        child: Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                          decoration: BoxDecoration(
+                            color: (enabled ? colors.alertBackgroundPrimary : colors.positiveBackgroundPrimary).withValues(alpha: 0.12),
+                            borderRadius: BorderRadius.circular(4),
+                          ),
+                          child: Text(enabled ? 'PAUSE' : 'RESUME',
+                            style: CoinDCXTypography.caption.copyWith(
+                              color: enabled ? colors.alertBackgroundPrimary : colors.positiveBackgroundPrimary,
+                              fontSize: 9, fontWeight: FontWeight.w600)),
+                        ),
+                      ),
+                      const SizedBox(width: 4),
+                      // Stop button
+                      GestureDetector(
+                        onTap: () { _controller.text = 'stop copy $addr'; _sendMessage(); },
+                        child: Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                          decoration: BoxDecoration(
+                            color: colors.negativeBackgroundPrimary.withValues(alpha: 0.12),
+                            borderRadius: BorderRadius.circular(4),
+                          ),
+                          child: Text('STOP', style: CoinDCXTypography.caption.copyWith(
+                            color: colors.negativeBackgroundPrimary, fontSize: 9, fontWeight: FontWeight.w600)),
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 4),
+                  Row(
+                    children: [
+                      Text('$buyMode · \$${buyAmt.toStringAsFixed(0)} · $sellMeth',
+                        style: CoinDCXTypography.caption.copyWith(color: colors.generalForegroundTertiary, fontSize: 9)),
+                      const Spacer(),
+                      Text('Copied: \$${copied.toStringAsFixed(0)}',
+                        style: CoinDCXTypography.caption.copyWith(
+                          color: colors.positiveBackgroundPrimary, fontSize: 9, fontWeight: FontWeight.w600)),
+                    ],
+                  ),
+                ],
+              ),
+            );
+          }),
+
+          // Recent activity feed
+          if (activities.isNotEmpty) ...[
+            const SizedBox(height: CoinDCXSpacing.xs),
+            Text('Recent Activity', style: CoinDCXTypography.caption.copyWith(
+              color: colors.generalForegroundTertiary, fontSize: 10, fontWeight: FontWeight.w600)),
+            const SizedBox(height: 4),
+            ...activities.take(5).map((a) {
+              final act = a as Map<String, dynamic>;
+              final token = act['tokenSymbol'] as String? ?? '';
+              final side = act['side'] as String? ?? '';
+              final amount = (act['copyAmountUsd'] as num?)?.toDouble() ?? 0;
+              final status = act['status'] as String? ?? '';
+              final skipReason = act['skipReason'] as String? ?? '';
+              final isSkipped = status == 'skipped';
+
+              return Padding(
+                padding: const EdgeInsets.symmetric(vertical: 1),
+                child: Row(
+                  children: [
+                    Icon(
+                      isSkipped ? Icons.block_rounded : (side == 'buy' ? Icons.arrow_upward_rounded : Icons.arrow_downward_rounded),
+                      size: 10,
+                      color: isSkipped
+                        ? colors.generalForegroundTertiary
+                        : (side == 'buy' ? colors.positiveBackgroundPrimary : colors.negativeBackgroundPrimary),
+                    ),
+                    const SizedBox(width: 4),
+                    Text('${side.toUpperCase()} $token',
+                      style: CoinDCXTypography.caption.copyWith(color: colors.generalForegroundPrimary, fontSize: 9)),
+                    const Spacer(),
+                    if (isSkipped)
+                      Text(skipReason, style: CoinDCXTypography.caption.copyWith(color: colors.generalForegroundTertiary, fontSize: 8))
+                    else
+                      Text('\$${amount.toStringAsFixed(0)}',
+                        style: CoinDCXTypography.caption.copyWith(color: colors.positiveBackgroundPrimary, fontSize: 9)),
+                  ],
+                ),
+              );
+            }),
+          ],
         ],
       ),
     );

@@ -91,7 +91,7 @@ class _DiscoveryScreenState extends ConsumerState<DiscoveryScreen> {
 
   Widget _buildLoadedView(List<TokenMetrics> tokens, CoinDCXColorScheme colors) {
     final sorted = _sortedTokens(tokens);
-    final hotTokens = sorted.where((t) => _getChangeForFilter(t) > 0).take(5).toList();
+    final hotTokens = sorted.where((t) => _getChangeForFilter(t) > 0).take(12).toList();
 
     return CustomScrollView(
       slivers: [
@@ -150,10 +150,11 @@ class _DiscoveryScreenState extends ConsumerState<DiscoveryScreen> {
           ),
           SliverToBoxAdapter(
             child: SizedBox(
-              height: 110,
+              height: 130,
               child: ListView.separated(
                 padding: const EdgeInsets.symmetric(horizontal: CoinDCXSpacing.md),
                 scrollDirection: Axis.horizontal,
+                physics: const BouncingScrollPhysics(),
                 itemCount: hotTokens.length,
                 separatorBuilder: (_, __) => const SizedBox(width: CoinDCXSpacing.sm),
                 itemBuilder: (context, i) => _buildHotCard(hotTokens[i], colors),
@@ -227,16 +228,21 @@ class _DiscoveryScreenState extends ConsumerState<DiscoveryScreen> {
     final change = _getChangeForFilter(token);
     final isPositive = change >= 0;
     final buys = token.txnsBuys24h ?? 0;
+    final mcap = token.marketCap;
 
     return GestureDetector(
       onTap: () => Navigator.pushNamed(context, '/token-detail', arguments: token),
       child: Container(
-        width: 155,
+        width: 150,
         padding: const EdgeInsets.all(CoinDCXSpacing.sm),
         decoration: BoxDecoration(
           color: colors.generalBackgroundBgL2,
           borderRadius: BorderRadius.circular(CoinDCXSpacing.radiusMd),
-          border: Border.all(color: colors.generalStrokeL2),
+          border: Border.all(
+            color: isPositive
+                ? colors.positiveBackgroundPrimary.withValues(alpha: 0.25)
+                : colors.generalStrokeL2,
+          ),
         ),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
@@ -249,12 +255,12 @@ class _DiscoveryScreenState extends ConsumerState<DiscoveryScreen> {
                   color: colors.positiveBackgroundPrimary.withValues(alpha: 0.15),
                   borderRadius: BorderRadius.circular(4),
                 ),
-                child: Text('$buys+ bought last 24h',
+                child: Text('$buys+ buys in 24h',
                   style: CoinDCXTypography.caption.copyWith(color: colors.positiveBackgroundPrimary, fontSize: 8)),
               ),
             Row(
               children: [
-                _buildTokenIcon(token, colors, size: 30),
+                _buildTokenIcon(token, colors, size: 28),
                 const SizedBox(width: CoinDCXSpacing.xs),
                 Expanded(
                   child: Column(
@@ -263,7 +269,7 @@ class _DiscoveryScreenState extends ConsumerState<DiscoveryScreen> {
                       Text(token.symbol.toUpperCase(),
                         style: CoinDCXTypography.buttonSm.copyWith(color: colors.generalForegroundPrimary, fontSize: 12),
                         overflow: TextOverflow.ellipsis),
-                      Text(token.name.length > 12 ? '${token.name.substring(0, 12)}...' : token.name,
+                      Text(token.name.length > 14 ? '${token.name.substring(0, 14)}...' : token.name,
                         style: CoinDCXTypography.caption.copyWith(color: colors.generalForegroundTertiary, fontSize: 9),
                         overflow: TextOverflow.ellipsis),
                     ],
@@ -271,11 +277,14 @@ class _DiscoveryScreenState extends ConsumerState<DiscoveryScreen> {
                 ),
               ],
             ),
-            const Spacer(),
+            const SizedBox(height: 6),
             Text('${isPositive ? '+' : ''}${change.toStringAsFixed(2)}%',
               style: CoinDCXTypography.numberMd.copyWith(
                 color: isPositive ? colors.positiveBackgroundPrimary : colors.negativeBackgroundPrimary,
                 fontSize: 16, fontWeight: FontWeight.w700)),
+            const Spacer(),
+            Text('MCap ${_formatCompact(mcap)}',
+              style: CoinDCXTypography.caption.copyWith(color: colors.generalForegroundTertiary, fontSize: 9)),
           ],
         ),
       ),
