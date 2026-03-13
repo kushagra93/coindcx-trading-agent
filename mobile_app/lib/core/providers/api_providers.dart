@@ -44,13 +44,10 @@ final tokenScreenProvider = FutureProvider.family<ScreeningResult?, String>((ref
   return ScreeningResult.fromJson(response);
 });
 
-final portfolioProvider = FutureProvider<List<TradeRecord>>((ref) async {
+final portfolioProvider = FutureProvider<PortfolioData>((ref) async {
   final api = ref.read(apiClientProvider);
   final response = await api.get('/api/v1/trade/portfolio');
-  final trades = (response['trades'] as List<dynamic>?)
-      ?.map((p) => TradeRecord.fromJson(p as Map<String, dynamic>))
-      .toList();
-  return trades ?? [];
+  return PortfolioData.fromJson(response);
 });
 
 // ─── Portfolio raw response (for trades list) ───────────────

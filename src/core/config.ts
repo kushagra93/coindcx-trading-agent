@@ -53,6 +53,7 @@ export interface AppConfig {
     rpcUrl: string;
     wsUrl: string;
     heliusApiKey: string;
+    privateKey: string;
   };
 
   evm: {
@@ -179,9 +180,10 @@ export function loadConfig(): AppConfig {
     },
 
     solana: {
-      rpcUrl: envOrDefault('SOLANA_RPC_URL', 'https://api.devnet.solana.com'),
-      wsUrl: envOrDefault('SOLANA_WS_URL', 'wss://api.devnet.solana.com'),
+      rpcUrl: envOrDefault('SOLANA_RPC_URL', ''),
+      wsUrl: envOrDefault('SOLANA_WS_URL', ''),
       heliusApiKey: envOrDefault('HELIUS_API_KEY', ''),
+      privateKey: envOrDefault('SOLANA_PRIVATE_KEY', ''),
     },
 
     evm: {

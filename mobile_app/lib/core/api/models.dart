@@ -181,6 +181,7 @@ class ChatMessage {
   final List<ChatCard>? cards;
   final List<String>? suggestions;
   final DateTime timestamp;
+  final bool isWelcome;
 
   const ChatMessage({
     required this.text,
@@ -188,6 +189,7 @@ class ChatMessage {
     this.cards,
     this.suggestions,
     required this.timestamp,
+    this.isWelcome = false,
   });
 
   factory ChatMessage.fromApiResponse(Map<String, dynamic> json) {
@@ -264,6 +266,9 @@ class TradeRecord {
   final String chain;
   final int timestamp;
   final String? txHash;
+  final String? txUrl;
+  final double costBasis;
+  final int tradeCount;
 
   const TradeRecord({
     required this.id,
@@ -275,11 +280,14 @@ class TradeRecord {
     required this.chain,
     required this.timestamp,
     this.txHash,
+    this.txUrl,
+    this.costBasis = 0,
+    this.tradeCount = 1,
   });
 
   factory TradeRecord.fromJson(Map<String, dynamic> json) {
     return TradeRecord(
-      id: json['id'] as String? ?? '',
+      id: json['id'] as String? ?? json['symbol'] as String? ?? '',
       symbol: json['symbol'] as String? ?? '',
       side: json['side'] as String? ?? '',
       amount: (json['amount'] as num?)?.toDouble()
@@ -289,8 +297,84 @@ class TradeRecord {
       price: (json['price'] as num?)?.toDouble() ?? 0.0,
       status: json['status'] as String? ?? '',
       chain: json['chain'] as String? ?? '',
-      timestamp: (json['timestamp'] as num?)?.toInt() ?? DateTime.now().millisecondsSinceEpoch,
+      timestamp: (json['timestamp'] as num?)?.toInt()
+          ?? (json['lastBuyAt'] as num?)?.toInt()
+          ?? (json['firstBuyAt'] as num?)?.toInt()
+          ?? DateTime.now().millisecondsSinceEpoch,
       txHash: json['txHash'] as String?,
+      txUrl: json['txUrl'] as String?,
+      costBasis: (json['costBasis'] as num?)?.toDouble() ?? (json['amountUsd'] as num?)?.toDouble() ?? 0,
+      tradeCount: (json['tradeCount'] as num?)?.toInt() ?? 1,
+    );
+  }
+}
+
+class WalletBalance {
+  final String symbol;
+  final double uiAmount;
+  final String mint;
+
+  const WalletBalance({required this.symbol, required this.uiAmount, required this.mint});
+
+  factory WalletBalance.fromJson(Map<String, dynamic> json) {
+    return WalletBalance(
+      symbol: json['symbol'] as String? ?? '',
+      uiAmount: (json['uiAmount'] as num?)?.toDouble() ?? 0,
+      mint: json['mint'] as String? ?? '',
+    );
+  }
+}
+
+class WalletInfo {
+  final String publicKey;
+  final double sol;
+  final List<WalletBalance> tokens;
+  final String? viewUrl;
+
+  const WalletInfo({required this.publicKey, required this.sol, required this.tokens, this.viewUrl});
+
+  factory WalletInfo.fromJson(Map<String, dynamic> json) {
+    final tokens = (json['tokens'] as List<dynamic>?)
+        ?.map((t) => WalletBalance.fromJson(t as Map<String, dynamic>))
+        .toList() ?? [];
+    return WalletInfo(
+      publicKey: json['publicKey'] as String? ?? '',
+      sol: (json['sol'] as num?)?.toDouble() ?? 0,
+      tokens: tokens,
+      viewUrl: json['viewUrl'] as String?,
+    );
+  }
+}
+
+class PortfolioData {
+  final List<TradeRecord> holdings;
+  final List<TradeRecord> history;
+  final double totalInvested;
+  final double totalSold;
+  final WalletInfo? wallet;
+
+  const PortfolioData({
+    required this.holdings,
+    required this.history,
+    required this.totalInvested,
+    required this.totalSold,
+    this.wallet,
+  });
+
+  factory PortfolioData.fromJson(Map<String, dynamic> json) {
+    final holdings = (json['positions'] as List<dynamic>?)
+        ?.map((p) => TradeRecord.fromJson(p as Map<String, dynamic>))
+        .toList() ?? [];
+    final history = (json['history'] as List<dynamic>?)
+        ?.map((t) => TradeRecord.fromJson(t as Map<String, dynamic>))
+        .toList() ?? [];
+    final walletJson = json['wallet'] as Map<String, dynamic>?;
+    return PortfolioData(
+      holdings: holdings,
+      history: history,
+      totalInvested: (json['totalInvested'] as num?)?.toDouble() ?? 0,
+      totalSold: (json['totalSold'] as num?)?.toDouble() ?? 0,
+      wallet: walletJson != null ? WalletInfo.fromJson(walletJson) : null,
     );
   }
 }
