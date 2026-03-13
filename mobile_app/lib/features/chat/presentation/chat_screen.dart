@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../../core/api/api_client.dart';
 import '../../../core/api/models.dart';
@@ -22,18 +23,17 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
   void initState() {
     super.initState();
     _messages.add(ChatMessage(
-      text: 'Hey! I\'m your **AI trading agent** for Web3. Here\'s what I can do:\n\n'
-          '**Discover** — trending tokens, hot picks, real-time prices\n'
-          '**Screen** — full safety audit (rug check, mint authority, LP burn, top holders, insiders)\n'
-          '**Trade** — buy & sell tokens with one message (dry-run mode)\n'
-          '**Portfolio** — track your holdings, P&L, and trade history\n'
-          '**Leaderboard** — top Solana traders ranked by PnL & win rate (via GMGN)\n'
-          '**KOL Tracking** — follow crypto influencer wallets & see their trades\n'
-          '**Copy Trading** — mirror any top trader\'s buys/sells automatically\n\n'
-          'Paste any **contract address** and I\'ll auto-screen it. Just ask!',
+      text: 'Hey! I\'m your **AI trading agent** — talk to me like a friend, I understand natural language.\n\n'
+          '🔄 **Trade** — _"buy SOL \$200"_ or _"ape 500 into ETH"_\n'
+          '📊 **Smart Rules** — _"buy SOL when it drops 40%"_ or _"buy when RSI below 30"_\n'
+          '📈 **TA Indicators** — _"RSI SOL"_ or _"technical analysis ETH"_\n'
+          '🔍 **Discover** — _"new tokens today"_, _"trending"_, _"low cap gems"_\n'
+          '🛡️ **Screen** — paste any **contract address** to auto-audit\n'
+          '🧠 **Smart Money** — _"leaderboard"_, _"copy trade #1"_\n\n'
+          'Type **help** for the full command guide. Let\'s trade!',
       isUser: false,
       timestamp: DateTime.now(),
-      suggestions: ['trending', 'leaderboard', 'kol wallets', 'copy trade #1', 'portfolio'],
+      suggestions: ['trending', 'RSI SOL', 'new tokens today', 'leaderboard', 'help'],
     ));
   }
 
@@ -92,7 +92,29 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
   Widget build(BuildContext context) {
     final colors = CoinDCXTheme.of(context);
     return Scaffold(
-      appBar: AppBar(title: const Text('AI Assistant')),
+      appBar: AppBar(
+        title: Row(
+          children: [
+            Container(
+              width: 28, height: 28,
+              decoration: BoxDecoration(
+                gradient: const LinearGradient(colors: [Color(0xFF6366f1), Color(0xFF8b5cf6)]),
+                borderRadius: BorderRadius.circular(8),
+              ),
+              child: const Icon(Icons.auto_awesome, size: 16, color: Colors.white),
+            ),
+            const SizedBox(width: 8),
+            Text('CoinDCX Agent', style: CoinDCXTypography.heading3.copyWith(
+              color: colors.generalForegroundPrimary, fontSize: 16)),
+          ],
+        ),
+        actions: [
+          IconButton(
+            icon: Icon(Icons.help_outline_rounded, color: colors.generalForegroundSecondary, size: 20),
+            onPressed: () { _controller.text = 'help'; _sendMessage(); },
+          ),
+        ],
+      ),
       body: Column(
         children: [
           Expanded(
@@ -106,6 +128,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
               },
             ),
           ),
+          _buildPersistentSuggestions(colors),
           _buildInputBar(colors),
         ],
       ),
@@ -175,6 +198,12 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
       case 'leaderboard': return _buildLeaderboardCard(card.data, colors);
       case 'copy_trade_config': return _buildCopyTradeConfigCard(card.data, colors);
       case 'copy_trade_manager': return _buildCopyTradeManagerCard(card.data, colors);
+      case 'limit_orders': return _buildLimitOrdersCard(card.data, colors);
+      case 'dca_plan': return _buildDCAPlanCard(card.data, colors);
+      case 'price_alert': return _buildPriceAlertCard(card.data, colors);
+      case 'ta_indicators': return _buildTAIndicatorsCard(card.data, colors);
+      case 'conditional_rule': return _buildConditionalRuleCard(card.data, colors);
+      case 'smart_discovery': return _buildSmartDiscoveryCard(card.data, colors);
       default: return const SizedBox.shrink();
     }
   }
@@ -218,6 +247,23 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
                         Text(symbol, style: CoinDCXTypography.buttonSm.copyWith(color: colors.generalForegroundPrimary, fontSize: 12)),
                         Text('${chain.toUpperCase()} · MCap ${_formatLargeNum(mcap)}',
                           style: CoinDCXTypography.caption.copyWith(color: colors.generalForegroundTertiary, fontSize: 9)),
+                        if (t['address'] != null && (t['address'] as String).isNotEmpty)
+                          GestureDetector(
+                            onTap: () {
+                              Clipboard.setData(ClipboardData(text: t['address'] as String));
+                              ScaffoldMessenger.of(context).showSnackBar(
+                                SnackBar(content: Text('$symbol address copied'), duration: const Duration(seconds: 1), behavior: SnackBarBehavior.floating),
+                              );
+                            },
+                            child: Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                Text(_truncAddr(t['address'] as String), style: CoinDCXTypography.caption.copyWith(color: colors.actionBackgroundPrimary, fontSize: 8)),
+                                const SizedBox(width: 2),
+                                Icon(Icons.copy_rounded, size: 8, color: colors.actionBackgroundPrimary),
+                              ],
+                            ),
+                          ),
                       ],
                     ),
                   ),
@@ -311,6 +357,26 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
               Text('$score/100', style: CoinDCXTypography.numberSm.copyWith(color: colors.generalForegroundSecondary)),
             ],
           ),
+          if (token['address'] != null && (token['address'] as String).isNotEmpty) ...[
+            const SizedBox(height: CoinDCXSpacing.xxs),
+            GestureDetector(
+              onTap: () {
+                Clipboard.setData(ClipboardData(text: token['address'] as String));
+                ScaffoldMessenger.of(context).showSnackBar(
+                  SnackBar(content: Text('$symbol address copied'), duration: const Duration(seconds: 1), behavior: SnackBarBehavior.floating),
+                );
+              },
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Text('CA: ${_truncAddr(token['address'] as String)}',
+                    style: CoinDCXTypography.caption.copyWith(color: colors.actionBackgroundPrimary, fontSize: 10)),
+                  const SizedBox(width: 4),
+                  Icon(Icons.copy_rounded, size: 10, color: colors.actionBackgroundPrimary),
+                ],
+              ),
+            ),
+          ],
           if (allFlags.isNotEmpty) ...[
             const SizedBox(height: CoinDCXSpacing.xs),
             ...allFlags.take(4).map((r) {
@@ -1088,6 +1154,630 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
     );
   }
 
+  // ── Limit Orders card ─────────────────────────────────────────────
+
+  Widget _buildLimitOrdersCard(Map<String, dynamic> data, CoinDCXColorScheme colors) {
+    final orders = (data['orders'] as List<dynamic>?) ?? [];
+    if (orders.isEmpty) return const SizedBox.shrink();
+
+    return Container(
+      width: double.infinity,
+      margin: const EdgeInsets.only(top: CoinDCXSpacing.xs),
+      padding: const EdgeInsets.all(CoinDCXSpacing.sm),
+      decoration: BoxDecoration(
+        color: colors.generalBackgroundBgL3,
+        borderRadius: BorderRadius.circular(CoinDCXSpacing.radiusSm),
+        border: Border.all(color: colors.alertBackgroundPrimary.withValues(alpha: 0.3)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Icon(Icons.schedule_rounded, size: 16, color: colors.alertBackgroundPrimary),
+              const SizedBox(width: 4),
+              Text('Limit Orders', style: CoinDCXTypography.buttonSm.copyWith(color: colors.generalForegroundPrimary)),
+              const Spacer(),
+              Text('${orders.length} active', style: CoinDCXTypography.caption.copyWith(color: colors.alertBackgroundPrimary, fontSize: 10)),
+            ],
+          ),
+          const SizedBox(height: CoinDCXSpacing.xs),
+          ...orders.map((o) {
+            final order = o as Map<String, dynamic>;
+            final token = order['token'] as String? ?? '';
+            final type = order['orderType'] as String? ?? '';
+            final trigger = (order['triggerPrice'] as num?)?.toDouble() ?? 0;
+            final created = (order['currentPriceAtCreation'] as num?)?.toDouble() ?? 0;
+            final amount = (order['amountUsd'] as num?)?.toDouble() ?? 0;
+            final status = order['status'] as String? ?? 'active';
+
+            final typeLabel = type == 'take_profit' ? 'TP' : type == 'stop_loss' ? 'SL' : type == 'limit_buy' ? 'LB' : 'LS';
+            final typeColor = (type == 'take_profit' || type == 'limit_sell')
+                ? colors.positiveBackgroundPrimary : colors.negativeBackgroundPrimary;
+            final pctChange = created > 0 ? ((trigger - created) / created * 100) : 0.0;
+
+            return Container(
+              margin: const EdgeInsets.only(bottom: 4),
+              padding: const EdgeInsets.all(CoinDCXSpacing.xs),
+              decoration: BoxDecoration(
+                color: colors.generalBackgroundBgL2,
+                borderRadius: BorderRadius.circular(CoinDCXSpacing.radiusSm),
+              ),
+              child: Row(
+                children: [
+                  Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                    decoration: BoxDecoration(color: typeColor.withValues(alpha: 0.15), borderRadius: BorderRadius.circular(4)),
+                    child: Text(typeLabel, style: CoinDCXTypography.caption.copyWith(color: typeColor, fontSize: 9, fontWeight: FontWeight.w700)),
+                  ),
+                  const SizedBox(width: 6),
+                  Text(token, style: CoinDCXTypography.buttonSm.copyWith(color: colors.generalForegroundPrimary, fontSize: 12)),
+                  const Spacer(),
+                  Column(
+                    crossAxisAlignment: CrossAxisAlignment.end,
+                    children: [
+                      Text(_formatPrice(trigger), style: CoinDCXTypography.numberSm.copyWith(color: typeColor, fontSize: 11)),
+                      Text('${pctChange >= 0 ? '+' : ''}${pctChange.toStringAsFixed(1)}% · \$${amount.toStringAsFixed(0)}',
+                        style: CoinDCXTypography.caption.copyWith(color: colors.generalForegroundTertiary, fontSize: 9)),
+                    ],
+                  ),
+                  if (status == 'active') ...[
+                    const SizedBox(width: 6),
+                    GestureDetector(
+                      onTap: () { _controller.text = 'cancel order ${order['id']}'; _sendMessage(); },
+                      child: Icon(Icons.close_rounded, size: 14, color: colors.generalForegroundTertiary),
+                    ),
+                  ],
+                ],
+              ),
+            );
+          }),
+        ],
+      ),
+    );
+  }
+
+  // ── DCA Plan card ───────────────────────────────────────────────────
+
+  Widget _buildDCAPlanCard(Map<String, dynamic> data, CoinDCXColorScheme colors) {
+    final token = data['token'] as String? ?? '';
+    final amountPerBuy = (data['amountPerBuy'] as num?)?.toDouble() ?? 0;
+    final intervalMs = (data['intervalMs'] as num?)?.toInt() ?? 0;
+    final totalBuys = (data['totalBuys'] as num?)?.toInt() ?? 0;
+    final completedBuys = (data['completedBuys'] as num?)?.toInt() ?? 0;
+    final totalSpent = (data['totalSpent'] as num?)?.toDouble() ?? 0;
+    final status = data['status'] as String? ?? 'active';
+    final planId = data['id'] as String? ?? '';
+
+    final intervalHours = intervalMs > 0 ? (intervalMs / 3600000).round() : 24;
+    final intervalLabel = intervalHours >= 24 ? '${(intervalHours / 24).round()}d' : '${intervalHours}h';
+    final totalCost = amountPerBuy * totalBuys;
+    final progress = totalBuys > 0 ? completedBuys / totalBuys : 0.0;
+
+    return Container(
+      width: double.infinity,
+      margin: const EdgeInsets.only(top: CoinDCXSpacing.xs),
+      padding: const EdgeInsets.all(CoinDCXSpacing.sm),
+      decoration: BoxDecoration(
+        color: colors.generalBackgroundBgL3,
+        borderRadius: BorderRadius.circular(CoinDCXSpacing.radiusSm),
+        border: Border.all(color: colors.actionBackgroundPrimary.withValues(alpha: 0.3)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Icon(Icons.repeat_rounded, size: 16, color: colors.actionBackgroundPrimary),
+              const SizedBox(width: 4),
+              Text('DCA Plan — $token', style: CoinDCXTypography.buttonSm.copyWith(color: colors.generalForegroundPrimary)),
+              const Spacer(),
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                decoration: BoxDecoration(
+                  color: status == 'active' ? colors.positiveBackgroundPrimary.withValues(alpha: 0.15) : colors.generalForegroundTertiary.withValues(alpha: 0.15),
+                  borderRadius: BorderRadius.circular(4),
+                ),
+                child: Text(status.toUpperCase(), style: CoinDCXTypography.caption.copyWith(
+                  color: status == 'active' ? colors.positiveBackgroundPrimary : colors.generalForegroundTertiary,
+                  fontSize: 9, fontWeight: FontWeight.w600)),
+              ),
+            ],
+          ),
+          const SizedBox(height: CoinDCXSpacing.xs),
+          Row(
+            children: [
+              _statChip('Amount', '\$${amountPerBuy.toStringAsFixed(0)}', colors.generalForegroundPrimary, colors),
+              const SizedBox(width: CoinDCXSpacing.md),
+              _statChip('Every', intervalLabel, colors.generalForegroundPrimary, colors),
+              const SizedBox(width: CoinDCXSpacing.md),
+              _statChip('Total', '\$${totalCost.toStringAsFixed(0)}', colors.generalForegroundSecondary, colors),
+            ],
+          ),
+          const SizedBox(height: CoinDCXSpacing.xs),
+          // Progress bar
+          ClipRRect(
+            borderRadius: BorderRadius.circular(4),
+            child: LinearProgressIndicator(
+              value: progress,
+              backgroundColor: colors.generalStrokeL1,
+              color: colors.actionBackgroundPrimary,
+              minHeight: 6,
+            ),
+          ),
+          const SizedBox(height: 4),
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              Text('$completedBuys/$totalBuys buys · \$${totalSpent.toStringAsFixed(0)} spent',
+                style: CoinDCXTypography.caption.copyWith(color: colors.generalForegroundTertiary, fontSize: 9)),
+              if (status == 'active')
+                GestureDetector(
+                  onTap: () { _controller.text = 'pause DCA $planId'; _sendMessage(); },
+                  child: Text('PAUSE', style: CoinDCXTypography.caption.copyWith(
+                    color: colors.alertBackgroundPrimary, fontSize: 9, fontWeight: FontWeight.w600)),
+                ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+
+  // ── Price Alert card ────────────────────────────────────────────────
+
+  Widget _buildPriceAlertCard(Map<String, dynamic> data, CoinDCXColorScheme colors) {
+    final token = data['token'] as String? ?? '';
+    final targetPrice = (data['targetPrice'] as num?)?.toDouble() ?? 0;
+    final direction = data['direction'] as String? ?? 'above';
+    final priceAtCreation = (data['priceAtCreation'] as num?)?.toDouble() ?? 0;
+    final status = data['status'] as String? ?? 'active';
+    final alertId = data['id'] as String? ?? '';
+
+    final isAbove = direction == 'above';
+    final pctAway = priceAtCreation > 0 ? ((targetPrice - priceAtCreation) / priceAtCreation * 100) : 0.0;
+    final dirColor = isAbove ? colors.positiveBackgroundPrimary : colors.negativeBackgroundPrimary;
+
+    return Container(
+      width: double.infinity,
+      margin: const EdgeInsets.only(top: CoinDCXSpacing.xs),
+      padding: const EdgeInsets.all(CoinDCXSpacing.sm),
+      decoration: BoxDecoration(
+        color: colors.generalBackgroundBgL3,
+        borderRadius: BorderRadius.circular(CoinDCXSpacing.radiusSm),
+        border: Border.all(color: dirColor.withValues(alpha: 0.3)),
+      ),
+      child: Row(
+        children: [
+          Icon(Icons.notifications_active_rounded, size: 20, color: dirColor),
+          const SizedBox(width: CoinDCXSpacing.xs),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text('$token — ${isAbove ? "Above" : "Below"} ${_formatPrice(targetPrice)}',
+                  style: CoinDCXTypography.buttonSm.copyWith(color: colors.generalForegroundPrimary)),
+                Text('Current: ${_formatPrice(priceAtCreation)} · ${pctAway >= 0 ? '+' : ''}${pctAway.toStringAsFixed(1)}% away',
+                  style: CoinDCXTypography.caption.copyWith(color: colors.generalForegroundTertiary, fontSize: 9)),
+              ],
+            ),
+          ),
+          if (status == 'active')
+            GestureDetector(
+              onTap: () { _controller.text = 'cancel alert $alertId'; _sendMessage(); },
+              child: Container(
+                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                decoration: BoxDecoration(
+                  color: colors.negativeBackgroundPrimary.withValues(alpha: 0.12),
+                  borderRadius: BorderRadius.circular(4),
+                ),
+                child: Text('CANCEL', style: CoinDCXTypography.caption.copyWith(
+                  color: colors.negativeBackgroundPrimary, fontSize: 9, fontWeight: FontWeight.w600)),
+              ),
+            )
+          else
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+              decoration: BoxDecoration(
+                color: colors.positiveBackgroundPrimary.withValues(alpha: 0.12),
+                borderRadius: BorderRadius.circular(4),
+              ),
+              child: Text('TRIGGERED', style: CoinDCXTypography.caption.copyWith(
+                color: colors.positiveBackgroundPrimary, fontSize: 9, fontWeight: FontWeight.w600)),
+            ),
+        ],
+      ),
+    );
+  }
+
+  // ── TA Indicators card ─────────────────────────────────────────────
+
+  Widget _buildTAIndicatorsCard(Map<String, dynamic> data, CoinDCXColorScheme colors) {
+    final token = data['token'] as String? ?? '';
+    final rsi = (data['rsi14'] as num?)?.toDouble() ?? 0;
+    final macdData = data['macd'] as Map<String, dynamic>? ?? {};
+    final macd = (macdData['macd'] as num?)?.toDouble() ?? 0;
+    final signal = (macdData['signal'] as num?)?.toDouble() ?? 0;
+    final histogram = (macdData['histogram'] as num?)?.toDouble() ?? 0;
+    final bbData = data['bollinger'] as Map<String, dynamic>? ?? {};
+    final bbUpper = (bbData['upper'] as num?)?.toDouble() ?? 0;
+    final bbLower = (bbData['lower'] as num?)?.toDouble() ?? 0;
+    final bbBandwidth = (bbData['bandwidth'] as num?)?.toDouble() ?? 0;
+    final price = (data['price'] as num?)?.toDouble() ?? 0;
+    final sma20 = (data['sma20'] as num?)?.toDouble() ?? 0;
+    final sma50 = (data['sma50'] as num?)?.toDouble() ?? 0;
+    final volumeSpike = data['volumeSpike'] as bool? ?? false;
+    final goldenCross = data['goldenCross'] as bool? ?? false;
+    final deathCross = data['deathCross'] as bool? ?? false;
+
+    final rsiColor = rsi < 30 ? colors.positiveBackgroundPrimary : rsi > 70 ? colors.negativeBackgroundPrimary : colors.alertBackgroundPrimary;
+    final rsiLabel = rsi < 30 ? 'OVERSOLD' : rsi > 70 ? 'OVERBOUGHT' : 'NEUTRAL';
+    final macdColor = histogram > 0 ? colors.positiveBackgroundPrimary : colors.negativeBackgroundPrimary;
+    final trendColor = sma20 > sma50 ? colors.positiveBackgroundPrimary : colors.negativeBackgroundPrimary;
+    final trendLabel = sma20 > sma50 ? 'BULLISH' : 'BEARISH';
+
+    return Container(
+      width: double.infinity,
+      margin: const EdgeInsets.only(top: CoinDCXSpacing.xs),
+      padding: const EdgeInsets.all(CoinDCXSpacing.sm),
+      decoration: BoxDecoration(
+        gradient: LinearGradient(
+          colors: [const Color(0xFF1a1a2e), const Color(0xFF16213e)],
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+        ),
+        borderRadius: BorderRadius.circular(CoinDCXSpacing.radiusSm),
+        border: Border.all(color: const Color(0xFF0f3460).withValues(alpha: 0.5)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              const Icon(Icons.candlestick_chart_rounded, size: 16, color: Color(0xFF00d2ff)),
+              const SizedBox(width: 4),
+              Text('Technical Analysis — $token', style: CoinDCXTypography.buttonSm.copyWith(color: const Color(0xFF00d2ff))),
+              const Spacer(),
+              Text(_formatPrice(price), style: CoinDCXTypography.numberSm.copyWith(color: colors.generalForegroundPrimary)),
+            ],
+          ),
+          const SizedBox(height: CoinDCXSpacing.sm),
+
+          // RSI gauge
+          Row(
+            children: [
+              Text('RSI (14)', style: CoinDCXTypography.caption.copyWith(color: colors.generalForegroundTertiary, fontSize: 10)),
+              const Spacer(),
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                decoration: BoxDecoration(color: rsiColor.withValues(alpha: 0.15), borderRadius: BorderRadius.circular(4)),
+                child: Text(rsiLabel, style: CoinDCXTypography.caption.copyWith(color: rsiColor, fontSize: 8, fontWeight: FontWeight.w700)),
+              ),
+              const SizedBox(width: 6),
+              Text(rsi.toStringAsFixed(1), style: CoinDCXTypography.numberSm.copyWith(color: rsiColor, fontSize: 14, fontWeight: FontWeight.w700)),
+            ],
+          ),
+          const SizedBox(height: 4),
+          ClipRRect(
+            borderRadius: BorderRadius.circular(4),
+            child: SizedBox(
+              height: 6,
+              child: Stack(
+                children: [
+                  Container(
+                    decoration: BoxDecoration(
+                      gradient: LinearGradient(colors: [
+                        colors.positiveBackgroundPrimary,
+                        colors.alertBackgroundPrimary,
+                        colors.negativeBackgroundPrimary,
+                      ]),
+                    ),
+                  ),
+                  Positioned(
+                    left: (rsi.clamp(0, 100) / 100) * (MediaQuery.of(context).size.width * 0.7),
+                    child: Container(
+                      width: 3, height: 6,
+                      decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(2)),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+          const SizedBox(height: CoinDCXSpacing.sm),
+
+          // MACD & Trend
+          Row(
+            children: [
+              Expanded(
+                child: Container(
+                  padding: const EdgeInsets.all(CoinDCXSpacing.xs),
+                  decoration: BoxDecoration(
+                    color: macdColor.withValues(alpha: 0.08),
+                    borderRadius: BorderRadius.circular(CoinDCXSpacing.radiusSm),
+                  ),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text('MACD', style: CoinDCXTypography.caption.copyWith(color: colors.generalForegroundTertiary, fontSize: 9)),
+                      Text(histogram > 0 ? 'BULLISH' : 'BEARISH', style: CoinDCXTypography.buttonSm.copyWith(color: macdColor, fontSize: 11)),
+                      Text('H: ${histogram > 0 ? "+" : ""}${histogram.toStringAsFixed(6)}',
+                        style: CoinDCXTypography.caption.copyWith(color: colors.generalForegroundSecondary, fontSize: 8)),
+                    ],
+                  ),
+                ),
+              ),
+              const SizedBox(width: CoinDCXSpacing.xs),
+              Expanded(
+                child: Container(
+                  padding: const EdgeInsets.all(CoinDCXSpacing.xs),
+                  decoration: BoxDecoration(
+                    color: trendColor.withValues(alpha: 0.08),
+                    borderRadius: BorderRadius.circular(CoinDCXSpacing.radiusSm),
+                  ),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text('Trend', style: CoinDCXTypography.caption.copyWith(color: colors.generalForegroundTertiary, fontSize: 9)),
+                      Text(trendLabel, style: CoinDCXTypography.buttonSm.copyWith(color: trendColor, fontSize: 11)),
+                      Text('SMA20 vs SMA50',
+                        style: CoinDCXTypography.caption.copyWith(color: colors.generalForegroundSecondary, fontSize: 8)),
+                    ],
+                  ),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: CoinDCXSpacing.xs),
+
+          // Bollinger Bands
+          Container(
+            padding: const EdgeInsets.all(CoinDCXSpacing.xs),
+            decoration: BoxDecoration(
+              color: colors.generalBackgroundBgL2.withValues(alpha: 0.5),
+              borderRadius: BorderRadius.circular(CoinDCXSpacing.radiusSm),
+            ),
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text('Bollinger Bands', style: CoinDCXTypography.caption.copyWith(color: colors.generalForegroundTertiary, fontSize: 9)),
+                    Text('BW: ${bbBandwidth.toStringAsFixed(2)}%', style: CoinDCXTypography.caption.copyWith(color: colors.generalForegroundSecondary, fontSize: 8)),
+                  ],
+                ),
+                Text('↑${_formatPrice(bbUpper)}', style: CoinDCXTypography.numberSm.copyWith(color: colors.negativeBackgroundPrimary, fontSize: 10)),
+                Text('↓${_formatPrice(bbLower)}', style: CoinDCXTypography.numberSm.copyWith(color: colors.positiveBackgroundPrimary, fontSize: 10)),
+              ],
+            ),
+          ),
+
+          // Signals
+          if (goldenCross || deathCross || volumeSpike) ...[
+            const SizedBox(height: CoinDCXSpacing.xs),
+            Wrap(
+              spacing: CoinDCXSpacing.xxs,
+              children: [
+                if (goldenCross) _signalChip('🟢 Golden Cross', colors.positiveBackgroundPrimary),
+                if (deathCross) _signalChip('🔴 Death Cross', colors.negativeBackgroundPrimary),
+                if (volumeSpike) _signalChip('📈 Volume Spike', colors.alertBackgroundPrimary),
+              ],
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+
+  Widget _signalChip(String label, Color color) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+      decoration: BoxDecoration(
+        color: color.withValues(alpha: 0.15),
+        borderRadius: BorderRadius.circular(CoinDCXSpacing.radiusFull),
+        border: Border.all(color: color.withValues(alpha: 0.3)),
+      ),
+      child: Text(label, style: CoinDCXTypography.caption.copyWith(color: color, fontSize: 9, fontWeight: FontWeight.w600)),
+    );
+  }
+
+  // ── Conditional Rule card ─────────────────────────────────────────
+
+  Widget _buildConditionalRuleCard(Map<String, dynamic> data, CoinDCXColorScheme colors) {
+    final ruleId = data['id'] as String? ?? '';
+    final token = data['token'] as String? ?? '';
+    final condition = data['condition'] as String? ?? '';
+    final description = data['description'] as String? ?? '';
+    final status = data['status'] as String? ?? 'active';
+    final action = data['action'] as String? ?? 'buy';
+
+    final conditionLabel = condition.replaceAll('_', ' ').toUpperCase();
+    final statusColor = status == 'active' ? colors.positiveBackgroundPrimary
+        : status == 'triggered' ? colors.alertBackgroundPrimary
+        : colors.generalForegroundTertiary;
+    final actionColor = action == 'buy' ? colors.positiveBackgroundPrimary : colors.negativeBackgroundPrimary;
+
+    return Container(
+      width: double.infinity,
+      margin: const EdgeInsets.only(top: CoinDCXSpacing.xs),
+      padding: const EdgeInsets.all(CoinDCXSpacing.sm),
+      decoration: BoxDecoration(
+        gradient: LinearGradient(
+          colors: [const Color(0xFF1e1e3f), const Color(0xFF2d1b69).withValues(alpha: 0.5)],
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+        ),
+        borderRadius: BorderRadius.circular(CoinDCXSpacing.radiusSm),
+        border: Border.all(color: const Color(0xFF7c3aed).withValues(alpha: 0.4)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              const Icon(Icons.auto_awesome_rounded, size: 16, color: Color(0xFF7c3aed)),
+              const SizedBox(width: 4),
+              Text('Conditional Rule', style: CoinDCXTypography.buttonSm.copyWith(color: const Color(0xFFa78bfa))),
+              const Spacer(),
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                decoration: BoxDecoration(color: statusColor.withValues(alpha: 0.15), borderRadius: BorderRadius.circular(4)),
+                child: Text(status.toUpperCase(), style: CoinDCXTypography.caption.copyWith(
+                  color: statusColor, fontSize: 9, fontWeight: FontWeight.w600)),
+              ),
+            ],
+          ),
+          const SizedBox(height: CoinDCXSpacing.xs),
+          Text(description, style: CoinDCXTypography.bodyMedium.copyWith(color: colors.generalForegroundPrimary, fontSize: 12)),
+          const SizedBox(height: CoinDCXSpacing.xs),
+          Row(
+            children: [
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                decoration: BoxDecoration(color: actionColor.withValues(alpha: 0.15), borderRadius: BorderRadius.circular(4)),
+                child: Text(action.toUpperCase(), style: CoinDCXTypography.caption.copyWith(
+                  color: actionColor, fontSize: 9, fontWeight: FontWeight.w700)),
+              ),
+              const SizedBox(width: 6),
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                decoration: BoxDecoration(
+                  color: const Color(0xFF7c3aed).withValues(alpha: 0.15),
+                  borderRadius: BorderRadius.circular(4),
+                ),
+                child: Text(conditionLabel, style: CoinDCXTypography.caption.copyWith(
+                  color: const Color(0xFFa78bfa), fontSize: 8, fontWeight: FontWeight.w600)),
+              ),
+              const Spacer(),
+              if (status == 'active')
+                GestureDetector(
+                  onTap: () { _controller.text = 'cancel rule $ruleId'; _sendMessage(); },
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                    decoration: BoxDecoration(
+                      color: colors.negativeBackgroundPrimary.withValues(alpha: 0.12),
+                      borderRadius: BorderRadius.circular(4),
+                    ),
+                    child: Text('CANCEL', style: CoinDCXTypography.caption.copyWith(
+                      color: colors.negativeBackgroundPrimary, fontSize: 9, fontWeight: FontWeight.w600)),
+                  ),
+                ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+
+  // ── Smart Discovery card ──────────────────────────────────────────
+
+  Widget _buildSmartDiscoveryCard(Map<String, dynamic> data, CoinDCXColorScheme colors) {
+    final title = data['title'] as String? ?? 'Discovery';
+    final tokens = data['tokens'] as List<dynamic>? ?? [];
+    if (tokens.isEmpty) return const SizedBox.shrink();
+
+    return Container(
+      width: double.infinity,
+      margin: const EdgeInsets.only(top: CoinDCXSpacing.xs),
+      decoration: BoxDecoration(
+        gradient: LinearGradient(
+          colors: [const Color(0xFF0d1b2a), const Color(0xFF1b2838)],
+          begin: Alignment.topCenter,
+          end: Alignment.bottomCenter,
+        ),
+        borderRadius: BorderRadius.circular(CoinDCXSpacing.radiusSm),
+        border: Border.all(color: const Color(0xFF415a77).withValues(alpha: 0.5)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Padding(
+            padding: const EdgeInsets.fromLTRB(CoinDCXSpacing.sm, CoinDCXSpacing.sm, CoinDCXSpacing.sm, CoinDCXSpacing.xxs),
+            child: Row(
+              children: [
+                const Icon(Icons.explore_rounded, size: 16, color: Color(0xFF4cc9f0)),
+                const SizedBox(width: 4),
+                Expanded(child: Text(title, style: CoinDCXTypography.buttonSm.copyWith(color: const Color(0xFF4cc9f0)))),
+                Text('${tokens.length} found', style: CoinDCXTypography.caption.copyWith(
+                  color: colors.generalForegroundTertiary, fontSize: 9)),
+              ],
+            ),
+          ),
+          ...tokens.take(8).map<Widget>((item) {
+            final t = item as Map<String, dynamic>;
+            final symbol = t['symbol'] as String? ?? '';
+            final price = (t['price'] as num?)?.toDouble() ?? 0;
+            final change = (t['priceChange24h'] as num?)?.toDouble() ?? 0;
+            final volume = (t['volume24h'] as num?)?.toDouble() ?? 0;
+            final mcap = (t['marketCap'] as num?)?.toDouble() ?? 0;
+            final imageUrl = t['imageUrl'] as String?;
+            final buys = (t['txnsBuys24h'] as num?)?.toInt() ?? 0;
+            final sells = (t['txnsSells24h'] as num?)?.toInt() ?? 0;
+            final buyPct = (buys + sells) > 0 ? ((buys / (buys + sells)) * 100).toStringAsFixed(0) : '?';
+            final ageMin = (t['ageMinutes'] as num?)?.toInt() ?? 0;
+            final ageLabel = ageMin < 60 ? '${ageMin}m' : ageMin < 1440 ? '${(ageMin / 60).toStringAsFixed(0)}h' : '${(ageMin / 1440).toStringAsFixed(0)}d';
+            final isPositive = change >= 0;
+
+            return InkWell(
+              onTap: () { _controller.text = 'screen $symbol'; _sendMessage(); },
+              child: Padding(
+                padding: const EdgeInsets.symmetric(horizontal: CoinDCXSpacing.sm, vertical: CoinDCXSpacing.xxs + 1),
+                child: Row(
+                  children: [
+                    _buildMiniIcon(symbol, imageUrl, colors, size: 24),
+                    const SizedBox(width: CoinDCXSpacing.xs),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(symbol, style: CoinDCXTypography.buttonSm.copyWith(color: colors.generalForegroundPrimary, fontSize: 11)),
+                          Text('${ageLabel} old · Buy $buyPct% · MCap ${_formatLargeNum(mcap)}',
+                            style: CoinDCXTypography.caption.copyWith(color: colors.generalForegroundTertiary, fontSize: 8)),
+                        ],
+                      ),
+                    ),
+                    Column(
+                      crossAxisAlignment: CrossAxisAlignment.end,
+                      children: [
+                        Text(_formatPrice(price), style: CoinDCXTypography.numberSm.copyWith(color: colors.generalForegroundPrimary, fontSize: 11)),
+                        Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Container(
+                              padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 1),
+                              decoration: BoxDecoration(
+                                color: isPositive
+                                    ? colors.positiveBackgroundPrimary.withValues(alpha: 0.12)
+                                    : colors.negativeBackgroundPrimary.withValues(alpha: 0.12),
+                                borderRadius: BorderRadius.circular(3),
+                              ),
+                              child: Text(
+                                '${isPositive ? '+' : ''}${change.toStringAsFixed(0)}%',
+                                style: CoinDCXTypography.caption.copyWith(
+                                  color: isPositive ? colors.positiveBackgroundPrimary : colors.negativeBackgroundPrimary,
+                                  fontSize: 8, fontWeight: FontWeight.w600,
+                                ),
+                              ),
+                            ),
+                            const SizedBox(width: 4),
+                            Text('V:${_formatLargeNum(volume)}', style: CoinDCXTypography.caption.copyWith(
+                              color: colors.generalForegroundTertiary, fontSize: 8)),
+                          ],
+                        ),
+                      ],
+                    ),
+                  ],
+                ),
+              ),
+            );
+          }),
+          const SizedBox(height: CoinDCXSpacing.xs),
+        ],
+      ),
+    );
+  }
+
   // ── Shared helpers ─────────────────────────────────────────────────
 
   String _proxyUrl(String url) =>
@@ -1171,6 +1861,11 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
     return '\$${value.toStringAsFixed(0)}';
   }
 
+  String _truncAddr(String addr) {
+    if (addr.length > 12) return '${addr.substring(0, 6)}...${addr.substring(addr.length - 4)}';
+    return addr;
+  }
+
   Widget _buildTypingIndicator(CoinDCXColorScheme colors) {
     return Align(
       alignment: Alignment.centerLeft,
@@ -1191,39 +1886,139 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
     );
   }
 
+  List<String> _getLatestSuggestions() {
+    for (int i = _messages.length - 1; i >= 0; i--) {
+      final msg = _messages[i];
+      if (!msg.isUser && msg.suggestions != null && msg.suggestions!.isNotEmpty) {
+        return msg.suggestions!;
+      }
+    }
+    return [];
+  }
+
+  Widget _buildPersistentSuggestions(CoinDCXColorScheme colors) {
+    final suggestions = _getLatestSuggestions();
+    if (suggestions.isEmpty || _isLoading) return const SizedBox.shrink();
+
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.symmetric(horizontal: CoinDCXSpacing.md, vertical: CoinDCXSpacing.xs),
+      decoration: BoxDecoration(
+        color: colors.generalBackgroundBgL1,
+        border: Border(top: BorderSide(color: colors.generalStrokeL1.withValues(alpha: 0.5))),
+      ),
+      child: SingleChildScrollView(
+        scrollDirection: Axis.horizontal,
+        physics: const BouncingScrollPhysics(),
+        child: Row(
+          children: suggestions.map((s) => Padding(
+            padding: const EdgeInsets.only(right: CoinDCXSpacing.xs),
+            child: GestureDetector(
+              onTap: () { _controller.text = s; _sendMessage(); },
+              child: Container(
+                padding: const EdgeInsets.symmetric(horizontal: CoinDCXSpacing.sm, vertical: CoinDCXSpacing.xxs),
+                decoration: BoxDecoration(
+                  color: colors.actionBackgroundPrimary.withValues(alpha: 0.1),
+                  borderRadius: BorderRadius.circular(CoinDCXSpacing.radiusFull),
+                  border: Border.all(color: colors.actionBackgroundPrimary.withValues(alpha: 0.3)),
+                ),
+                child: Text(s, style: CoinDCXTypography.caption.copyWith(color: colors.actionBackgroundPrimary)),
+              ),
+            ),
+          )).toList(),
+        ),
+      ),
+    );
+  }
+
   Widget _buildInputBar(CoinDCXColorScheme colors) {
     return Container(
       padding: EdgeInsets.only(
-        left: CoinDCXSpacing.md, right: CoinDCXSpacing.md,
-        top: CoinDCXSpacing.sm, bottom: CoinDCXSpacing.md + MediaQuery.of(context).padding.bottom,
+        left: CoinDCXSpacing.sm, right: CoinDCXSpacing.sm,
+        top: CoinDCXSpacing.xxs, bottom: CoinDCXSpacing.sm + MediaQuery.of(context).padding.bottom,
       ),
       decoration: BoxDecoration(
         color: colors.generalBackgroundBgL1,
         border: Border(top: BorderSide(color: colors.generalStrokeL1)),
       ),
-      child: Row(
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
         children: [
-          Expanded(
-            child: TextField(
-              controller: _controller,
-              onSubmitted: (_) => _sendMessage(),
-              textInputAction: TextInputAction.send,
-              style: CoinDCXTypography.bodyMedium.copyWith(color: colors.generalForegroundPrimary),
-              decoration: InputDecoration(
-                hintText: 'Ask about any token...',
-                hintStyle: CoinDCXTypography.bodyMedium.copyWith(color: colors.generalForegroundTertiary),
-              ),
+          // Quick action chips
+          SizedBox(
+            height: 30,
+            child: ListView(
+              scrollDirection: Axis.horizontal,
+              children: [
+                _quickAction('📈 Trending', 'trending', colors),
+                _quickAction('🔍 Screen', 'screen SOL', colors),
+                _quickAction('📊 TA', 'RSI SOL', colors),
+                _quickAction('💰 Portfolio', 'portfolio', colors),
+                _quickAction('🏆 Leaders', 'leaderboard', colors),
+                _quickAction('🆕 New tokens', 'new tokens today', colors),
+                _quickAction('❓ Help', 'help', colors),
+              ],
             ),
           ),
-          const SizedBox(width: CoinDCXSpacing.xs),
-          Container(
-            decoration: BoxDecoration(color: colors.actionBackgroundPrimary, borderRadius: BorderRadius.circular(CoinDCXSpacing.radiusMd)),
-            child: IconButton(
-              icon: Icon(Icons.send_rounded, color: colors.actionForegroundPrimary),
-              onPressed: _isLoading ? null : _sendMessage,
-            ),
+          const SizedBox(height: CoinDCXSpacing.xxs),
+          Row(
+            children: [
+              Expanded(
+                child: Container(
+                  decoration: BoxDecoration(
+                    color: colors.generalBackgroundBgL2,
+                    borderRadius: BorderRadius.circular(CoinDCXSpacing.radiusFull),
+                    border: Border.all(color: colors.generalStrokeL1),
+                  ),
+                  child: TextField(
+                    controller: _controller,
+                    onSubmitted: (_) => _sendMessage(),
+                    textInputAction: TextInputAction.send,
+                    style: CoinDCXTypography.bodyMedium.copyWith(color: colors.generalForegroundPrimary),
+                    decoration: InputDecoration(
+                      hintText: 'Buy SOL, set stop loss, RSI check...',
+                      hintStyle: CoinDCXTypography.bodyMedium.copyWith(color: colors.generalForegroundTertiary, fontSize: 13),
+                      contentPadding: const EdgeInsets.symmetric(horizontal: CoinDCXSpacing.md, vertical: CoinDCXSpacing.sm),
+                      border: InputBorder.none,
+                    ),
+                  ),
+                ),
+              ),
+              const SizedBox(width: CoinDCXSpacing.xs),
+              Container(
+                decoration: BoxDecoration(
+                  gradient: const LinearGradient(
+                    colors: [Color(0xFF6366f1), Color(0xFF8b5cf6)],
+                  ),
+                  borderRadius: BorderRadius.circular(CoinDCXSpacing.radiusFull),
+                ),
+                child: IconButton(
+                  icon: const Icon(Icons.send_rounded, color: Colors.white, size: 20),
+                  onPressed: _isLoading ? null : _sendMessage,
+                ),
+              ),
+            ],
           ),
         ],
+      ),
+    );
+  }
+
+  Widget _quickAction(String label, String command, CoinDCXColorScheme colors) {
+    return Padding(
+      padding: const EdgeInsets.only(right: 6),
+      child: GestureDetector(
+        onTap: () { _controller.text = command; _sendMessage(); },
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+          decoration: BoxDecoration(
+            color: colors.generalBackgroundBgL2,
+            borderRadius: BorderRadius.circular(CoinDCXSpacing.radiusFull),
+            border: Border.all(color: colors.generalStrokeL2),
+          ),
+          child: Text(label, style: CoinDCXTypography.caption.copyWith(
+            color: colors.generalForegroundSecondary, fontSize: 11)),
+        ),
       ),
     );
   }
