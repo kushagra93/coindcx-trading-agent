@@ -4,6 +4,127 @@ A mobile-first, embeddable AI trading agent platform with a 4-tier multi-agent a
 
 ![Demo](demo.gif)
 
+---
+
+## Quick Start (Hackathon Mode)
+
+### Prerequisites
+
+| Dependency | Version | Install |
+|---|---|---|
+| **Node.js** | v20+ | `nvm install 20` or [nodejs.org](https://nodejs.org) |
+| **Flutter** | 3.32.x stable | [flutter.dev/docs/get-started/install](https://flutter.dev/docs/get-started/install) |
+| **Chrome** | Any recent | For `flutter run -d chrome` |
+
+No Docker, Redis, PostgreSQL, or AWS needed — everything runs in-memory for the hackathon.
+
+### API Keys (all free tier)
+
+| Key | Purpose | Get it at |
+|---|---|---|
+| `OPENROUTER_API_KEY` | LLM chat (MiniMax M2.5) | [openrouter.ai](https://openrouter.ai) |
+| `BIRDEYE_API_KEY` | Token data, holder distribution | [birdeye.so](https://birdeye.so) |
+| `HELIUS_API_KEY` | Solana holders, wallet monitoring | [dashboard.helius.dev](https://dashboard.helius.dev) |
+
+DexScreener, RugCheck, GoPlus, and GMGN use public endpoints — no keys needed.
+
+### Setup
+
+```bash
+# 1. Clone & install
+git clone https://github.com/kushagra93/coindcx-trading-agent.git
+cd coindcx-trading-agent
+npm install
+
+# 2. Configure environment
+cp .env.example .env
+# Edit .env — replace with your actual keys:
+```
+
+**.env** (minimum required):
+```env
+SERVICE_MODE=api
+DRY_RUN=true
+PORT=3000
+OPENROUTER_API_KEY=your-openrouter-key
+OPENROUTER_MODEL=minimax/minimax-m2.5
+BIRDEYE_API_KEY=your-birdeye-key
+HELIUS_API_KEY=your-helius-key
+```
+
+```bash
+# 3. Start backend (Terminal 1)
+npx tsx src/index.ts
+
+# 4. Start Flutter web app (Terminal 2)
+cd mobile_app
+flutter pub get
+flutter run -d chrome --web-port 8080
+```
+
+The app opens at `http://localhost:8080` with backend on `http://localhost:3000`.
+
+### What's NOT needed for hackathon
+- **PostgreSQL / Redis** — all state is in-memory
+- **AWS KMS** — not used in dry-run mode
+- **Solana / EVM wallets** — trades are simulated
+- **Docker** — runs directly with Node + Flutter
+- **Paid API tiers** — free plans work for all APIs
+
+### Chat Agent Capabilities & Triggers
+
+The AI chat understands **18 intents** via NLP. Here's every trigger:
+
+| Intent | Trigger Words | What Happens |
+|---|---|---|
+| **confirm_buy** | "confirm buy", "confirm purchase" | Executes pending buy trade |
+| **confirm_sell** | "confirm sell" | Executes pending sell trade |
+| **limit_order** | "take profit", "stop loss", "limit order/sell/buy", "set tp/sl", "trail" | Informs user this isn't supported yet |
+| **kol** | "kol", "influencer", "follow kol", "kol buy/trade" | Shows KOL wallets with PnL & Twitter |
+| **copy_manage** | "my copy trades", "manage copies", "stop/pause/resume copy" | Shows copy trade manager card |
+| **copy_trade** | "copy trade", "follow wallet", "mirror trade", "copy trade #1" | Opens copy trade config modal |
+| **leaderboard** | "leaderboard", "top trader", "smart money", "whales", "best trader" | Shows GMGN top Solana traders |
+| **screen** | "screen SOL", "is it safe", "rug check", "check" | Full safety audit (mint, freeze, LP, holders, insiders) |
+| **price** | "SOL price", "how much is ETH", "what does X cost" | Quick price lookup |
+| **sell** | "sell SOL", "sell $100" | Sells token from portfolio |
+| **buy** | "buy ETH $200", "ape into SOL", "grab BONK" | Shows trade preview → confirm to execute |
+| **analyze** | "analyze PEPE", "research SOL", "tell me about ETH" | Deep analysis with audit + price data |
+| **recommend** | "recommend", "suggest", "give me picks", "best sol tokens", "alpha", "gems", "what should I buy" | Filtered top SOL picks by momentum + volume + liquidity |
+| **portfolio** | "portfolio", "balance", "wallet", "positions", "holdings", "pnl", "performance" | Shows portfolio with holdings & P&L |
+| **trending** | "trending", "hot", "popular" | Shows all trending tokens |
+| **help** | "help", "what can you do" | Lists all capabilities |
+| **Contract address** | Any Solana (32-44 char) or EVM (0x...) address | Auto-screens the token |
+
+### Project Structure
+
+```
+├── src/                          # Backend (TypeScript, Fastify)
+│   ├── api/routes/
+│   │   ├── chat.ts               # AI chat with 18 NLP intents + LLM
+│   │   ├── tokens.ts             # Token screening & trending APIs
+│   │   ├── trade.ts              # Buy/sell execution (dry-run)
+│   │   ├── leaderboard.ts        # GMGN leaderboard + copy trade CRUD
+│   │   └── ...
+│   ├── data/
+│   │   ├── token-screener.ts     # DexScreener + Birdeye + RugCheck + Helius
+│   │   ├── wallet-monitor.ts     # Helius RPC polling for wallet swaps
+│   │   ├── copy-engine.ts        # Copy trade filtering & simulation
+│   │   └── llm.ts                # OpenRouter LLM integration
+│   └── ...
+├── mobile_app/                   # Flutter app
+│   └── lib/
+│       ├── features/
+│       │   ├── chat/             # AI chat UI with rich cards
+│       │   ├── discovery/        # Trending feed, hot carousel, gainers
+│       │   ├── portfolio/        # Holdings & trade history
+│       │   └── token_detail/     # Full audit, holder data, contract addr
+│       └── core/                 # Theme, API client, providers
+├── COPY_TRADE_HANDOFF.md         # Production deferred items doc
+└── HANDOFF.md                    # Full feature handoff doc
+```
+
+---
+
 ## Multi-Tier Agent Architecture
 
 The system implements a hierarchical 4-tier agent economy with isolation boundaries, signed inter-agent messaging, and a 15-state trade lifecycle.
