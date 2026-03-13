@@ -13,6 +13,15 @@ final trendingTokensProvider = FutureProvider<List<TokenMetrics>>((ref) async {
   return tokens ?? [];
 });
 
+final newPairsProvider = FutureProvider<List<TokenMetrics>>((ref) async {
+  final api = ref.read(apiClientProvider);
+  final response = await api.get('/api/v1/tokens/new-pairs');
+  final tokens = (response['tokens'] as List<dynamic>?)
+      ?.map((t) => TokenMetrics.fromJson(t as Map<String, dynamic>))
+      .toList();
+  return tokens ?? [];
+});
+
 final tokenSearchProvider = FutureProvider.family<List<TokenMetrics>, String>((ref, query) async {
   if (query.isEmpty) return [];
   final api = ref.read(apiClientProvider);
@@ -38,8 +47,8 @@ final tokenScreenProvider = FutureProvider.family<ScreeningResult?, String>((ref
 final portfolioProvider = FutureProvider<List<TradeRecord>>((ref) async {
   final api = ref.read(apiClientProvider);
   final response = await api.get('/api/v1/trade/portfolio');
-  final positions = (response['positions'] as List<dynamic>?)
+  final trades = (response['trades'] as List<dynamic>?)
       ?.map((p) => TradeRecord.fromJson(p as Map<String, dynamic>))
       .toList();
-  return positions ?? [];
+  return trades ?? [];
 });

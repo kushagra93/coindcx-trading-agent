@@ -8,9 +8,9 @@ import {
   fetchKOLs,
   type TokenMetrics,
   type ScreeningResult,
-  type TopTrader,
 } from '../../data/token-screener.js';
 import { chatCompletion, isLLMAvailable, type LLMMessage } from '../../data/llm.js';
+import { extractIntent, type ParsedIntent } from '../../data/intent-engine.js';
 import { createChildLogger } from '../../core/logger.js';
 import {
   startCopyTrading,
@@ -23,84 +23,40 @@ import {
   type BuyMode,
   type SellMethod,
 } from '../../data/copy-engine.js';
+import {
+  createLimitOrder,
+  cancelOrder,
+  cancelAllOrders,
+  getActiveOrders,
+  getAllOrders,
+  computeTriggerPrice,
+  type OrderType,
+} from '../../data/limit-orders.js';
+import {
+  createDCAPlan,
+  pauseDCA,
+  resumeDCA,
+  stopDCA,
+  getActivePlans,
+} from '../../data/dca-engine.js';
+import {
+  createPriceAlert,
+  cancelAlert,
+  getActiveAlerts,
+  getTriggeredAlerts,
+} from '../../data/price-alerts.js';
+import {
+  createRule,
+  cancelRule,
+  getActiveRules,
+  getTAForToken,
+  type ConditionType,
+  type ActionType,
+} from '../../data/conditional-rules.js';
 
 const log = createChildLogger('chat');
 
-// ─── Intent detection (regex fast-path, LLM fallback) ────────────────
-
-type Intent =
-  | 'buy' | 'sell' | 'long' | 'short'
-  | 'confirm_buy' | 'confirm_sell'
-  | 'limit_order'
-  | 'screen' | 'analyze'
-  | 'snipe' | 'dca'
-  | 'positions' | 'pnl' | 'portfolio'
-  | 'close' | 'exit'
-  | 'trending' | 'hot' | 'recommend'
-  | 'leaderboard' | 'kol' | 'copy_trade' | 'copy_manage'
-  | 'help' | 'price' | 'unknown';
-
-const ALL_TOKENS = /\b(sol|bonk|eth|wif|pepe|jup|aero|brett|btc|degen|toshi|fartcoin|popcat|myro|giga|mew|bome|mog|wen|arb|gmx|pendle|pol|aave|bnb|op|avax|shib|link|uni|sui|apt)\b/i;
-const SOLANA_ADDR = /\b[1-9A-HJ-NP-Za-km-z]{32,44}\b/;
-const EVM_ADDR = /\b0x[a-fA-F0-9]{40}\b/;
-
-function detectIntent(text: string): Intent {
-  const t = text.toLowerCase();
-  if (t.includes('confirm buy') || t.includes('confirm purchase') || (t.includes('confirm') && t.includes('buy'))) return 'confirm_buy';
-  if (t.includes('confirm sell')) return 'confirm_sell';
-
-  // Conditional / limit orders — must match BEFORE bare "sell"/"buy"
-  if (t.match(/\b(take.?profit|stop.?loss|limit.?(order|sell|buy)|set.*(sell|buy|order|limit|tp|sl)|trail)/))
-    return 'limit_order';
-  if ((t.includes('sell') || t.includes('buy')) && t.match(/\b(at|when|if|once|after).+(%|percent|price|hits?|reaches?)/))
-    return 'limit_order';
-
-  // KOL / leaderboard / copy trade — before bare sell/buy to avoid false matches on "kol buys"
-  if (t.match(/\b(kol|influencer|follow.*kol|kol.*buy|kol.*trad)/)) return 'kol';
-  if (t.match(/\b(my|manage|active|show).*(copy|copies)/)) return 'copy_manage';
-  if (t.match(/\b(stop|pause|resume)\s+copy/)) return 'copy_manage';
-  if (t.match(/\b(copy.?trad|follow.*wallet|mirror.*trad)/)) return 'copy_trade';
-  if (t.match(/\b(leader|top.?trader|smart.?money|whales?|best.?trader)/)) return 'leaderboard';
-
-  if (t.includes('screen') || t.includes('safe') || t.includes('rug') || t.includes('check')) return 'screen';
-  if (t.includes('price') || t.match(/\b(how much|what.*(cost|worth))\b/)) return 'price';
-  if (t.includes('snipe') || t.includes('new token') || t.includes('launch')) return 'snipe';
-  if (t.includes('close') || t.includes('exit')) return 'close';
-  if (t.includes('sell')) return 'sell';
-  if (t.includes('buy') || t.includes('ape') || t.includes('grab')) return 'buy';
-  if (t.includes('long') && !t.includes('how long')) return 'long';
-  if (t.includes('short')) return 'short';
-  if (t.includes('analyz') || t.includes('research') || t.includes('tell me about')) return 'analyze';
-  if (t.includes('dca')) return 'dca';
-  if (t.includes('position') || t.includes('holding')) return 'positions';
-  if (t.includes('p&l') || t.includes('pnl') || t.includes('performance')) return 'pnl';
-  if (t.includes('portfolio') || t.includes('balance') || t.includes('wallet')) return 'portfolio';
-  if (t.match(/\b(recommend|suggest|pick|should i buy|what.*(buy|invest|good)|best.*(token|coin|sol)|give me.*(token|pick|alpha|call)|top.*(sol|token|coin)|sol.*(pick|gem|alpha)|gem|alpha.*(call)?)\b/)) return 'recommend';
-  if (t.includes('trend') || t.includes('hot') || t.includes('top') || t.includes('popular')) return 'trending';
-  if (t.includes('help') || t.includes('what can')) return 'help';
-  return 'unknown';
-}
-
-function extractToken(text: string): string | null {
-  const match = text.match(ALL_TOKENS);
-  return match ? match[1].toUpperCase() : null;
-}
-
-function extractContractAddress(text: string): string | null {
-  const evmMatch = text.match(EVM_ADDR);
-  if (evmMatch) return evmMatch[0];
-  const solMatch = text.match(SOLANA_ADDR);
-  if (solMatch && solMatch[0].length >= 32) return solMatch[0];
-  return null;
-}
-
-function extractAmount(text: string): number {
-  const match = text.match(/\$\s*([\d,]+(?:\.\d+)?)/);
-  if (match) return parseFloat(match[1].replace(/,/g, ''));
-  const numMatch = text.match(/(\d+(?:\.\d+)?)\s*(?:dollars?|usd|bucks)/i);
-  if (numMatch) return parseFloat(numMatch[1]);
-  return 200;
-}
+// ─── Formatting helpers ──────────────────────────────────────────────
 
 function formatUsd(n: number | undefined): string {
   if (!n) return '—';
@@ -116,7 +72,7 @@ function formatPrice(p: number): string {
   return `$${p.toFixed(8)}`;
 }
 
-// ─── Response types ───────────────────────────────────────────────────
+// ─── Response types ─────────────────────────────────────────────────
 
 interface ChatResponse {
   text: string;
@@ -130,14 +86,20 @@ type ChatCard =
   | { type: 'screening'; data: ScreeningResult }
   | { type: 'token_price'; data: TokenMetrics }
   | { type: 'trending'; data: TokenMetrics[] }
-  | { type: 'trade_preview'; data: { symbol: string; amount: number; price: number; chain: string } }
+  | { type: 'trade_preview'; data: { symbol: string; amount: number; price: number; chain: string; slippage?: number } }
   | { type: 'portfolio'; data: { positions: any[]; totalInvested: number; totalSold: number } }
   | { type: 'leaderboard'; data: any }
   | { type: 'copy_trade_config'; data: any }
   | { type: 'copy_trade_manager'; data: any }
-  | { type: 'trade_executed'; data: any };
+  | { type: 'trade_executed'; data: any }
+  | { type: 'limit_orders'; data: any }
+  | { type: 'dca_plan'; data: any }
+  | { type: 'price_alert'; data: any }
+  | { type: 'ta_indicators'; data: any }
+  | { type: 'conditional_rule'; data: any }
+  | { type: 'smart_discovery'; data: any };
 
-// ─── LLM-powered response generation ─────────────────────────────────
+// ─── LLM-powered response generation (Tier 2: cheap model) ─────────
 
 const SYSTEM_PROMPT = `You are an AI trading agent for CoinDCX's Web3 platform. You help users discover, screen, trade tokens, and manage their portfolio.
 
@@ -149,6 +111,10 @@ Capabilities:
 - Execute buys and sells (dry-run mode)
 - Show portfolio positions and P&L
 - Analyze tokens with full security audit data
+- Set limit orders: take-profit, stop-loss, limit buy, limit sell
+- DCA (dollar-cost averaging) into tokens on a schedule
+- Price alerts when tokens hit target prices
+- Copy trade top wallets from the leaderboard
 
 Rules:
 - Keep responses SHORT (2-4 sentences max)
@@ -186,7 +152,7 @@ async function generateLLMResponse(
   }
 }
 
-// ─── Data formatters for LLM context ─────────────────────────────────
+// ─── Data formatters for LLM context ────────────────────────────────
 
 function screeningToContext(result: ScreeningResult): string {
   const t = result.token;
@@ -231,7 +197,7 @@ function trendingToContext(tokens: TokenMetrics[]): string {
   ).join('\n')}`;
 }
 
-// ─── Handlers ─────────────────────────────────────────────────────────
+// ─── Handlers ───────────────────────────────────────────────────────
 
 async function handleScreen(token: string, userMsg: string, history: LLMMessage[]): Promise<ChatResponse> {
   const result = await screenBySymbol(token);
@@ -249,7 +215,7 @@ async function handleScreen(token: string, userMsg: string, history: LLMMessage[
     text, intent: 'screen',
     cards: [{ type: 'screening', data: result }],
     suggestions: result.passed
-      ? [`buy ${result.token.symbol} $200`, `analyze ${result.token.symbol}`, `dca ${result.token.symbol}`]
+      ? [`buy ${result.token.symbol} $200`, `analyze ${result.token.symbol}`, `set stop loss ${result.token.symbol}`]
       : [`analyze ${result.token.symbol}`, 'trending'],
     token: result.token.symbol,
   };
@@ -288,7 +254,7 @@ async function handlePrice(token: string, userMsg: string, history: LLMMessage[]
   return {
     text, intent: 'price',
     cards: [{ type: 'token_price', data: metrics }],
-    suggestions: [`screen ${metrics.symbol}`, `buy ${metrics.symbol} $200`, `analyze ${metrics.symbol}`],
+    suggestions: [`screen ${metrics.symbol}`, `buy ${metrics.symbol} $200`, `set alert ${metrics.symbol}`],
     token: metrics.symbol,
   };
 }
@@ -310,13 +276,13 @@ async function handleAnalyze(token: string, userMsg: string, history: LLMMessage
 
   return {
     text, intent: 'analyze', cards,
-    suggestions: [`buy ${metrics.symbol} $200`, `screen ${metrics.symbol}`, `dca ${metrics.symbol}`],
+    suggestions: [`buy ${metrics.symbol} $200`, `set alert ${metrics.symbol}`, `dca ${metrics.symbol}`],
     token: metrics.symbol,
   };
 }
 
-async function handleBuy(token: string, userMsg: string, history: LLMMessage[]): Promise<ChatResponse> {
-  const amount = extractAmount(userMsg);
+async function handleBuy(token: string, amountUsd: number, slippage: number | undefined, userMsg: string, history: LLMMessage[]): Promise<ChatResponse> {
+  const amount = amountUsd || 200;
   const metrics = await getTokenBySymbol(token);
   if (!metrics) {
     return { text: `Token "${token}" not found.`, intent: 'buy', cards: [], suggestions: ['trending'] };
@@ -334,103 +300,316 @@ async function handleBuy(token: string, userMsg: string, history: LLMMessage[]):
     };
   }
 
-  const context = `Trade preview: Buy $${amount} of ${token} at ${formatPrice(metrics.price)} on ${metrics.chain}.\nSafety grade: ${screening?.grade ?? 'unknown'}`;
+  const slippageVal = slippage ?? (metrics.liquidity > 100_000 ? 1 : 5);
+  const context = `Trade preview: Buy $${amount} of ${token} at ${formatPrice(metrics.price)} on ${metrics.chain}.\nSafety grade: ${screening?.grade ?? 'unknown'}\nSlippage tolerance: ${slippageVal}%`;
   const text = await generateLLMResponse(userMsg, context, history);
 
   return {
     text, intent: 'buy',
-    cards: [{ type: 'trade_preview', data: { symbol: token, amount, price: metrics.price, chain: metrics.chain as string } }],
-    suggestions: [`confirm buy ${token} ${formatUsd(amount)}`, 'cancel', `screen ${token}`],
+    cards: [{ type: 'trade_preview', data: { symbol: token, amount, price: metrics.price, chain: metrics.chain as string, slippage: slippageVal } }],
+    suggestions: [`confirm buy ${token} $${amount}`, 'cancel', `screen ${token}`],
     token,
   };
 }
 
-async function handleConfirmBuy(token: string, userMsg: string, history: LLMMessage[]): Promise<ChatResponse> {
-  const amount = extractAmount(userMsg);
+async function handleConfirmTrade(side: string, token: string, amountUsd: number, userMsg: string, history: LLMMessage[]): Promise<ChatResponse> {
+  const amount = amountUsd || 200;
   const metrics = await getTokenBySymbol(token);
   if (!metrics) {
-    return { text: `Token "${token}" not found.`, intent: 'confirm_buy', cards: [], suggestions: ['trending'] };
+    return { text: `Token "${token}" not found.`, intent: 'confirm_trade', cards: [], suggestions: ['trending'] };
   }
 
-  // Execute the trade via the trade endpoint logic (in-process)
   try {
     const tradeRes = await fetch(`http://localhost:${process.env.PORT ?? 3000}/api/v1/trade/execute`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ symbol: token, side: 'buy', amountUsd: amount }),
+      body: JSON.stringify({ symbol: token, side, amountUsd: amount }),
     });
     const tradeData = await tradeRes.json() as any;
 
     if (!tradeRes.ok) {
       return {
         text: `Trade failed: ${tradeData.error ?? 'Unknown error'}`,
-        intent: 'confirm_buy', cards: [], suggestions: ['trending', `screen ${token}`],
+        intent: 'confirm_trade', cards: [], suggestions: ['trending', `screen ${token}`],
       };
     }
 
-    const context = `Trade EXECUTED successfully.\nBought $${amount} of ${token} at ${formatPrice(metrics.price)} on ${metrics.chain}.\nTrade ID: ${tradeData.trade?.id}\nStatus: ${tradeData.trade?.status}\nQuantity: ${tradeData.trade?.quantity?.toFixed(6)} ${token}`;
+    const context = `Trade EXECUTED successfully.\n${side.toUpperCase()} $${amount} of ${token} at ${formatPrice(tradeData.trade?.price ?? metrics.price)} on ${metrics.chain}.\nTrade ID: ${tradeData.trade?.id}\nStatus: ${tradeData.trade?.status}\nQuantity: ${tradeData.trade?.quantity?.toFixed(6)} ${token}\nPrice Impact: ${tradeData.priceImpact ?? 0}%\nSlippage: ${tradeData.slippage ?? 0}%`;
     const text = await generateLLMResponse(userMsg, context, history);
 
     return {
-      text, intent: 'confirm_buy',
+      text, intent: 'confirm_trade',
       cards: [{ type: 'trade_executed', data: tradeData.trade } as any],
-      suggestions: ['portfolio', `screen ${token}`, 'trending'],
+      suggestions: [`set stop loss ${token} 10%`, 'portfolio', 'trending'],
       token,
     };
   } catch (err) {
     return {
-      text: `Could not execute trade. Backend might be unavailable.`,
-      intent: 'confirm_buy', cards: [], suggestions: ['trending'],
+      text: 'Could not execute trade. Backend might be unavailable.',
+      intent: 'confirm_trade', cards: [], suggestions: ['trending'],
     };
   }
 }
 
-async function handleSell(token: string, userMsg: string, history: LLMMessage[]): Promise<ChatResponse> {
-  const amount = extractAmount(userMsg);
+async function handleSellFromPortfolio(token: string, amountUsd: number, userMsg: string, history: LLMMessage[]): Promise<ChatResponse> {
+  const portfolio = await fetchPortfolio();
+  const held = portfolio.positions.filter((p: any) => p.side === 'buy' && p.symbol.toUpperCase() === token.toUpperCase());
+
+  if (held.length === 0) {
+    const context = `User wants to sell ${token} but does NOT hold any ${token} in their portfolio. Their holdings: ${portfolio.positions.filter((p: any) => p.side === 'buy').map((p: any) => p.symbol).join(', ') || 'empty'}`;
+    const text = await generateLLMResponse(userMsg, context, history);
+    return { text, intent: 'sell', cards: [], suggestions: ['portfolio', 'trending'] };
+  }
+
+  return handleConfirmTrade('sell', token, amountUsd || 200, userMsg, history);
+}
+
+// ─── Limit Order Handler ────────────────────────────────────────────
+
+async function handleSetLimitOrder(
+  params: Record<string, any>,
+  userMsg: string,
+  history: LLMMessage[],
+): Promise<ChatResponse> {
+  const token = (params.token as string)?.toUpperCase();
+  if (!token) {
+    return { text: 'Which token? Try "set stop loss SOL at 10% below".', intent: 'limit_order', cards: [], suggestions: ['show my orders'] };
+  }
+
   const metrics = await getTokenBySymbol(token);
   if (!metrics) {
-    return { text: `Token "${token}" not found.`, intent: 'sell', cards: [], suggestions: ['portfolio', 'trending'] };
+    return { text: `Token "${token}" not found.`, intent: 'limit_order', cards: [], suggestions: ['trending'] };
   }
 
-  try {
-    const tradeRes = await fetch(`http://localhost:${process.env.PORT ?? 3000}/api/v1/trade/execute`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ symbol: token, side: 'sell', amountUsd: amount }),
-    });
-    const tradeData = await tradeRes.json() as any;
+  const orderType = (params.order_type as OrderType) || 'stop_loss';
+  const triggerPrice = computeTriggerPrice(
+    metrics.price,
+    orderType,
+    params.trigger_pct as number | undefined,
+    params.trigger_price as number | undefined,
+  );
+  const amount = (params.amount_usd as number) || 200;
 
-    if (!tradeRes.ok) {
-      return {
-        text: `Sell failed: ${tradeData.error ?? 'Unknown error'}`,
-        intent: 'sell', cards: [], suggestions: ['portfolio'],
-      };
-    }
+  const order = createLimitOrder({
+    token,
+    orderType,
+    triggerPrice,
+    currentPrice: metrics.price,
+    amountUsd: amount,
+  });
 
-    const context = `Sell EXECUTED.\nSold $${amount} of ${token} at ${formatPrice(metrics.price)} on ${metrics.chain}.\nTrade ID: ${tradeData.trade?.id}\nStatus: ${tradeData.trade?.status}`;
-    const text = await generateLLMResponse(userMsg, context, history);
+  const pctDiff = ((triggerPrice - metrics.price) / metrics.price * 100).toFixed(1);
+  const context = `Limit order created successfully.
+Order ID: ${order.id}
+Type: ${orderType.replace('_', ' ').toUpperCase()}
+Token: ${token}
+Current Price: ${formatPrice(metrics.price)}
+Trigger Price: ${formatPrice(triggerPrice)} (${Number(pctDiff) >= 0 ? '+' : ''}${pctDiff}%)
+Amount: $${amount}
+Status: ACTIVE
+Expires: 24 hours
 
-    return {
-      text, intent: 'sell',
-      cards: [{ type: 'trade_executed', data: tradeData.trade } as any],
-      suggestions: ['portfolio', 'trending'],
-      token,
-    };
-  } catch {
-    return { text: 'Could not execute sell. Try again.', intent: 'sell', cards: [], suggestions: ['portfolio'] };
-  }
+The order will automatically execute a ${orderType === 'limit_buy' ? 'buy' : 'sell'} when the trigger price is hit.`;
+
+  const text = await generateLLMResponse(userMsg, context, history);
+
+  return {
+    text, intent: 'limit_order',
+    cards: [{ type: 'limit_orders', data: { orders: [order] } }],
+    suggestions: ['show my orders', `${token} price`, 'portfolio'],
+    token,
+  };
 }
+
+async function handleManageLimitOrders(
+  params: Record<string, any>,
+  userMsg: string,
+  history: LLMMessage[],
+): Promise<ChatResponse> {
+  const action = (params.action as string) || 'show';
+
+  if (action === 'cancel' && params.order_id) {
+    const cancelled = cancelOrder(params.order_id as string);
+    if (!cancelled) {
+      return { text: 'Order not found or already cancelled.', intent: 'manage_orders', cards: [], suggestions: ['show my orders'] };
+    }
+    const text = await generateLLMResponse(userMsg, `Order ${cancelled.id} (${cancelled.orderType} ${cancelled.token}) has been cancelled.`, history);
+    return { text, intent: 'manage_orders', cards: [], suggestions: ['show my orders', 'portfolio'] };
+  }
+
+  if (action === 'cancel_all') {
+    const count = cancelAllOrders();
+    const text = await generateLLMResponse(userMsg, `Cancelled ${count} active order(s).`, history);
+    return { text, intent: 'manage_orders', cards: [], suggestions: ['portfolio', 'trending'] };
+  }
+
+  const active = getActiveOrders();
+  if (active.length === 0) {
+    const text = await generateLLMResponse(userMsg, 'No active limit orders. You can set one with "set stop loss SOL at 10%" or "take profit ETH at $4000".', history);
+    return { text, intent: 'manage_orders', cards: [], suggestions: ['set stop loss SOL', 'set take profit ETH'] };
+  }
+
+  const context = `Active limit orders:\n` + active.map((o, i) => {
+    return `${i + 1}. [${o.id}] ${o.orderType.replace('_', ' ').toUpperCase()} ${o.token} — Trigger: ${formatPrice(o.triggerPrice)} | Amount: $${o.amountUsd} | Created: ${new Date(o.createdAt).toLocaleString()}`;
+  }).join('\n');
+
+  const text = await generateLLMResponse(userMsg, context, history);
+
+  return {
+    text, intent: 'manage_orders',
+    cards: [{ type: 'limit_orders', data: { orders: active } }],
+    suggestions: active.length > 0 ? [`cancel order ${active[0].id}`, 'cancel all orders'] : ['set stop loss SOL'],
+  };
+}
+
+// ─── DCA Handler ────────────────────────────────────────────────────
+
+async function handleSetupDCA(
+  params: Record<string, any>,
+  userMsg: string,
+  history: LLMMessage[],
+): Promise<ChatResponse> {
+  const token = (params.token as string)?.toUpperCase();
+  if (!token) {
+    return { text: 'Which token? Try "DCA into SOL $50 daily".', intent: 'dca', cards: [], suggestions: ['dca SOL', 'dca ETH'] };
+  }
+
+  const metrics = await getTokenBySymbol(token);
+  if (!metrics) {
+    return { text: `Token "${token}" not found.`, intent: 'dca', cards: [], suggestions: ['trending'] };
+  }
+
+  const plan = createDCAPlan({
+    token,
+    amountPerBuy: (params.amount_per_buy as number) || 50,
+    intervalHours: (params.interval_hours as number) || 24,
+    totalBuys: (params.total_buys as number) || 10,
+  });
+
+  const intervalLabel = plan.intervalMs >= 86400_000 ? `${(plan.intervalMs / 86400_000).toFixed(0)} day(s)` : `${(plan.intervalMs / 3600_000).toFixed(0)} hours`;
+  const totalCost = plan.amountPerBuy * plan.totalBuys;
+
+  const context = `DCA plan created successfully.
+Plan ID: ${plan.id}
+Token: ${token} (current price: ${formatPrice(metrics.price)})
+Amount per buy: $${plan.amountPerBuy}
+Interval: Every ${intervalLabel}
+Total buys: ${plan.totalBuys}
+Total commitment: $${totalCost}
+Status: ACTIVE
+First buy: Now + ${intervalLabel}
+
+The bot will automatically buy $${plan.amountPerBuy} of ${token} every ${intervalLabel} for ${plan.totalBuys} rounds.`;
+
+  const text = await generateLLMResponse(userMsg, context, history);
+
+  return {
+    text, intent: 'dca',
+    cards: [{ type: 'dca_plan', data: plan }],
+    suggestions: ['show my DCA plans', `${token} price`, 'portfolio'],
+    token,
+  };
+}
+
+async function handleManageDCA(
+  params: Record<string, any>,
+  userMsg: string,
+  history: LLMMessage[],
+): Promise<ChatResponse> {
+  const action = (params.action as string) || 'show';
+  const planId = params.dca_id as string;
+
+  if (action === 'pause' && planId) {
+    const plan = pauseDCA(planId);
+    if (!plan) return { text: 'DCA plan not found or not active.', intent: 'dca', cards: [], suggestions: ['show my DCA plans'] };
+    const text = await generateLLMResponse(userMsg, `DCA plan ${plan.id} (${plan.token}) paused. ${plan.completedBuys}/${plan.totalBuys} buys completed so far.`, history);
+    return { text, intent: 'dca', cards: [{ type: 'dca_plan', data: plan }], suggestions: [`resume dca ${plan.id}`, 'show my DCA plans'] };
+  }
+
+  if (action === 'resume' && planId) {
+    const plan = resumeDCA(planId);
+    if (!plan) return { text: 'DCA plan not found or not paused.', intent: 'dca', cards: [], suggestions: ['show my DCA plans'] };
+    const text = await generateLLMResponse(userMsg, `DCA plan ${plan.id} (${plan.token}) resumed.`, history);
+    return { text, intent: 'dca', cards: [{ type: 'dca_plan', data: plan }], suggestions: ['show my DCA plans', 'portfolio'] };
+  }
+
+  if (action === 'stop' && planId) {
+    const plan = stopDCA(planId);
+    if (!plan) return { text: 'DCA plan not found.', intent: 'dca', cards: [], suggestions: ['show my DCA plans'] };
+    const text = await generateLLMResponse(userMsg, `DCA plan ${plan.id} (${plan.token}) stopped. Total spent: $${plan.totalSpent.toFixed(0)} over ${plan.completedBuys} buys.`, history);
+    return { text, intent: 'dca', cards: [], suggestions: ['portfolio', 'trending'] };
+  }
+
+  const plans = getActivePlans();
+  if (plans.length === 0) {
+    const text = await generateLLMResponse(userMsg, 'No active DCA plans. Start one with "DCA into SOL $50 daily".', history);
+    return { text, intent: 'dca', cards: [], suggestions: ['dca SOL $50 daily', 'dca ETH $100 weekly'] };
+  }
+
+  const context = `Active DCA plans:\n` + plans.map((p, i) => {
+    const intervalLabel = p.intervalMs >= 86400_000 ? `${(p.intervalMs / 86400_000).toFixed(0)}d` : `${(p.intervalMs / 3600_000).toFixed(0)}h`;
+    return `${i + 1}. [${p.id}] ${p.token} — $${p.amountPerBuy} every ${intervalLabel} | ${p.completedBuys}/${p.totalBuys} buys | $${p.totalSpent.toFixed(0)} spent | ${p.status.toUpperCase()}`;
+  }).join('\n');
+
+  const text = await generateLLMResponse(userMsg, context, history);
+
+  return {
+    text, intent: 'dca',
+    cards: plans.map(p => ({ type: 'dca_plan' as const, data: p })),
+    suggestions: plans.length > 0 ? [`pause dca ${plans[0].id}`, `stop dca ${plans[0].id}`] : ['dca SOL'],
+  };
+}
+
+// ─── Price Alert Handler ────────────────────────────────────────────
+
+async function handleSetPriceAlert(
+  params: Record<string, any>,
+  userMsg: string,
+  history: LLMMessage[],
+): Promise<ChatResponse> {
+  const token = (params.token as string)?.toUpperCase();
+  if (!token) {
+    return { text: 'Which token? Try "alert me when SOL hits $200".', intent: 'price_alert', cards: [], suggestions: ['set alert SOL $200'] };
+  }
+
+  const metrics = await getTokenBySymbol(token);
+  if (!metrics) {
+    return { text: `Token "${token}" not found.`, intent: 'price_alert', cards: [], suggestions: ['trending'] };
+  }
+
+  const alert = createPriceAlert({
+    token,
+    targetPrice: params.target_price as number | undefined,
+    direction: params.direction as 'above' | 'below' | undefined,
+    pctChange: params.pct_change as number | undefined,
+    currentPrice: metrics.price,
+  });
+
+  const context = `Price alert set!
+Alert ID: ${alert.id}
+Token: ${token}
+Current Price: ${formatPrice(metrics.price)}
+Alert when: Price goes ${alert.direction} ${formatPrice(alert.targetPrice)}
+Status: ACTIVE`;
+
+  const text = await generateLLMResponse(userMsg, context, history);
+
+  return {
+    text, intent: 'price_alert',
+    cards: [{ type: 'price_alert', data: alert }],
+    suggestions: [`${token} price`, `buy ${token}`, 'my alerts'],
+    token,
+  };
+}
+
+// ─── Existing handlers (portfolio, trending, leaderboard, etc.) ─────
 
 async function fetchPortfolio(): Promise<{ positions: any[]; totalInvested: number; totalSold: number }> {
   try {
     const res = await fetch(`http://localhost:${process.env.PORT ?? 3000}/api/v1/trade/portfolio`);
     if (!res.ok) return { positions: [], totalInvested: 0, totalSold: 0 };
     const data = await res.json() as any;
-    return {
-      positions: data.positions ?? [],
-      totalInvested: data.totalInvested ?? 0,
-      totalSold: data.totalSold ?? 0,
-    };
+    return { positions: data.positions ?? [], totalInvested: data.totalInvested ?? 0, totalSold: data.totalSold ?? 0 };
   } catch { return { positions: [], totalInvested: 0, totalSold: 0 }; }
 }
 
@@ -459,71 +638,90 @@ async function handlePortfolio(userMsg: string, history: LLMMessage[]): Promise<
 
   if (portfolio.positions.length === 0) {
     const text = await generateLLMResponse(userMsg, 'Portfolio is empty. User has no positions yet.', history);
-    return {
-      text, intent: 'portfolio',
-      cards: [],
-      suggestions: ['trending', 'buy SOL $200', 'screen ETH'],
-    };
+    return { text, intent: 'portfolio', cards: [], suggestions: ['trending', 'buy SOL $200', 'screen ETH'] };
   }
 
   const context = portfolioToContext(portfolio);
   const text = await generateLLMResponse(userMsg, context, history);
-
   const holdingSymbols = [...new Set(portfolio.positions.filter((p: any) => p.side === 'buy').map((p: any) => p.symbol))];
 
   return {
     text, intent: 'portfolio',
     cards: [{ type: 'portfolio', data: portfolio }],
     suggestions: [
-      ...holdingSymbols.slice(0, 2).map((s: string) => `sell ${s}`),
+      ...holdingSymbols.slice(0, 2).map((s: string) => `set stop loss ${s}`),
       'trending',
     ],
   };
 }
 
-async function handleSellFromPortfolio(token: string, userMsg: string, history: LLMMessage[]): Promise<ChatResponse> {
-  const portfolio = await fetchPortfolio();
-  const held = portfolio.positions.filter((p: any) => p.side === 'buy' && p.symbol.toUpperCase() === token.toUpperCase());
-
-  if (held.length === 0) {
-    const context = `User wants to sell ${token} but does NOT hold any ${token} in their portfolio. Their holdings: ${portfolio.positions.filter((p: any) => p.side === 'buy').map((p: any) => p.symbol).join(', ') || 'empty'}`;
-    const text = await generateLLMResponse(userMsg, context, history);
-    return {
-      text, intent: 'sell', cards: [], suggestions: ['portfolio', 'trending'],
-    };
+async function handleTrending(userMsg: string, history: LLMMessage[]): Promise<ChatResponse> {
+  const tokens = await fetchTrending();
+  if (tokens.length === 0) {
+    return { text: 'Could not fetch trending tokens right now. Try again in a moment.', intent: 'trending', cards: [], suggestions: ['screen SOL', 'screen ETH'] };
   }
 
-  return handleSell(token, userMsg, history);
+  const context = trendingToContext(tokens);
+  const text = await generateLLMResponse(userMsg, context, history);
+
+  return {
+    text, intent: 'trending',
+    cards: [{ type: 'trending', data: tokens }],
+    suggestions: tokens.slice(0, 3).map(t => `screen ${t.symbol}`),
+  };
 }
 
-async function handleLimitOrder(token: string | null, userMsg: string, history: LLMMessage[]): Promise<ChatResponse> {
-  const context = `User wants to set a conditional/limit order (take-profit, stop-loss, or limit sell/buy)${token ? ` for ${token}` : ''}.
+async function handleRecommend(userMsg: string, history: LLMMessage[]): Promise<ChatResponse> {
+  const tokens = await fetchTrending();
+  if (tokens.length === 0) {
+    return { text: 'Could not fetch token data right now. Try again shortly.', intent: 'recommend', cards: [], suggestions: ['trending'] };
+  }
 
-IMPORTANT: Limit orders, take-profit, and stop-loss are NOT yet supported in this version. Tell the user:
-1. You understand what they want (acknowledge the specific order type)
-2. This feature is coming soon — currently only market buys and sells are available
-3. Offer to execute a market sell now instead if they want to take profit immediately
-4. Or offer to set a price alert (manual check) as a workaround`;
+  const solTokens = tokens.filter(t =>
+    (t.chain === 'solana' || t.chain === 'sol') &&
+    t.priceChange24h > 0 &&
+    t.volume24h > 50_000 &&
+    t.liquidity > 20_000
+  );
+
+  const scored = solTokens.map(t => ({
+    ...t,
+    _recScore: (Math.min(t.priceChange24h, 200) * 0.4) + (Math.log10(Math.max(t.volume24h, 1)) * 8) + (Math.log10(Math.max(t.liquidity, 1)) * 5),
+  })).sort((a, b) => b._recScore - a._recScore);
+
+  const picks = scored.slice(0, 8);
+
+  if (picks.length === 0) {
+    const context = 'No strong Solana token recommendations right now. All trending tokens are either in the red or have low liquidity.';
+    const text = await generateLLMResponse(userMsg, context, history);
+    return { text, intent: 'recommend', cards: [], suggestions: ['trending', 'leaderboard'] };
+  }
+
+  const context = `Top Solana token picks (filtered for green 24h, decent volume & liquidity):\n\n` +
+    picks.map((t, i) => {
+      const mcapStr = t.marketCap > 1e6 ? `${(t.marketCap / 1e6).toFixed(1)}M` : `${(t.marketCap / 1e3).toFixed(0)}K`;
+      return `${i + 1}. **${t.symbol}** — $${t.price < 0.01 ? t.price.toFixed(8) : t.price.toFixed(4)} | +${t.priceChange24h.toFixed(1)}% | Vol $${(t.volume24h / 1e3).toFixed(0)}K | MCap $${mcapStr}`;
+    }).join('\n') +
+    `\n\nAlways screen before buying — say "screen <token>" for a full safety audit.`;
 
   const text = await generateLLMResponse(userMsg, context, history);
 
-  const suggestions: string[] = [];
-  if (token) {
-    suggestions.push(`sell ${token}`, `${token} price`);
-  }
-  suggestions.push('portfolio');
-
-  return { text, intent: 'limit_order', cards: [], suggestions, token: token ?? undefined };
+  return {
+    text, intent: 'recommend',
+    cards: [{ type: 'trending', data: picks }],
+    suggestions: [...picks.slice(0, 2).map(t => `screen ${t.symbol}`), `buy ${picks[0].symbol} $50`],
+  };
 }
 
-async function handleLeaderboard(userMsg: string, history: LLMMessage[]): Promise<ChatResponse> {
-  const traders = await fetchTopTraders('7d', 'pnl_7d');
+async function handleLeaderboard(timeframe: string | undefined, userMsg: string, history: LLMMessage[]): Promise<ChatResponse> {
+  const tf = (timeframe === '30d' ? '30d' : '7d') as '7d' | '30d';
+  const traders = await fetchTopTraders(tf, 'pnl_7d');
   if (traders.length === 0) {
     return { text: 'Could not load the leaderboard right now. Try again shortly.', intent: 'leaderboard', cards: [], suggestions: ['trending'] };
   }
 
   const top = traders.slice(0, 10);
-  const context = `Top 10 Solana traders (7d) from GMGN leaderboard:\n` +
+  const context = `Top 10 Solana traders (${tf}) from GMGN leaderboard:\n` +
     top.map((t, i) => {
       const addr = t.walletAddress;
       const label = t.name || t.twitterUsername || `${addr.slice(0, 6)}...${addr.slice(-4)}`;
@@ -533,8 +731,7 @@ async function handleLeaderboard(userMsg: string, history: LLMMessage[]): Promis
   const text = await generateLLMResponse(userMsg, context, history);
 
   return {
-    text,
-    intent: 'leaderboard',
+    text, intent: 'leaderboard',
     cards: [{
       type: 'leaderboard',
       data: {
@@ -566,18 +763,16 @@ async function handleKOL(userMsg: string, history: LLMMessage[]): Promise<ChatRe
   }
 
   const top = kols.slice(0, 10);
-  const context = `Top KOLs (Key Opinion Leaders / crypto influencers) on Solana right now:\n` +
+  const context = `Top KOLs (Key Opinion Leaders) on Solana:\n` +
     top.map((t, i) => {
       const name = t.name || t.twitterUsername || `${t.walletAddress.slice(0, 6)}...`;
-      return `${i + 1}. @${t.twitterUsername || '?'} (${name}) — PnL $${t.realizedProfit7d.toLocaleString(undefined, { maximumFractionDigits: 0 })} | WR ${(t.winRate7d * 100).toFixed(0)}% | ${t.buys7d} buys | 5x+ trades: ${t.trades5xPlus} | Tags: ${t.tags.join(',')}`;
-    }).join('\n') +
-    '\n\nUser can follow/copy-trade any KOL. Explain what each tag means if relevant (kol = verified influencer, smart_degen = high-risk/high-reward trader, top_followed = most tracked wallet).';
+      return `${i + 1}. @${t.twitterUsername || '?'} (${name}) — PnL $${t.realizedProfit7d.toLocaleString(undefined, { maximumFractionDigits: 0 })} | WR ${(t.winRate7d * 100).toFixed(0)}% | ${t.buys7d} buys | 5x+ trades: ${t.trades5xPlus}`;
+    }).join('\n');
 
   const text = await generateLLMResponse(userMsg, context, history);
 
   return {
-    text,
-    intent: 'kol',
+    text, intent: 'kol',
     cards: [{
       type: 'leaderboard',
       data: {
@@ -603,35 +798,12 @@ async function handleKOL(userMsg: string, history: LLMMessage[]): Promise<ChatRe
   };
 }
 
-async function handleCopyTrade(userMsg: string, history: LLMMessage[]): Promise<ChatResponse> {
-  const t = userMsg.toLowerCase();
-
-  // "my copy trades" / "show copy trades" / "manage copy"
-  if (t.match(/\b(my|manage|active|show).*(copy|copies)/)) {
-    return handleCopyManager(userMsg, history);
-  }
-
-  // "stop/pause/resume copy <wallet>"
-  const stopMatch = t.match(/\b(stop|pause|resume)\s+copy.*?([1-9A-HJ-NP-Za-km-z]{32,44})/);
-  if (stopMatch) {
-    const action = stopMatch[1] as 'stop' | 'pause' | 'resume';
-    const wallet = stopMatch[2];
-    if (action === 'stop') stopCopyTrading(wallet);
-    else if (action === 'pause') pauseCopyTrading(wallet);
-    else resumeCopyTrading(wallet);
-    return handleCopyManager(`Show my copy trades after ${action}`, history);
-  }
-
-  // Extract wallet address to copy
-  const walletMatch = userMsg.match(/([1-9A-HJ-NP-Za-km-z]{32,44})/);
-  const rankMatch = t.match(/#(\d+)/);
-
-  let targetWallet: string | null = walletMatch?.[1] ?? null;
+async function handleCopyTrade(params: Record<string, any>, userMsg: string, history: LLMMessage[]): Promise<ChatResponse> {
+  let targetWallet: string | null = (params.wallet_address as string) ?? null;
   let walletName = '';
 
-  // "#1" means copy the #1 trader from leaderboard
-  if (!targetWallet && rankMatch) {
-    const rank = parseInt(rankMatch[1]);
+  if (!targetWallet && params.trader_rank) {
+    const rank = params.trader_rank as number;
     const traders = await fetchTopTraders('7d', 'pnl_7d');
     if (rank > 0 && rank <= traders.length) {
       const trader = traders[rank - 1];
@@ -641,20 +813,16 @@ async function handleCopyTrade(userMsg: string, history: LLMMessage[]): Promise<
   }
 
   if (!targetWallet) {
-    const context = `User wants to copy-trade but hasn't specified which wallet. Copy trading mirrors another trader's buys/sells automatically (currently simulated, not on-chain). Tell them to pick a trader from the leaderboard or paste a wallet address. Mention they can say "copy trade #1" to copy the top trader.`;
+    const context = `User wants to copy-trade but hasn't specified which wallet. Tell them to pick a trader from the leaderboard or paste a wallet address. They can say "copy trade #1" to copy the top trader.`;
     const text = await generateLLMResponse(userMsg, context, history);
-    return {
-      text, intent: 'copy_trade',
-      cards: [],
-      suggestions: ['show leaderboard', 'kol wallets', 'my copy trades'],
-    };
+    return { text, intent: 'copy_trade', cards: [], suggestions: ['show leaderboard', 'kol wallets', 'my copy trades'] };
   }
 
-  // Return a copy_trade_config card — the Flutter app will render this as a modal
   const shortAddr = `${targetWallet.slice(0, 6)}...${targetWallet.slice(-4)}`;
   const displayName = walletName || shortAddr;
+  const buyAmount = (params.buy_amount as number) || 50;
 
-  const context = `Opening copy trade configuration for wallet ${displayName} (${shortAddr}). The user will configure buy mode, amount, and sell method in the app. This is simulated mode — no real on-chain trades.`;
+  const context = `Opening copy trade configuration for wallet ${displayName} (${shortAddr}). Buy amount: $${buyAmount} per trade.`;
   const text = await generateLLMResponse(userMsg, context, history);
 
   return {
@@ -664,29 +832,28 @@ async function handleCopyTrade(userMsg: string, history: LLMMessage[]): Promise<
       data: {
         walletAddress: targetWallet,
         walletName: displayName,
-        defaults: {
-          buyMode: 'fixed_buy',
-          buyAmount: 50,
-          sellMethod: 'mirror_sell',
-        },
+        defaults: { buyMode: 'fixed_buy', buyAmount, sellMethod: 'mirror_sell' },
       },
     } as any],
     suggestions: ['my copy trades', 'leaderboard', 'portfolio'],
   };
 }
 
-async function handleCopyManager(userMsg: string, history: LLMMessage[]): Promise<ChatResponse> {
+async function handleCopyManager(params: Record<string, any>, userMsg: string, history: LLMMessage[]): Promise<ChatResponse> {
+  const action = (params.action as string) || 'show';
+  const wallet = params.wallet_address as string;
+
+  if (action === 'stop' && wallet) { stopCopyTrading(wallet); }
+  else if (action === 'pause' && wallet) { pauseCopyTrading(wallet); }
+  else if (action === 'resume' && wallet) { resumeCopyTrading(wallet); }
+
   const configs = getCopyConfigs();
   const activities = getRecentActivity(10);
 
   if (configs.length === 0) {
     const context = 'User has no active copy trades. Suggest starting one from the leaderboard.';
     const text = await generateLLMResponse(userMsg, context, history);
-    return {
-      text, intent: 'copy_trade',
-      cards: [],
-      suggestions: ['show leaderboard', 'kol wallets', 'trending'],
-    };
+    return { text, intent: 'copy_trade', cards: [], suggestions: ['show leaderboard', 'kol wallets', 'trending'] };
   }
 
   const configsCtx = configs.map((c, i) => {
@@ -709,23 +876,14 @@ async function handleCopyManager(userMsg: string, history: LLMMessage[]): Promis
       type: 'copy_trade_manager',
       data: {
         configs: configs.map(c => ({
-          walletAddress: c.walletAddress,
-          walletName: c.walletName,
-          buyMode: c.buyMode,
-          buyAmount: c.buyAmount,
-          sellMethod: c.sellMethod,
-          enabled: c.enabled,
-          totalCopied: c.totalCopied,
-          totalPnl: c.totalPnl,
-          createdAt: c.createdAt,
+          walletAddress: c.walletAddress, walletName: c.walletName,
+          buyMode: c.buyMode, buyAmount: c.buyAmount, sellMethod: c.sellMethod,
+          enabled: c.enabled, totalCopied: c.totalCopied, totalPnl: c.totalPnl, createdAt: c.createdAt,
         })),
         recentActivity: activities.map(a => ({
-          tokenSymbol: a.tokenSymbol,
-          side: a.side,
-          copyAmountUsd: a.copyAmountUsd,
-          timestamp: a.timestamp,
-          status: a.status,
-          skipReason: a.skipReason,
+          tokenSymbol: a.tokenSymbol, side: a.side,
+          copyAmountUsd: a.copyAmountUsd, timestamp: a.timestamp,
+          status: a.status, skipReason: a.skipReason,
         })),
       },
     } as any],
@@ -733,67 +891,274 @@ async function handleCopyManager(userMsg: string, history: LLMMessage[]): Promis
   };
 }
 
-async function handleTrending(userMsg: string, history: LLMMessage[]): Promise<ChatResponse> {
-  const tokens = await fetchTrending();
-  if (tokens.length === 0) {
-    return { text: 'Could not fetch trending tokens right now. Try again in a moment.', intent: 'trending', cards: [], suggestions: ['screen SOL', 'screen ETH'] };
+// ─── Conditional Rules Handler ──────────────────────────────────────
+
+async function handleSetConditionalRule(
+  params: Record<string, any>,
+  userMsg: string,
+  history: LLMMessage[],
+): Promise<ChatResponse> {
+  const condition = params.condition as ConditionType;
+  if (!condition) {
+    return { text: 'What condition do you want? Try "buy SOL when it drops 40%" or "buy when RSI goes below 30".', intent: 'conditional_rule', cards: [], suggestions: ['buy SOL when drops 40%', 'buy when RSI below 30'] };
   }
 
-  const context = trendingToContext(tokens);
+  const token = ((params.token as string) || '').toUpperCase();
+  const action = (params.action as ActionType) || 'buy';
+  const amount = (params.amount_usd as number) || 200;
+
+  let conditionParams: Record<string, any> = {};
+  let description = '';
+
+  if (condition === 'pct_drop_from' || condition === 'pct_rise_from') {
+    if (!token) return { text: 'Which token? Try "buy SOL when it drops 40%".', intent: 'conditional_rule', cards: [], suggestions: [] };
+    const metrics = await getTokenBySymbol(token);
+    if (!metrics) return { text: `Token "${token}" not found.`, intent: 'conditional_rule', cards: [], suggestions: ['trending'] };
+    const pct = (params.target_pct as number) || 20;
+    conditionParams = { reference_price: metrics.price, target_pct: pct };
+    const dir = condition === 'pct_drop_from' ? 'drops' : 'rises';
+    description = `${action.toUpperCase()} $${amount} of ${token} when price ${dir} ${pct}% from ${formatPrice(metrics.price)}`;
+  } else if (condition === 'price_below' || condition === 'price_above') {
+    if (!token) return { text: 'Which token?', intent: 'conditional_rule', cards: [], suggestions: [] };
+    const target = params.target_price as number;
+    if (!target) return { text: 'What price? Try "buy SOL when it goes below $80".', intent: 'conditional_rule', cards: [], suggestions: [] };
+    conditionParams = { target_price: target };
+    description = `${action.toUpperCase()} $${amount} of ${token} when price goes ${condition === 'price_below' ? 'below' : 'above'} ${formatPrice(target)}`;
+  } else if (condition === 'rsi_below' || condition === 'rsi_above') {
+    if (!token) return { text: 'Which token? Try "buy SOL when RSI below 30".', intent: 'conditional_rule', cards: [], suggestions: [] };
+    const threshold = (params.rsi_threshold as number) || (condition === 'rsi_below' ? 30 : 70);
+    conditionParams = { threshold };
+    description = `${action.toUpperCase()} $${amount} of ${token} when RSI goes ${condition === 'rsi_below' ? 'below' : 'above'} ${threshold}`;
+  } else if (condition === 'volume_spike') {
+    if (!token) return { text: 'Which token?', intent: 'conditional_rule', cards: [], suggestions: [] };
+    const mult = (params.volume_multiplier as number) || 3;
+    conditionParams = { multiplier: mult };
+    description = `${action.toUpperCase()} $${amount} of ${token} when volume spikes ${mult}x above average`;
+  } else if (condition === 'top_by_volume') {
+    conditionParams = {};
+    description = `${action.toUpperCase()} $${amount} of the top Solana token by volume`;
+  } else if (condition === 'cross_token_trigger') {
+    const watchToken = ((params.watch_token as string) || '').toUpperCase();
+    const watchPrice = params.watch_price as number;
+    const watchDir = (params.watch_direction as string) || 'above';
+    if (!watchToken || !watchPrice || !token) {
+      return { text: 'Try "buy SOL if ETH breaks above $3000".', intent: 'conditional_rule', cards: [], suggestions: [] };
+    }
+    conditionParams = { watch_token: watchToken, target_price: watchPrice, direction: watchDir };
+    description = `${action.toUpperCase()} $${amount} of ${token} when ${watchToken} goes ${watchDir} ${formatPrice(watchPrice)}`;
+  } else {
+    conditionParams = {};
+    description = `${action.toUpperCase()} $${amount} of ${token || 'token'} on ${condition.replace(/_/g, ' ')}`;
+  }
+
+  const rule = createRule({
+    token: token || 'SOL',
+    condition,
+    conditionParams,
+    action,
+    actionParams: { amount_usd: amount },
+    description,
+    ttlHours: 168,
+  });
+
+  const context = `Conditional rule created successfully!
+Rule ID: ${rule.id}
+Description: ${description}
+Status: ACTIVE
+Expires: 7 days
+Checking: Every 30 seconds
+
+The rule will automatically ${action} when the condition is met.`;
+
   const text = await generateLLMResponse(userMsg, context, history);
 
   return {
-    text, intent: 'trending',
-    cards: [{ type: 'trending', data: tokens }],
-    suggestions: tokens.slice(0, 3).map(t => `screen ${t.symbol}`),
+    text, intent: 'conditional_rule',
+    cards: [{ type: 'conditional_rule', data: rule }],
+    suggestions: ['show my rules', token ? `${token} price` : 'trending', 'portfolio'],
+    token: token || undefined,
   };
 }
 
-async function handleRecommend(userMsg: string, history: LLMMessage[]): Promise<ChatResponse> {
-  const tokens = await fetchTrending();
-  if (tokens.length === 0) {
-    return { text: 'Could not fetch token data right now. Try again shortly.', intent: 'recommend', cards: [], suggestions: ['trending'] };
+async function handleManageRules(
+  params: Record<string, any>,
+  userMsg: string,
+  history: LLMMessage[],
+): Promise<ChatResponse> {
+  if (params.action === 'cancel' && params.rule_id) {
+    const cancelled = cancelRule(params.rule_id as string);
+    if (!cancelled) return { text: 'Rule not found or already cancelled.', intent: 'manage_rules', cards: [], suggestions: ['show my rules'] };
+    const text = await generateLLMResponse(userMsg, `Rule ${cancelled.id} cancelled: ${cancelled.description}`, history);
+    return { text, intent: 'manage_rules', cards: [], suggestions: ['show my rules', 'portfolio'] };
   }
 
-  // Filter: Solana tokens, positive 24h change, decent volume & liquidity
-  const solTokens = tokens.filter(t =>
-    (t.chain === 'solana' || t.chain === 'sol') &&
-    t.priceChange24h > 0 &&
-    t.volume24h > 50_000 &&
-    t.liquidity > 20_000
-  );
-
-  // Score by a blend of volume, price change, and liquidity
-  const scored = solTokens.map(t => ({
-    ...t,
-    _recScore: (Math.min(t.priceChange24h, 200) * 0.4) + (Math.log10(Math.max(t.volume24h, 1)) * 8) + (Math.log10(Math.max(t.liquidity, 1)) * 5),
-  })).sort((a, b) => b._recScore - a._recScore);
-
-  const picks = scored.slice(0, 8);
-
-  if (picks.length === 0) {
-    const context = `No strong Solana token recommendations right now. All trending tokens are either in the red or have low liquidity. Suggest the user check back later or look at the full trending list.`;
-    const text = await generateLLMResponse(userMsg, context, history);
-    return { text, intent: 'recommend', cards: [], suggestions: ['trending', 'leaderboard'] };
+  const active = getActiveRules();
+  if (active.length === 0) {
+    const text = await generateLLMResponse(userMsg, 'No active conditional rules. Try "buy SOL when it drops 40%" or "buy when RSI below 30".', history);
+    return { text, intent: 'manage_rules', cards: [], suggestions: ['buy SOL when drops 40%', 'buy when RSI below 30'] };
   }
 
-  const context = `Top Solana token picks right now (filtered for green 24h, decent volume & liquidity):\n\n` +
-    picks.map((t, i) => {
-      const mcapStr = t.marketCap > 1e6 ? `${(t.marketCap / 1e6).toFixed(1)}M` : `${(t.marketCap / 1e3).toFixed(0)}K`;
-      return `${i + 1}. **${t.symbol}** — $${t.price < 0.01 ? t.price.toFixed(8) : t.price.toFixed(4)} | +${t.priceChange24h.toFixed(1)}% | Vol $${(t.volume24h / 1e3).toFixed(0)}K | MCap $${mcapStr} | Liq $${(t.liquidity / 1e3).toFixed(0)}K`;
-    }).join('\n') +
-    `\n\nThese are ranked by a blend of momentum (24h change), volume, and liquidity. Higher volume + green = stronger signal. Always screen before buying — say "screen <token>" for a full safety audit.`;
+  const context = `Active conditional rules:\n` + active.map((r, i) =>
+    `${i + 1}. [${r.id}] ${r.description} — Status: ${r.status.toUpperCase()}`
+  ).join('\n');
 
   const text = await generateLLMResponse(userMsg, context, history);
 
   return {
-    text,
-    intent: 'recommend',
-    cards: [{ type: 'trending', data: picks }],
-    suggestions: [
-      ...picks.slice(0, 2).map(t => `screen ${t.symbol}`),
-      `buy ${picks[0].symbol} $50`,
-    ],
+    text, intent: 'manage_rules',
+    cards: active.map(r => ({ type: 'conditional_rule' as const, data: r })),
+    suggestions: active.length > 0 ? [`cancel rule ${active[0].id}`] : [],
+  };
+}
+
+// ─── Technical Analysis Handler ─────────────────────────────────────
+
+async function handleTAIndicators(
+  token: string,
+  userMsg: string,
+  history: LLMMessage[],
+): Promise<ChatResponse> {
+  if (!token) {
+    return { text: 'Which token? Try "RSI SOL" or "technical analysis ETH".', intent: 'ta_indicators', cards: [], suggestions: ['RSI SOL', 'TA ETH'] };
+  }
+
+  const ta = await getTAForToken(token);
+  if (!ta) {
+    const fallbackMetrics = await getTokenBySymbol(token);
+    if (!fallbackMetrics) return { text: `Token "${token}" not found.`, intent: 'ta_indicators', cards: [], suggestions: ['trending'] };
+
+    const context = `Technical analysis data not available for ${token} — insufficient OHLCV history (need 50+ candles). This usually means the token is too new or Birdeye doesn't have enough data.
+
+Available price data:
+Price: ${formatPrice(fallbackMetrics.price)}
+24h: ${fallbackMetrics.priceChange24h > 0 ? '+' : ''}${fallbackMetrics.priceChange24h.toFixed(1)}%
+1h: ${fallbackMetrics.priceChange1h > 0 ? '+' : ''}${fallbackMetrics.priceChange1h.toFixed(1)}%
+Volume: ${formatUsd(fallbackMetrics.volume24h)}`;
+
+    const text = await generateLLMResponse(userMsg, context, history);
+    return { text, intent: 'ta_indicators', cards: [], suggestions: [`screen ${token}`, 'trending'], token };
+  }
+
+  const rsiLabel = ta.rsi14 < 30 ? 'OVERSOLD' : ta.rsi14 > 70 ? 'OVERBOUGHT' : 'NEUTRAL';
+  const macdLabel = ta.macd.histogram > 0 ? 'BULLISH' : 'BEARISH';
+  const bbPosition = ta.price > ta.bollinger.upper ? 'ABOVE upper band' : ta.price < ta.bollinger.lower ? 'BELOW lower band' : 'within bands';
+  const trendLabel = ta.sma20 > ta.sma50 ? 'BULLISH (SMA20 > SMA50)' : 'BEARISH (SMA20 < SMA50)';
+
+  const context = `Technical Analysis for ${token}:
+
+Price: ${formatPrice(ta.price)}
+
+RSI (14): ${ta.rsi14.toFixed(1)} — ${rsiLabel}
+${ta.rsi14 < 30 ? '⚡ Potential buy signal (oversold)' : ta.rsi14 > 70 ? '⚠️ Potential sell signal (overbought)' : 'No extreme signal'}
+
+MACD: ${ta.macd.macd.toFixed(6)} | Signal: ${ta.macd.signal.toFixed(6)} | Histogram: ${ta.macd.histogram > 0 ? '+' : ''}${ta.macd.histogram.toFixed(6)} — ${macdLabel}
+
+Bollinger Bands: Upper ${formatPrice(ta.bollinger.upper)} | Mid ${formatPrice(ta.bollinger.middle)} | Lower ${formatPrice(ta.bollinger.lower)}
+Price is ${bbPosition} | Bandwidth: ${ta.bollinger.bandwidth.toFixed(2)}%
+
+Moving Averages: SMA20 ${formatPrice(ta.sma20)} | SMA50 ${formatPrice(ta.sma50)} — Trend: ${trendLabel}
+EMA12 ${formatPrice(ta.ema12)} | EMA26 ${formatPrice(ta.ema26)}
+
+Signals: ${ta.goldenCross ? '🟢 GOLDEN CROSS detected' : ''} ${ta.deathCross ? '🔴 DEATH CROSS detected' : ''} ${ta.volumeSpike ? '📈 VOLUME SPIKE detected' : ''} ${!ta.goldenCross && !ta.deathCross && !ta.volumeSpike ? 'No special signals' : ''}`;
+
+  const text = await generateLLMResponse(userMsg, context, history);
+
+  const suggestions: string[] = [];
+  if (ta.rsi14 < 30) suggestions.push(`buy ${token} $200`);
+  if (ta.rsi14 > 70) suggestions.push(`sell ${token}`);
+  suggestions.push(`buy ${token} when RSI below 30`, `screen ${token}`);
+
+  return {
+    text, intent: 'ta_indicators',
+    cards: [{ type: 'ta_indicators', data: { token, ...ta } }],
+    suggestions: suggestions.slice(0, 3),
+    token,
+  };
+}
+
+// ─── Smart Discovery Handler ────────────────────────────────────────
+
+async function handleSmartDiscovery(
+  params: Record<string, any>,
+  userMsg: string,
+  history: LLMMessage[],
+): Promise<ChatResponse> {
+  const filter = params.filter as string;
+  const tokens = await fetchTrending();
+
+  if (tokens.length === 0) {
+    return { text: 'Could not fetch token data right now.', intent: 'smart_discovery', cards: [], suggestions: ['trending'] };
+  }
+
+  let filtered: TokenMetrics[] = [];
+  let title = '';
+
+  switch (filter) {
+    case 'new_launches': {
+      const maxAge = (params.max_age_minutes as number) || 60;
+      filtered = tokens.filter(t => t.ageMinutes <= maxAge && t.volume24h > 10_000).sort((a, b) => a.ageMinutes - b.ageMinutes);
+      title = `New launches (last ${maxAge}min)`;
+      break;
+    }
+    case 'high_volume': {
+      const minVol = (params.min_volume as number) || 500_000;
+      filtered = tokens.filter(t => t.volume24h >= minVol).sort((a, b) => b.volume24h - a.volume24h);
+      title = `High volume tokens (>${formatUsd(minVol)})`;
+      break;
+    }
+    case 'buy_pressure': {
+      filtered = tokens.filter(t => {
+        const buys = t.txnsBuys24h ?? 0;
+        const sells = t.txnsSells24h ?? 0;
+        const total = buys + sells;
+        return total > 100 && (buys / total) > 0.55;
+      }).sort((a, b) => {
+        const ratioA = (a.txnsBuys24h ?? 0) / ((a.txnsBuys24h ?? 0) + (a.txnsSells24h ?? 0));
+        const ratioB = (b.txnsBuys24h ?? 0) / ((b.txnsBuys24h ?? 0) + (b.txnsSells24h ?? 0));
+        return ratioB - ratioA;
+      });
+      title = 'Tokens with strong buy pressure';
+      break;
+    }
+    case 'low_mcap_gem': {
+      const maxMcap = (params.max_mcap as number) || 1_000_000;
+      filtered = tokens.filter(t =>
+        t.marketCap > 0 && t.marketCap < maxMcap && t.volume24h > 50_000 && t.priceChange24h > 0 && t.liquidity > 20_000
+      ).sort((a, b) => b.priceChange24h - a.priceChange24h);
+      title = `Low-cap gems (<${formatUsd(maxMcap)})`;
+      break;
+    }
+    case 'whale_activity': {
+      filtered = tokens.filter(t => t.volume24h > 1_000_000).sort((a, b) => b.volume24h - a.volume24h);
+      title = 'High whale activity (>$1M volume)';
+      break;
+    }
+    default:
+      filtered = tokens.slice(0, 10);
+      title = 'Token discovery';
+  }
+
+  const picks = filtered.slice(0, 8);
+
+  if (picks.length === 0) {
+    const text = await generateLLMResponse(userMsg, `No tokens found matching "${filter}" filter right now. Try broadening your criteria or check back later.`, history);
+    return { text, intent: 'smart_discovery', cards: [], suggestions: ['trending', 'recommend'] };
+  }
+
+  const context = `${title}:\n\n` + picks.map((t, i) => {
+    const buys = t.txnsBuys24h ?? 0;
+    const sells = t.txnsSells24h ?? 0;
+    const buyRatio = buys + sells > 0 ? ((buys / (buys + sells)) * 100).toFixed(0) : '?';
+    const ageLabel = t.ageMinutes < 60 ? `${t.ageMinutes}m old` : t.ageMinutes < 1440 ? `${(t.ageMinutes / 60).toFixed(0)}h old` : `${(t.ageMinutes / 1440).toFixed(0)}d old`;
+    return `${i + 1}. **${t.symbol}** — ${formatPrice(t.price)} | ${t.priceChange24h > 0 ? '+' : ''}${t.priceChange24h.toFixed(1)}% | Vol ${formatUsd(t.volume24h)} | MCap ${formatUsd(t.marketCap)} | Buy ${buyRatio}% | ${ageLabel}`;
+  }).join('\n');
+
+  const text = await generateLLMResponse(userMsg, context, history);
+
+  return {
+    text, intent: 'smart_discovery',
+    cards: [{ type: 'smart_discovery', data: { title, tokens: picks } }],
+    suggestions: picks.slice(0, 2).map(t => `screen ${t.symbol}`).concat(['trending']),
   };
 }
 
@@ -812,114 +1177,235 @@ async function handleGeneralQuestion(userMsg: string, history: LLMMessage[]): Pr
 
 function handleHelp(): ChatResponse {
   return {
-    text: `Here's what I can do:\n\n• **"screen SOL"** — Full safety audit (mint, freeze, LP, holders, insiders)\n• **"buy ETH $200"** — Buy a token\n• **"sell BONK"** — Sell from your portfolio\n• **"portfolio"** — View your holdings and P&L\n• **"trending"** — See what's hot right now\n• **"leaderboard"** — Top Solana traders\n• **"kol wallets"** — See KOL/influencer buys\n• **"copy trade #1"** — Copy a top trader's moves\n• **"my copy trades"** — Manage active copy trades\n• Paste any contract address to auto-screen it`,
-    intent: 'help', cards: [],
-    suggestions: ['portfolio', 'trending', 'leaderboard', 'my copy trades'],
+    text: `Here's everything I can do — just type naturally!\n\n` +
+
+    `**🔄 TRADING**\n` +
+    `• **"buy SOL $200"** or **"ape 500 into ETH"** — Market buy\n` +
+    `• **"sell BONK"** or **"dump my SOL bags"** — Sell\n` +
+    `• **"set stop loss SOL 10%"** — Auto-sell if price drops\n` +
+    `• **"take profit ETH at $4000"** — Auto-sell at target\n` +
+    `• **"DCA into SOL $50 daily"** — Recurring buys\n` +
+    `• **"show my orders"** — Active orders & DCA plans\n\n` +
+
+    `**📊 CONDITIONAL RULES** _(the power stuff)_\n` +
+    `• **"buy SOL when it drops 40%"** — Buy the dip auto\n` +
+    `• **"buy when RSI goes below 30"** — TA-based entry\n` +
+    `• **"sell when MACD crosses bearish"** — TA-based exit\n` +
+    `• **"buy top volume token on Solana"** — Smart auto-pick\n` +
+    `• **"buy SOL if ETH breaks $3000"** — Cross-token trigger\n` +
+    `• **"buy on golden cross"** — MA crossover signal\n` +
+    `• **"show my rules"** — Active conditional rules\n\n` +
+
+    `**📈 TECHNICAL ANALYSIS**\n` +
+    `• **"RSI SOL"** or **"technical analysis ETH"** — Full TA dashboard\n` +
+    `• Shows RSI, MACD, Bollinger Bands, SMA/EMA, volume spikes\n\n` +
+
+    `**🔍 DISCOVERY**\n` +
+    `• **"screen SOL"** — Full safety audit (rug check, holders, LP)\n` +
+    `• **"trending"** — Hot tokens right now\n` +
+    `• **"new tokens launched today"** — Fresh launches\n` +
+    `• **"high volume tokens"** — Volume leaders\n` +
+    `• **"low cap gems under 1M"** — Micro-cap finds\n` +
+    `• **"tokens with buy pressure"** — Buy/sell ratio filter\n` +
+    `• Paste any **contract address** to auto-screen it\n\n` +
+
+    `**🧠 SMART MONEY**\n` +
+    `• **"leaderboard"** — Top traders by PnL\n` +
+    `• **"kol wallets"** — Influencer wallets\n` +
+    `• **"copy trade #1"** — Mirror a trader\n` +
+    `• **"my copy trades"** — Manage copies\n\n` +
+
+    `**💼 PORTFOLIO**\n` +
+    `• **"portfolio"** — Holdings & P&L\n` +
+    `• **"alert me when SOL hits $200"** — Price alerts\n\n` +
+
+    `**💡 PRO TIPS:**\n` +
+    `• Combine actions: _"buy SOL $500 and set stop loss at 15%"_\n` +
+    `• Use natural language: _"what's the safest memecoin rn"_\n` +
+    `• Follow up: After screening, say _"buy it"_ — I remember context\n` +
+    `• Risk manage: Always screen before buying, set stop losses`,
+    intent: 'help',
+    cards: [],
+    suggestions: ['trending', 'RSI SOL', 'new tokens today', 'leaderboard', 'buy SOL when drops 20%'],
   };
 }
 
-// ─── Conversation memory (in-memory per session) ─────────────────────
+// ─── Conversation memory (in-memory per session) ────────────────────
 
 const conversations = new Map<string, LLMMessage[]>();
 let lastToken: string | null = null;
 
-// ─── Main chat processor ─────────────────────────────────────────────
+function getConversationContext(history: LLMMessage[], currentLastToken: string | null): string {
+  const parts: string[] = [];
+  if (currentLastToken) parts.push(`Last discussed token: ${currentLastToken}`);
+  const recent = history.slice(-4);
+  if (recent.length > 0) {
+    parts.push('Recent messages: ' + recent.map(m => `[${m.role}] ${m.content.slice(0, 80)}`).join(' | '));
+  }
+  return parts.join('\n');
+}
+
+// ─── Main chat processor ────────────────────────────────────────────
 
 export async function processChat(message: string, conversationId?: string): Promise<ChatResponse> {
   const convId = conversationId ?? 'default';
   if (!conversations.has(convId)) conversations.set(convId, []);
   const history = conversations.get(convId)!;
 
-  const intent = detectIntent(message);
-  const token = extractToken(message) ?? lastToken;
-  const contractAddress = extractContractAddress(message);
+  const conversationContext = getConversationContext(history, lastToken);
+  const parsed = await extractIntent(message, conversationContext);
+
+  const { action, params } = parsed;
+  const token = ((params.token as string) || lastToken || '').toUpperCase() || null;
 
   history.push({ role: 'user', content: message });
 
   let resp: ChatResponse;
 
-  // Copy trade intents contain wallet addresses — don't route them to contract screening
-  const isCopyIntent = intent === 'copy_trade' || intent === 'copy_manage';
-
-  if (contractAddress && !isCopyIntent) {
-    resp = await handleScreenAddress(contractAddress, message, history);
-  } else {
-    switch (intent) {
-      case 'confirm_buy':
-      case 'confirm_sell':
-        resp = token
-          ? await handleConfirmBuy(token, message, history)
-          : { text: 'Which token? Try "confirm buy SOL $200".', intent: 'confirm_buy', cards: [], suggestions: ['buy SOL $200'] };
-        break;
-      case 'screen':
-        resp = token
-          ? await handleScreen(token, message, history)
-          : { text: 'Which token do you want me to check? Try "screen SOL" or paste a contract address.', intent: 'screen', cards: [], suggestions: ['screen SOL', 'screen ETH', 'screen PEPE'] };
-        break;
-      case 'price':
-        resp = token
-          ? await handlePrice(token, message, history)
-          : { text: 'Which token? Try "SOL price" or "ETH price".', intent: 'price', cards: [], suggestions: ['sol price', 'eth price'] };
-        break;
-      case 'buy':
-        resp = token
-          ? await handleBuy(token, message, history)
-          : { text: 'Which token do you want to buy? Try "buy SOL $200".', intent: 'buy', cards: [], suggestions: ['buy SOL $200', 'buy ETH $500'] };
-        break;
-      case 'sell':
-        resp = token
-          ? await handleSellFromPortfolio(token, message, history)
-          : { text: 'Which token do you want to sell? Try "sell SOL $100" or check your **portfolio** first.', intent: 'sell', cards: [], suggestions: ['portfolio', 'sell SOL $100'] };
-        break;
-      case 'limit_order':
-        resp = await handleLimitOrder(token, message, history);
-        break;
-      case 'analyze':
-        resp = token
-          ? await handleAnalyze(token, message, history)
-          : { text: 'Which token should I analyze? Try "analyze SOL".', intent: 'analyze', cards: [], suggestions: ['analyze SOL', 'analyze ETH'] };
-        break;
-      case 'positions':
-      case 'pnl':
-      case 'portfolio':
-        resp = await handlePortfolio(message, history);
-        break;
-      case 'trending':
-      case 'hot':
-        resp = await handleTrending(message, history);
-        break;
-      case 'recommend':
-        resp = await handleRecommend(message, history);
-        break;
-      case 'leaderboard':
-        resp = await handleLeaderboard(message, history);
-        break;
-      case 'kol':
-        resp = await handleKOL(message, history);
-        break;
-      case 'copy_trade':
-        resp = await handleCopyTrade(message, history);
-        break;
-      case 'copy_manage':
-        resp = await handleCopyManager(message, history);
-        break;
-      case 'help':
-        resp = handleHelp();
-        break;
-      case 'unknown':
-      default:
-        if (token) {
-          resp = await handleAnalyze(token, message, history);
-        } else {
-          resp = await handleGeneralQuestion(message, history);
-        }
+  switch (action) {
+    case 'execute_trade': {
+      const side = params.side as string;
+      const t = (params.token as string)?.toUpperCase() || token;
+      if (!t) {
+        resp = { text: `Which token do you want to ${side}? Try "${side} SOL $200".`, intent: side, cards: [], suggestions: [`${side} SOL $200`] };
+      } else if (side === 'sell') {
+        resp = await handleSellFromPortfolio(t, params.amount_usd as number, message, history);
+      } else {
+        resp = await handleBuy(t, params.amount_usd as number, params.slippage_pct as number, message, history);
+      }
+      break;
     }
+
+    case 'confirm_trade': {
+      const side = (params.side as string) || 'buy';
+      const t = (params.token as string)?.toUpperCase() || token;
+      if (!t) {
+        resp = { text: 'Which token? Try "confirm buy SOL $200".', intent: 'confirm_trade', cards: [], suggestions: ['buy SOL $200'] };
+      } else {
+        resp = await handleConfirmTrade(side, t, params.amount_usd as number, message, history);
+      }
+      break;
+    }
+
+    case 'set_limit_order':
+      resp = await handleSetLimitOrder({ ...params, token: params.token || token }, message, history);
+      break;
+
+    case 'manage_limit_orders':
+      resp = await handleManageLimitOrders(params, message, history);
+      break;
+
+    case 'setup_dca':
+      resp = await handleSetupDCA({ ...params, token: params.token || token }, message, history);
+      break;
+
+    case 'manage_dca':
+      resp = await handleManageDCA(params, message, history);
+      break;
+
+    case 'set_price_alert':
+      resp = await handleSetPriceAlert({ ...params, token: params.token || token }, message, history);
+      break;
+
+    case 'screen_token': {
+      const contractAddress = params.contract_address as string;
+      const t = (params.token as string)?.toUpperCase() || token;
+      if (contractAddress) {
+        resp = await handleScreenAddress(contractAddress, message, history);
+      } else if (t) {
+        resp = await handleScreen(t, message, history);
+      } else {
+        resp = { text: 'Which token do you want me to check? Try "screen SOL" or paste a contract address.', intent: 'screen', cards: [], suggestions: ['screen SOL', 'screen ETH'] };
+      }
+      break;
+    }
+
+    case 'get_price': {
+      const t = (params.token as string)?.toUpperCase() || token;
+      if (!t) {
+        resp = { text: 'Which token? Try "SOL price" or "ETH price".', intent: 'price', cards: [], suggestions: ['sol price', 'eth price'] };
+      } else {
+        resp = await handlePrice(t, message, history);
+      }
+      break;
+    }
+
+    case 'analyze_token': {
+      const t = (params.token as string)?.toUpperCase() || token;
+      if (!t) {
+        resp = { text: 'Which token should I analyze? Try "analyze SOL".', intent: 'analyze', cards: [], suggestions: ['analyze SOL'] };
+      } else {
+        resp = await handleAnalyze(t, message, history);
+      }
+      break;
+    }
+
+    case 'get_portfolio':
+      resp = await handlePortfolio(message, history);
+      break;
+
+    case 'get_trending':
+      resp = await handleTrending(message, history);
+      break;
+
+    case 'get_recommendations':
+      resp = await handleRecommend(message, history);
+      break;
+
+    case 'get_leaderboard':
+      resp = await handleLeaderboard(params.timeframe as string, message, history);
+      break;
+
+    case 'get_kol_wallets':
+      resp = await handleKOL(message, history);
+      break;
+
+    case 'copy_trade':
+      resp = await handleCopyTrade(params, message, history);
+      break;
+
+    case 'manage_copy_trades':
+      resp = await handleCopyManager(params, message, history);
+      break;
+
+    case 'set_conditional_rule':
+      resp = await handleSetConditionalRule({ ...params, token: params.token || token }, message, history);
+      break;
+
+    case 'manage_rules':
+      resp = await handleManageRules(params, message, history);
+      break;
+
+    case 'get_ta_indicators': {
+      const t = (params.token as string)?.toUpperCase() || token;
+      if (!t) {
+        resp = { text: 'Which token? Try "RSI SOL" or "TA ETH".', intent: 'ta_indicators', cards: [], suggestions: ['RSI SOL', 'TA ETH'] };
+      } else {
+        resp = await handleTAIndicators(t, message, history);
+      }
+      break;
+    }
+
+    case 'smart_discovery':
+      resp = await handleSmartDiscovery(params, message, history);
+      break;
+
+    case 'show_help':
+      resp = handleHelp();
+      break;
+
+    case 'general_question':
+    default:
+      if (token) {
+        resp = await handleAnalyze(token, message, history);
+      } else {
+        resp = await handleGeneralQuestion(message, history);
+      }
   }
 
   if (resp.token) lastToken = resp.token;
   history.push({ role: 'assistant', content: resp.text });
 
-  // Keep history bounded
   if (history.length > 20) {
     conversations.set(convId, history.slice(-12));
   }
@@ -927,7 +1413,7 @@ export async function processChat(message: string, conversationId?: string): Pro
   return resp;
 }
 
-// ─── Route ────────────────────────────────────────────────────────────
+// ─── Route ──────────────────────────────────────────────────────────
 
 export async function chatRoutes(app: FastifyInstance) {
   app.post<{
@@ -947,7 +1433,6 @@ export async function chatRoutes(app: FastifyInstance) {
     return response;
   });
 
-  // Copy trade config confirmation from Flutter modal
   app.post<{
     Body: {
       walletAddress: string;
@@ -976,21 +1461,15 @@ export async function chatRoutes(app: FastifyInstance) {
     const shortAddr = `${walletAddress.slice(0, 6)}...${walletAddress.slice(-4)}`;
 
     return {
-      text: `Copy trading started for **${config.walletName}** (${shortAddr}). Buy mode: ${buyMode}, Amount: $${buyAmount}, Sell: ${sellMethod}. Trades will be simulated — say **"my copy trades"** to manage.`,
+      text: `Copy trading started for **${config.walletName}** (${shortAddr}). Buy mode: ${buyMode}, Amount: $${buyAmount}, Sell: ${sellMethod}. Say **"my copy trades"** to manage.`,
       intent: 'copy_trade',
       cards: [{
         type: 'copy_trade_manager',
         data: {
           configs: [result].map(c => ({
-            walletAddress: c.walletAddress,
-            walletName: c.walletName,
-            buyMode: c.buyMode,
-            buyAmount: c.buyAmount,
-            sellMethod: c.sellMethod,
-            enabled: c.enabled,
-            totalCopied: c.totalCopied,
-            totalPnl: c.totalPnl,
-            createdAt: c.createdAt,
+            walletAddress: c.walletAddress, walletName: c.walletName,
+            buyMode: c.buyMode, buyAmount: c.buyAmount, sellMethod: c.sellMethod,
+            enabled: c.enabled, totalCopied: c.totalCopied, totalPnl: c.totalPnl, createdAt: c.createdAt,
           })),
           recentActivity: [],
         },

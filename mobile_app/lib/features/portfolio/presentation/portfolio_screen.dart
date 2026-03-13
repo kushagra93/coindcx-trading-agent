@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../../core/api/models.dart';
 import '../../../core/theme/app_theme.dart';
@@ -124,8 +125,84 @@ class PortfolioScreen extends ConsumerWidget {
           style: CoinDCXTypography.heading3.copyWith(color: colors.generalForegroundPrimary),
         ),
         const SizedBox(height: CoinDCXSpacing.sm),
-        ...positions.map((p) => _buildPositionCard(context, p, colors)),
+        ...positions.where((p) => p.side == 'buy').map((p) => _buildPositionCard(context, p, colors)),
+        const SizedBox(height: CoinDCXSpacing.lg),
+        Text(
+          'Transaction History',
+          style: CoinDCXTypography.heading3.copyWith(color: colors.generalForegroundPrimary),
+        ),
+        const SizedBox(height: CoinDCXSpacing.sm),
+        ...positions.map((p) => _buildTransactionRow(context, p, colors)),
       ],
+    );
+  }
+
+  Widget _buildTransactionRow(BuildContext context, TradeRecord tx, CoinDCXColorScheme colors) {
+    final isBuy = tx.side == 'buy';
+    final time = DateTime.fromMillisecondsSinceEpoch(tx.timestamp);
+    final timeStr = '${time.hour.toString().padLeft(2, '0')}:${time.minute.toString().padLeft(2, '0')}';
+    final dateStr = '${time.day}/${time.month}';
+
+    return Container(
+      margin: const EdgeInsets.only(bottom: 2),
+      padding: const EdgeInsets.symmetric(horizontal: CoinDCXSpacing.sm, vertical: CoinDCXSpacing.xs),
+      decoration: BoxDecoration(
+        color: colors.generalBackgroundBgL2,
+        borderRadius: BorderRadius.circular(CoinDCXSpacing.radiusSm),
+      ),
+      child: Row(
+        children: [
+          Icon(
+            isBuy ? Icons.arrow_upward_rounded : Icons.arrow_downward_rounded,
+            size: 14,
+            color: isBuy ? colors.positiveBackgroundPrimary : colors.negativeBackgroundPrimary,
+          ),
+          const SizedBox(width: 6),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text('${tx.side.toUpperCase()} ${tx.symbol}',
+                  style: CoinDCXTypography.buttonSm.copyWith(color: colors.generalForegroundPrimary, fontSize: 12)),
+                Text('$dateStr $timeStr · ${tx.chain} · ${tx.status}',
+                  style: CoinDCXTypography.caption.copyWith(color: colors.generalForegroundTertiary, fontSize: 9)),
+              ],
+            ),
+          ),
+          Column(
+            crossAxisAlignment: CrossAxisAlignment.end,
+            children: [
+              Text('\$${(tx.amount * tx.price).toStringAsFixed(2)}',
+                style: CoinDCXTypography.numberSm.copyWith(
+                  color: isBuy ? colors.positiveBackgroundPrimary : colors.negativeBackgroundPrimary, fontSize: 11)),
+              Text('${tx.amount.toStringAsFixed(4)} @ \$${tx.price.toStringAsFixed(4)}',
+                style: CoinDCXTypography.caption.copyWith(color: colors.generalForegroundTertiary, fontSize: 8)),
+            ],
+          ),
+          if (tx.txHash != null) ...[
+            const SizedBox(width: 4),
+            GestureDetector(
+              onTap: () {
+                final chain = tx.chain.toLowerCase();
+                final explorerUrl = chain == 'solana'
+                    ? 'https://solscan.io/tx/${tx.txHash}'
+                    : chain == 'ethereum'
+                        ? 'https://etherscan.io/tx/${tx.txHash}'
+                        : chain == 'base'
+                            ? 'https://basescan.org/tx/${tx.txHash}'
+                            : chain == 'arbitrum'
+                                ? 'https://arbiscan.io/tx/${tx.txHash}'
+                                : 'https://solscan.io/tx/${tx.txHash}';
+                Clipboard.setData(ClipboardData(text: explorerUrl));
+                ScaffoldMessenger.of(context).showSnackBar(
+                  SnackBar(content: Text('Explorer URL copied: $explorerUrl'), duration: const Duration(seconds: 2)),
+                );
+              },
+              child: Icon(Icons.open_in_new_rounded, size: 12, color: colors.actionBackgroundPrimary),
+            ),
+          ],
+        ],
+      ),
     );
   }
 

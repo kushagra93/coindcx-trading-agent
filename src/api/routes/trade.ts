@@ -10,6 +10,7 @@ interface TradeRequest {
   side: 'buy' | 'sell';
   amountUsd: number;
   chain?: string;
+  slippagePct?: number;
 }
 
 interface TradeRecord {
@@ -56,7 +57,7 @@ export async function tradeRoutes(app: FastifyInstance) {
   });
 
   app.post<{ Body: TradeRequest }>('/api/v1/trade/execute', async (request, reply) => {
-    const { symbol, side, amountUsd } = request.body ?? {};
+    const { symbol, side, amountUsd, slippagePct } = request.body ?? {};
 
     if (!symbol || !side || !amountUsd) {
       reply.code(400).send({ error: 'symbol, side, and amountUsd are required' });
@@ -82,14 +83,30 @@ export async function tradeRoutes(app: FastifyInstance) {
       log.warn({ symbol, grade: screening.grade }, 'Trade on risky token');
     }
 
+    const slippage = Math.min(slippagePct ?? (metrics.liquidity > 100_000 ? 1 : 5), 50);
+    const isMajor = metrics.liquidity > 100_000;
+    const priceImpact = isMajor ? 0.1 : Math.min(amountUsd / (metrics.liquidity || 1) * 100, 15);
+    const executionPrice = side === 'buy'
+      ? metrics.price * (1 + priceImpact / 100)
+      : metrics.price * (1 - priceImpact / 100);
+
+    if (priceImpact > slippage) {
+      reply.code(400).send({
+        error: `Estimated price impact (${priceImpact.toFixed(2)}%) exceeds slippage tolerance (${slippage}%). Increase slippage or reduce amount.`,
+        priceImpact,
+        slippage,
+      });
+      return;
+    }
+
     tradeCounter++;
     const trade: TradeRecord = {
       id: `trade_${tradeCounter}_${Date.now()}`,
       symbol: metrics.symbol,
       side,
       amountUsd,
-      price: metrics.price,
-      quantity: amountUsd / metrics.price,
+      price: executionPrice,
+      quantity: amountUsd / executionPrice,
       chain: metrics.chain as string,
       status: config.dryRun ? 'dry_run' : 'executed',
       txHash: config.dryRun ? null : `0x${Date.now().toString(16)}`,
@@ -97,12 +114,14 @@ export async function tradeRoutes(app: FastifyInstance) {
     };
 
     positions.set(trade.id, trade);
-    log.info({ tradeId: trade.id, symbol, side, amountUsd, dryRun: config.dryRun }, 'Trade processed');
+    log.info({ tradeId: trade.id, symbol, side, amountUsd, slippage, priceImpact: priceImpact.toFixed(2), dryRun: config.dryRun }, 'Trade processed');
 
     return {
       trade,
+      slippage,
+      priceImpact: parseFloat(priceImpact.toFixed(2)),
       message: config.dryRun
-        ? `DRY RUN: Would ${side} $${amountUsd} of ${symbol} at ${metrics.price}`
+        ? `DRY RUN: Would ${side} $${amountUsd} of ${symbol} at ${executionPrice.toFixed(8)} (${priceImpact.toFixed(2)}% impact, ${slippage}% max slippage)`
         : `${side.toUpperCase()} order executed for $${amountUsd} of ${symbol}`,
     };
   });

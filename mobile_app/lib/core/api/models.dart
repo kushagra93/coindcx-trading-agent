@@ -262,6 +262,8 @@ class TradeRecord {
   final double price;
   final String status;
   final String chain;
+  final int timestamp;
+  final String? txHash;
 
   const TradeRecord({
     required this.id,
@@ -271,6 +273,8 @@ class TradeRecord {
     required this.price,
     required this.status,
     required this.chain,
+    required this.timestamp,
+    this.txHash,
   });
 
   factory TradeRecord.fromJson(Map<String, dynamic> json) {
@@ -278,10 +282,14 @@ class TradeRecord {
       id: json['id'] as String? ?? '',
       symbol: json['symbol'] as String? ?? '',
       side: json['side'] as String? ?? '',
-      amount: (json['amount'] as num?)?.toDouble() ?? 0.0,
+      amount: (json['amount'] as num?)?.toDouble()
+          ?? (json['quantity'] as num?)?.toDouble()
+          ?? 0.0,
       price: (json['price'] as num?)?.toDouble() ?? 0.0,
       status: json['status'] as String? ?? '',
       chain: json['chain'] as String? ?? '',
+      timestamp: (json['timestamp'] as num?)?.toInt() ?? DateTime.now().millisecondsSinceEpoch,
+      txHash: json['txHash'] as String?,
     );
   }
 }
