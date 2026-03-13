@@ -1,4 +1,5 @@
 import { createChildLogger } from '../core/logger.js';
+import { config } from '../core/config.js';
 
 const log = createChildLogger('llm');
 
@@ -14,6 +15,18 @@ function getIntentModel(): string {
 
 function getResponseModel(): string {
   return process.env.OPENROUTER_MODEL || 'minimax/minimax-m2.5';
+}
+
+function isSageMakerEnabled(): boolean {
+  return config.sagemaker.useSageMakerInference;
+}
+
+function getSageMakerIntentEndpoint(): string {
+  return config.sagemaker.intentEndpointName;
+}
+
+function getSageMakerChatEndpoint(): string {
+  return config.sagemaker.chatEndpointName;
 }
 
 export interface LLMMessage {
@@ -84,6 +97,21 @@ export async function chatCompletion(
   messages: LLMMessage[],
   options?: { temperature?: number; maxTokens?: number },
 ): Promise<string> {
+  if (isSageMakerEnabled() && getSageMakerChatEndpoint()) {
+    try {
+      const { invokeEndpoint } = await import('../ml/sagemaker.js');
+      const result = await invokeEndpoint(getSageMakerChatEndpoint(), {
+        messages: messages.map((m) => ({ role: m.role, content: m.content })),
+        temperature: options?.temperature ?? 0.7,
+        max_tokens: options?.maxTokens ?? 1024,
+      });
+      if (result.content) return result.content;
+      log.warn('SageMaker chat returned empty, falling back to OpenRouter');
+    } catch (err) {
+      log.warn({ err }, 'SageMaker chat inference failed, falling back to OpenRouter');
+    }
+  }
+
   const data = await callOpenRouter(getResponseModel(), messages, options) as any;
   const content = data.choices?.[0]?.message?.content;
   if (!content) {
@@ -98,6 +126,27 @@ export async function functionCall(
   tools: ToolFunction[],
   options?: { temperature?: number; maxTokens?: number },
 ): Promise<{ toolCalls: ToolCall[]; content: string | null }> {
+  if (isSageMakerEnabled() && getSageMakerIntentEndpoint()) {
+    try {
+      const { invokeEndpoint } = await import('../ml/sagemaker.js');
+      const result = await invokeEndpoint(getSageMakerIntentEndpoint(), {
+        messages: messages.map((m) => ({ role: m.role, content: m.content })),
+        tools,
+        temperature: options?.temperature ?? 0.1,
+        max_tokens: options?.maxTokens ?? 512,
+      });
+      if (result.toolCalls.length > 0 || result.content) {
+        return {
+          toolCalls: result.toolCalls as ToolCall[],
+          content: result.content,
+        };
+      }
+      log.warn('SageMaker intent returned empty, falling back to OpenRouter');
+    } catch (err) {
+      log.warn({ err }, 'SageMaker intent inference failed, falling back to OpenRouter');
+    }
+  }
+
   const data = await callOpenRouter(getIntentModel(), messages, {
     temperature: options?.temperature ?? 0.1,
     maxTokens: options?.maxTokens ?? 512,
@@ -112,5 +161,11 @@ export async function functionCall(
 }
 
 export function isLLMAvailable(): boolean {
-  return !!getApiKey();
+  return !!getApiKey() || (isSageMakerEnabled() && !!getSageMakerIntentEndpoint());
+}
+
+export function getInferenceBackend(): 'sagemaker' | 'openrouter' | 'none' {
+  if (isSageMakerEnabled() && getSageMakerIntentEndpoint()) return 'sagemaker';
+  if (getApiKey()) return 'openrouter';
+  return 'none';
 }

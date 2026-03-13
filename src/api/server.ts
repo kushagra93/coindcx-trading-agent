@@ -21,6 +21,7 @@ import { tradeRoutes } from './routes/trade.js';
 import { brokerRoutes } from './routes/broker.js';
 import { gatewayRoutes } from './routes/gateway.js';
 import { perpsRoutes } from './routes/perps.js';
+import { mlRoutes } from './routes/ml.js';
 import { VALID_CHAINS } from '../core/chain-registry.js';
 import { registerApiKey } from '../adapters/generic-adapter.js';
 
@@ -198,6 +199,7 @@ export async function createServer(gateway?: WsGateway) {
   await app.register(brokerRoutes);
   await app.register(gatewayRoutes);
   await app.register(perpsRoutes);
+  await app.register(mlRoutes);
 
   // Image proxy
   app.get<{ Querystring: { url: string } }>('/api/v1/proxy/image', async (request, reply) => {

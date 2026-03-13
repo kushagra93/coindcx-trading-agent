@@ -82,6 +82,19 @@ export interface AppConfig {
     anthropicApiKey: string;
   };
 
+  sagemaker: {
+    region: string;
+    roleArn: string;
+    s3Bucket: string;
+    s3Prefix: string;
+    intentEndpointName: string;
+    chatEndpointName: string;
+    trainingInstanceType: string;
+    inferenceInstanceType: string;
+    baseModelId: string;
+    useSageMakerInference: boolean;
+  };
+
   hostApp: {
     adapter: string;
     coinDcx: {
@@ -196,6 +209,19 @@ export function loadConfig(): AppConfig {
 
     ai: {
       anthropicApiKey: envOrDefault('ANTHROPIC_API_KEY', ''),
+    },
+
+    sagemaker: {
+      region: envOrDefault('SAGEMAKER_REGION', envOrDefault('AWS_REGION', 'us-west-2')),
+      roleArn: envOrDefault('SAGEMAKER_ROLE_ARN', ''),
+      s3Bucket: envOrDefault('SAGEMAKER_S3_BUCKET', ''),
+      s3Prefix: envOrDefault('SAGEMAKER_S3_PREFIX', 'cerebro-training'),
+      intentEndpointName: envOrDefault('SAGEMAKER_INTENT_ENDPOINT', ''),
+      chatEndpointName: envOrDefault('SAGEMAKER_CHAT_ENDPOINT', ''),
+      trainingInstanceType: envOrDefault('SAGEMAKER_TRAINING_INSTANCE', 'ml.g5.2xlarge'),
+      inferenceInstanceType: envOrDefault('SAGEMAKER_INFERENCE_INSTANCE', 'ml.g5.xlarge'),
+      baseModelId: envOrDefault('SAGEMAKER_BASE_MODEL', 'mistralai/Mistral-7B-Instruct-v0.3'),
+      useSageMakerInference: envOrDefault('SAGEMAKER_USE_INFERENCE', 'true').toLowerCase() === 'true',
     },
 
     hostApp: {
