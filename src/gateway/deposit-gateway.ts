@@ -41,7 +41,7 @@ export async function processDeposit(
 
   // 1. Verify KYC status
   if (!event.kyc_verified) {
-    audit({
+    await audit({
       actor: 'deposit-gateway',
       actorTier: 'system',
       action: 'deposit-rejected',
@@ -73,7 +73,7 @@ export async function processDeposit(
   // then evm-wallet.ts or solana-wallet.ts to credit balance
 
   // 3. Audit the deposit
-  audit({
+  await audit({
     actor: 'deposit-gateway',
     actorTier: 'system',
     action: 'deposit-processed',

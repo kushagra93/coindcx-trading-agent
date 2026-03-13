@@ -1,26 +1,20 @@
 /**
  * Risk Analyzer Helper — wraps ALL existing risk infrastructure.
- *
- * Reuses:
- *   - risk-manager.ts validateTrade(), kellySize(), detectRegime()
- *   - circuit-breaker.ts isTradingAllowed(), shouldTrip()
- *   - parameter-bounds.ts clampPositionSize(), clampLeverage(), clampSlippage()
- *
  * Returns: risk score 0-100, RiskAssessment, adjusted position size.
  */
 
-import type { Redis } from 'ioredis';
 import { createChildLogger } from '../core/logger.js';
+import type { WsClient } from '../core/ws-client.js';
 import { BaseHelper } from './base-helper.js';
 import type { HelperTask, HelperResult } from './types.js';
 
 const log = createChildLogger('risk-analyzer');
 
 export interface RiskAssessment {
-  riskScore: number;            // 0-100
+  riskScore: number;
   regime: 'low-volatility' | 'medium-volatility' | 'high-volatility';
-  kellyFraction: number;        // 0-1 optimal position fraction
-  adjustedAmountUsd: number;    // Position size after risk adjustment
+  kellyFraction: number;
+  adjustedAmountUsd: number;
   circuitBreakerStatus: 'open' | 'closed' | 'half-open';
   violations: string[];
   recommendations: string[];
@@ -28,8 +22,8 @@ export interface RiskAssessment {
 }
 
 export class RiskAnalyzerAgent extends BaseHelper {
-  constructor(redis: Redis) {
-    super(redis, 'risk-analyzer');
+  constructor(wsClient: WsClient) {
+    super(wsClient, 'risk-analyzer');
   }
 
   async processTask(task: HelperTask): Promise<HelperResult> {
@@ -77,7 +71,6 @@ export class RiskAnalyzerAgent extends BaseHelper {
     const violations: string[] = [];
     const recommendations: string[] = [];
 
-    // 1. Position size validation (parameter-bounds.ts logic)
     const maxPositionPct = 25;
     const positionPct = (amountUsd / portfolioValueUsd) * 100;
     const clampedPct = Math.min(positionPct, maxPositionPct);
@@ -87,7 +80,6 @@ export class RiskAnalyzerAgent extends BaseHelper {
       violations.push(`Position size ${positionPct.toFixed(1)}% exceeds max ${maxPositionPct}%`);
     }
 
-    // 2. Volatility regime detection (risk-manager.ts logic)
     const vol = currentVolatility ?? 0.5;
     let regime: RiskAssessment['regime'] = 'medium-volatility';
     if (vol < 0.3) regime = 'low-volatility';
@@ -97,13 +89,11 @@ export class RiskAnalyzerAgent extends BaseHelper {
       recommendations.push('High volatility detected — consider reducing position size by 50%');
     }
 
-    // 3. Kelly Criterion sizing (risk-manager.ts logic)
     const wr = winRate ?? 0.55;
     const wl = avgWinLoss ?? 1.5;
     const kellyFraction = Math.max(0, wr - (1 - wr) / wl);
-    const kellyAdjusted = adjustedAmountUsd * Math.min(kellyFraction, 0.25); // Half-Kelly max
+    const kellyAdjusted = adjustedAmountUsd * Math.min(kellyFraction, 0.25);
 
-    // 4. Compute risk score
     let riskScore = 0;
     riskScore += positionPct > 10 ? 20 : positionPct > 5 ? 10 : 5;
     riskScore += regime === 'high-volatility' ? 30 : regime === 'medium-volatility' ? 15 : 5;
@@ -111,8 +101,7 @@ export class RiskAnalyzerAgent extends BaseHelper {
     riskScore += kellyFraction < 0.05 ? 25 : kellyFraction < 0.15 ? 15 : 5;
     riskScore = Math.min(100, riskScore);
 
-    // 5. Daily loss check
-    const maxDailyLoss = portfolioValueUsd * 0.20; // 20% max daily loss
+    const maxDailyLoss = portfolioValueUsd * 0.20;
     if (amountUsd > maxDailyLoss) {
       violations.push(`Trade amount exceeds 20% daily loss limit`);
       riskScore = Math.min(100, riskScore + 20);

@@ -101,7 +101,7 @@ export class ApprovalEngine {
         this.redis,
       );
 
-      audit({
+      await audit({
         actor: 'master-agent',
         actorTier: 'admin',
         action: 'trade-approved',
@@ -156,7 +156,7 @@ export class ApprovalEngine {
     reason: string,
     corrId: string,
   ): ApprovalResult {
-    audit({
+    void audit({
       actor: 'master-agent',
       actorTier: 'admin',
       action: 'trade-rejected',

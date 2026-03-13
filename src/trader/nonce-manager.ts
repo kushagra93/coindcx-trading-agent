@@ -1,66 +1,72 @@
-import { ethers } from 'ethers';
 import { createChildLogger } from '../core/logger.js';
+import { getRedis } from '../core/redis.js';
 import { getProvider } from '../wallet/evm-wallet.js';
 
 const log = createChildLogger('nonce-manager');
 
-// Per-wallet nonce tracking with chained-promise mutex (no TOCTOU race)
-const nonceChains = new Map<string, Promise<void>>();
-const currentNonces = new Map<string, number>();
+const NONCE_KEY_PREFIX = 'nonce:';
+const NONCE_LOCK_PREFIX = 'nonce-lock:';
+const NONCE_TTL_SECONDS = 3600; // 1 hour
 
-function walletKey(walletAddress: string, chainId?: number): string {
-  return `${walletAddress}:${chainId ?? 'default'}`;
+function nonceKey(walletAddress: string, chainId?: number): string {
+  return `${NONCE_KEY_PREFIX}${walletAddress}:${chainId ?? 'default'}`;
+}
+
+function lockKey(walletAddress: string, chainId?: number): string {
+  return `${NONCE_LOCK_PREFIX}${walletAddress}:${chainId ?? 'default'}`;
 }
 
 /**
- * Get the next nonce for a wallet, ensuring sequential ordering.
- * Uses a chained-promise mutex — each call chains on the previous,
- * eliminating the TOCTOU race in the old await-then-lock pattern.
+ * Get the next nonce for a wallet using Redis atomic INCR.
+ * Initializes from chain state if key doesn't exist.
+ * Uses a simple lock to prevent concurrent initialization.
  */
 export async function getNextNonce(walletAddress: string, chainId?: number): Promise<number> {
-  const key = walletKey(walletAddress, chainId);
+  const redis = getRedis();
+  const key = nonceKey(walletAddress, chainId);
+  const lock = lockKey(walletAddress, chainId);
 
-  const noncePromise = (nonceChains.get(key) ?? Promise.resolve()).then(async () => {
-    let nonce = currentNonces.get(key);
-
-    if (nonce === undefined) {
-      // First time — fetch from chain
-      const provider = getProvider(chainId);
-      nonce = await provider.getTransactionCount(walletAddress, 'pending');
-      log.info({ walletAddress, nonce, chainId }, 'Initialized nonce from chain');
+  const exists = await redis.exists(key);
+  if (!exists) {
+    const acquired = await redis.set(lock, '1', 'EX', 10, 'NX');
+    if (acquired) {
+      try {
+        const provider = getProvider(chainId);
+        const chainNonce = await provider.getTransactionCount(walletAddress, 'pending');
+        await redis.set(key, (chainNonce - 1).toString(), 'EX', NONCE_TTL_SECONDS);
+        log.info({ walletAddress, nonce: chainNonce, chainId }, 'Initialized nonce from chain');
+      } finally {
+        await redis.del(lock);
+      }
     } else {
-      nonce++;
+      // Wait for another process to initialize
+      let retries = 20;
+      while (retries-- > 0 && !(await redis.exists(key))) {
+        await new Promise(r => setTimeout(r, 50));
+      }
     }
+  }
 
-    currentNonces.set(key, nonce);
-    return nonce;
-  });
-
-  // Chain the next caller behind this one (ignore the return value for the chain)
-  nonceChains.set(key, noncePromise.then(() => {}, () => {}));
-
-  return noncePromise;
+  const nonce = await redis.incr(key);
+  await redis.expire(key, NONCE_TTL_SECONDS);
+  return nonce;
 }
 
-/**
- * Reset nonce for a wallet (e.g., after detecting nonce mismatch).
- */
 export async function resetNonce(walletAddress: string, chainId?: number): Promise<void> {
-  const key = walletKey(walletAddress, chainId);
+  const redis = getRedis();
+  const key = nonceKey(walletAddress, chainId);
   const provider = getProvider(chainId);
   const nonce = await provider.getTransactionCount(walletAddress, 'pending');
-  currentNonces.set(key, nonce - 1); // Will be incremented on next getNextNonce
+  await redis.set(key, (nonce - 1).toString(), 'EX', NONCE_TTL_SECONDS);
   log.info({ walletAddress, nonce, chainId }, 'Nonce reset from chain');
 }
 
-/**
- * Mark a nonce as failed (decrement so it can be reused).
- */
-export function rollbackNonce(walletAddress: string, chainId?: number): void {
-  const key = walletKey(walletAddress, chainId);
-  const current = currentNonces.get(key);
-  if (current !== undefined && current > 0) {
-    currentNonces.set(key, current - 1);
-    log.info({ walletAddress, newNonce: current - 1 }, 'Nonce rolled back');
+export async function rollbackNonce(walletAddress: string, chainId?: number): Promise<void> {
+  const redis = getRedis();
+  const key = nonceKey(walletAddress, chainId);
+  const current = await redis.get(key);
+  if (current !== null && parseInt(current) > 0) {
+    await redis.decr(key);
+    log.info({ walletAddress, newNonce: parseInt(current) - 1 }, 'Nonce rolled back');
   }
 }

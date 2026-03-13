@@ -4,13 +4,14 @@ import { createChildLogger } from '../core/logger.js';
 import { audit } from '../audit/audit-logger.js';
 import { emergencyHalt, resumeTrading, isGlobalHalt } from '../risk/circuit-breaker.js';
 import type { Chain, RiskSettings, StrategyType, RiskLevel } from '../core/types.js';
+import { WsHub } from '../core/ws-hub.js';
+import type { WsMessage, OperationsManifest } from '../core/ws-types.js';
 import { AgentRegistry } from './agent-registry.js';
 import { CommandBus } from './command-bus.js';
 import { EventCollector } from './event-collector.js';
-import { HeartbeatMonitor } from './heartbeat-monitor.js';
 import { PolicyEngine } from './policy-engine.js';
 import { ApprovalEngine } from './approval-engine.js';
-import type { ManagedAgent, SupervisorStats, GlobalPolicy } from './types.js';
+import type { ManagedAgent, SupervisorStats, GlobalPolicy, AgentEventType } from './types.js';
 import type { TradeApprovalRequest } from '../security/types.js';
 import { createRootCertificate, storeCertificate, storeAgentKey } from '../security/trust-chain.js';
 import { recordFee, getFeeSummary, reconcileFees, generateRegulatoryReport } from './fee-ledger.js';
@@ -19,36 +20,35 @@ import type { FeeType } from './fee-ledger.js';
 const log = createChildLogger('master-agent');
 
 /**
- * The Master Agent (formerly Supervisor) — top of the 4-tier hierarchy.
- * Controls the exchange-level operation:
- *   - Root CA for the trust chain
- *   - Trade approval (issues one-time tokens)
- *   - Immutable fee ledger
- *   - Broker registration and management
- *   - Agent lifecycle across all tiers
- *   - Global policy enforcement
- *   - Emergency controls
+ * The Master Agent — top of the 4-tier hierarchy.
  *
- * Alias: `Supervisor` is kept for backward compatibility.
+ * Per the MDC architecture, the Master Agent:
+ *   - NEVER holds WebSocket connections directly (gateways do this)
+ *   - Publishes commands via Redis Pub/Sub → Gateway Cluster → Agents
+ *   - Consumes upstream agent events from Redis Stream
+ *   - Stores broadcast checkpoints in ops:latest for reconnecting agents
+ *   - Manages operations manifest and hot config via Redis
  */
 export class MasterAgent {
   readonly registry: AgentRegistry;
   readonly commandBus: CommandBus;
   readonly policyEngine: PolicyEngine;
+  readonly wsHub: WsHub;
   private approvalEngine: ApprovalEngine | null = null;
   private eventCollector: EventCollector;
-  private heartbeatMonitor: HeartbeatMonitor;
+  private deadAgentCallbacks: ((agentId: string) => void)[] = [];
   private redis: Redis;
   private masterAgentId: string = 'master-agent';
   private masterPrivateKey: string | null = null;
   private recentEvents: Array<{ type: string; agentId: string; timestamp: number; payload: Record<string, unknown> }> = [];
 
-  constructor(redisUrl: string, deadTimeoutMs = 60_000) {
+  constructor(redisUrl: string) {
     this.redis = new Redis(redisUrl);
+    this.wsHub = new WsHub(redisUrl);
     this.registry = new AgentRegistry(this.redis);
-    this.commandBus = new CommandBus(this.redis);
+    this.commandBus = new CommandBus(this.wsHub);
     this.policyEngine = new PolicyEngine(this.redis);
-    this.eventCollector = new EventCollector(this.redis, this.registry, async (event) => {
+    this.eventCollector = new EventCollector(this.registry, async (event) => {
       this.recentEvents.unshift({
         type: event.type,
         agentId: event.agentId,
@@ -57,7 +57,6 @@ export class MasterAgent {
       });
       if (this.recentEvents.length > 500) this.recentEvents.length = 500;
     });
-    this.heartbeatMonitor = new HeartbeatMonitor(this.redis, this.registry, deadTimeoutMs);
   }
 
   // ═══════════════════════════════════════════════
@@ -67,31 +66,38 @@ export class MasterAgent {
   async start(): Promise<void> {
     log.info('Master Agent starting...');
 
-    // Initialize trust chain root CA
     await this.initTrustChain();
 
-    // Start subsystems
-    this.eventCollector.start().catch(err => log.error({ err }, 'Event collector crashed'));
-    this.heartbeatMonitor.start().catch(err => log.error({ err }, 'Heartbeat monitor crashed'));
+    await this.wsHub.start();
 
-    this.heartbeatMonitor.onDeadAgent((agentId) => {
-      log.warn({ agentId }, 'Dead agent detected — marking as error');
-      audit({
-        actor: this.masterAgentId,
-        actorTier: 'master',
-        action: 'dead-agent-detected',
-        resource: agentId,
-        success: true,
-      });
+    this.wsHub.onUpstream((agentId, userId, tier, message) => {
+      if (message.type === 'event') {
+        this.eventCollector.handleEvent({
+          id: message.corrId ?? '',
+          type: message.payload.type as AgentEventType,
+          agentId,
+          userId,
+          payload: message.payload.data as Record<string, unknown> ?? message.payload,
+          timestamp: message.timestamp,
+          corr_id: message.corrId,
+        });
+      } else if (message.type === 'heartbeat') {
+        void this.handleHeartbeatMetrics(agentId, message.payload);
+      }
     });
+
+    await this.publishDefaultManifest();
 
     log.info('Master Agent started');
   }
 
+  onDeadAgent(callback: (agentId: string) => void): void {
+    this.deadAgentCallbacks.push(callback);
+  }
+
   async stop(): Promise<void> {
     log.info('Master Agent stopping...');
-    await this.eventCollector.stop();
-    await this.heartbeatMonitor.stop();
+    await this.wsHub.stop();
     this.redis.disconnect();
     log.info('Master Agent stopped');
   }
@@ -115,6 +121,44 @@ export class MasterAgent {
     );
 
     log.info({ masterAgentId: this.masterAgentId }, 'Trust chain initialized (root CA)');
+  }
+
+  // ═══════════════════════════════════════════════
+  // Operations Manifest
+  // ═══════════════════════════════════════════════
+
+  private async publishDefaultManifest(): Promise<void> {
+    const manifest: OperationsManifest = {
+      version: 1,
+      updatedAt: new Date().toISOString(),
+      operations: [
+        {
+          id: 'emergency-halt',
+          channel: 'ops:broadcast',
+          description: 'Halt all trading immediately',
+          payloadSchema: { reason: 'string' },
+          requiredAgentVersion: '1.0.0',
+          appliesTo: ['user', 'broker', 'helper'],
+        },
+        {
+          id: 'fee-update',
+          channel: 'ops:broadcast',
+          description: 'Update fee rates for all agents',
+          payloadSchema: { feeRate: 'number' },
+          requiredAgentVersion: '1.0.0',
+          appliesTo: ['user', 'broker'],
+        },
+        {
+          id: 'policy-change',
+          channel: 'ops:broadcast',
+          description: 'Update global trading policy',
+          payloadSchema: { policy: 'object' },
+          requiredAgentVersion: '1.0.0',
+          appliesTo: ['user', 'broker', 'helper'],
+        },
+      ],
+    };
+    await this.wsHub.publishManifest(manifest);
   }
 
   // ═══════════════════════════════════════════════
@@ -161,7 +205,7 @@ export class MasterAgent {
 
     await this.registry.register(agent);
 
-    audit({
+    await audit({
       actor: issuedBy,
       actorTier: 'admin',
       action: 'create-agent',
@@ -181,7 +225,7 @@ export class MasterAgent {
 
     await this.commandBus.sendCommand('start', agentId, issuedBy);
     await this.registry.updateState(agentId, 'running');
-    audit({ actor: issuedBy, actorTier: 'admin', action: 'start-agent', resource: agentId, success: true });
+    await audit({ actor: issuedBy, actorTier: 'admin', action: 'start-agent', resource: agentId, success: true });
   }
 
   async stopAgent(agentId: string, issuedBy: string): Promise<void> {
@@ -190,7 +234,7 @@ export class MasterAgent {
 
     await this.commandBus.sendCommand('stop', agentId, issuedBy);
     await this.registry.updateState(agentId, 'stopped');
-    audit({ actor: issuedBy, actorTier: 'admin', action: 'stop-agent', resource: agentId, success: true });
+    await audit({ actor: issuedBy, actorTier: 'admin', action: 'stop-agent', resource: agentId, success: true });
   }
 
   async pauseAgent(agentId: string, issuedBy: string): Promise<void> {
@@ -200,7 +244,7 @@ export class MasterAgent {
 
     await this.commandBus.sendCommand('pause', agentId, issuedBy);
     await this.registry.updateState(agentId, 'paused');
-    audit({ actor: issuedBy, actorTier: 'admin', action: 'pause-agent', resource: agentId, success: true });
+    await audit({ actor: issuedBy, actorTier: 'admin', action: 'pause-agent', resource: agentId, success: true });
   }
 
   async resumeAgent(agentId: string, issuedBy: string): Promise<void> {
@@ -210,7 +254,7 @@ export class MasterAgent {
 
     await this.commandBus.sendCommand('resume', agentId, issuedBy);
     await this.registry.updateState(agentId, 'running');
-    audit({ actor: issuedBy, actorTier: 'admin', action: 'resume-agent', resource: agentId, success: true });
+    await audit({ actor: issuedBy, actorTier: 'admin', action: 'resume-agent', resource: agentId, success: true });
   }
 
   async destroyAgent(agentId: string, issuedBy: string): Promise<void> {
@@ -220,7 +264,7 @@ export class MasterAgent {
     await this.commandBus.sendCommand('destroy', agentId, issuedBy, {}, 'high');
     await this.registry.updateState(agentId, 'destroying');
     setTimeout(async () => { await this.registry.unregister(agentId); }, 5_000);
-    audit({ actor: issuedBy, actorTier: 'admin', action: 'destroy-agent', resource: agentId, success: true });
+    await audit({ actor: issuedBy, actorTier: 'admin', action: 'destroy-agent', resource: agentId, success: true });
   }
 
   // ═══════════════════════════════════════════════
@@ -277,7 +321,7 @@ export class MasterAgent {
     };
 
     await this.registry.register(agent);
-    audit({ actor: issuedBy, actorTier: 'admin', action: 'register-broker', resource: agentId, details: { jurisdiction }, success: true });
+    await audit({ actor: issuedBy, actorTier: 'admin', action: 'register-broker', resource: agentId, details: { jurisdiction }, success: true });
     log.info({ agentId, jurisdiction, issuedBy }, 'Broker agent registered');
     return agent;
   }
@@ -292,7 +336,7 @@ export class MasterAgent {
     const agent = await this.registry.get(agentId);
     if (!agent) throw new Error(`Agent ${agentId} not found`);
     await this.commandBus.sendCommand('force-close-positions', agentId, issuedBy, {}, 'emergency');
-    audit({ actor: issuedBy, actorTier: 'admin', action: 'force-close-positions', resource: agentId, success: true });
+    await audit({ actor: issuedBy, actorTier: 'admin', action: 'force-close-positions', resource: agentId, success: true });
   }
 
   async overrideRiskSettings(agentId: string, overrides: Partial<RiskSettings>, issuedBy: string): Promise<void> {
@@ -303,14 +347,24 @@ export class MasterAgent {
     currentData.riskOverrides = JSON.stringify(overrides);
     await this.redis.hmset(`agent:${agentId}:state`, currentData);
     await this.commandBus.sendCommand('update-risk', agentId, issuedBy, { overrides });
-    audit({ actor: issuedBy, actorTier: 'admin', action: 'override-risk', resource: agentId, details: { overrides }, success: true });
+    await audit({ actor: issuedBy, actorTier: 'admin', action: 'override-risk', resource: agentId, details: { overrides }, success: true });
   }
 
   async pushStrategyUpdate(agentId: string, strategyUpdate: Record<string, unknown>, issuedBy: string): Promise<void> {
     const agent = await this.registry.get(agentId);
     if (!agent) throw new Error(`Agent ${agentId} not found`);
+    await this.wsHub.updateStrategyParams(agentId, strategyUpdate);
     await this.commandBus.sendCommand('strategy-update', agentId, issuedBy, { strategy: strategyUpdate });
-    audit({ actor: issuedBy, actorTier: 'admin', action: 'push-strategy-update', resource: agentId, details: { strategyUpdate }, success: true });
+    await audit({ actor: issuedBy, actorTier: 'admin', action: 'push-strategy-update', resource: agentId, details: { strategyUpdate }, success: true });
+  }
+
+  // ═══════════════════════════════════════════════
+  // Hot Config
+  // ═══════════════════════════════════════════════
+
+  async updateHotConfig(config: Record<string, string>, issuedBy: string): Promise<void> {
+    await this.wsHub.updateHotConfig(config);
+    await audit({ actor: issuedBy, actorTier: 'admin', action: 'update-hot-config', resource: 'ops:config', details: config, success: true });
   }
 
   // ═══════════════════════════════════════════════
@@ -323,7 +377,7 @@ export class MasterAgent {
     await this.commandBus.sendCommand('hibernate', agentId, issuedBy);
     await this.registry.updateState(agentId, 'hibernating');
     await this.registry.updateHibernationState(agentId, 'on-demand');
-    audit({ actor: issuedBy, actorTier: 'admin', action: 'hibernate-agent', resource: agentId, success: true });
+    await audit({ actor: issuedBy, actorTier: 'admin', action: 'hibernate-agent', resource: agentId, success: true });
   }
 
   async wakeAgent(agentId: string, issuedBy: string): Promise<void> {
@@ -333,7 +387,7 @@ export class MasterAgent {
     await this.registry.updateState(agentId, 'running');
     await this.registry.updateHibernationState(agentId, 'active');
     await this.registry.updateLastActive(agentId);
-    audit({ actor: issuedBy, actorTier: 'admin', action: 'wake-agent', resource: agentId, success: true });
+    await audit({ actor: issuedBy, actorTier: 'admin', action: 'wake-agent', resource: agentId, success: true });
   }
 
   // ═══════════════════════════════════════════════
@@ -342,7 +396,7 @@ export class MasterAgent {
 
   async emergencyHaltAll(issuedBy: string): Promise<void> {
     log.warn({ issuedBy }, 'EMERGENCY HALT — stopping all agents');
-    emergencyHalt();
+    await emergencyHalt();
     await this.commandBus.emergencyBroadcast({ issuedBy, reason: 'Emergency halt by admin' });
     await this.commandBus.broadcastCommand('stop', issuedBy, { emergency: true }, 'emergency');
 
@@ -351,24 +405,75 @@ export class MasterAgent {
     for (const agent of [...running, ...paused]) {
       await this.registry.updateState(agent.agentId, 'stopped');
     }
-    audit({ actor: issuedBy, actorTier: 'admin', action: 'emergency-halt-all', resource: 'all-agents', details: { agentsStopped: running.length + paused.length }, success: true });
+    await audit({ actor: issuedBy, actorTier: 'admin', action: 'emergency-halt-all', resource: 'all-agents', details: { agentsStopped: running.length + paused.length }, success: true });
   }
 
   async resumeAll(issuedBy: string): Promise<void> {
-    resumeTrading();
+    await resumeTrading();
     await this.commandBus.broadcastCommand('resume', issuedBy, { globalResume: true });
     const stopped = await this.registry.getAllByState('stopped');
     for (const agent of stopped) {
       await this.registry.updateState(agent.agentId, 'running');
     }
-    audit({ actor: issuedBy, actorTier: 'admin', action: 'resume-all', resource: 'all-agents', details: { agentsResumed: stopped.length }, success: true });
+    await audit({ actor: issuedBy, actorTier: 'admin', action: 'resume-all', resource: 'all-agents', details: { agentsResumed: stopped.length }, success: true });
   }
 
   async updateGlobalPolicies(updates: Partial<GlobalPolicy>, issuedBy: string): Promise<GlobalPolicy> {
     const policy = await this.policyEngine.updatePolicy(updates);
     await this.commandBus.policyBroadcast(policy);
-    audit({ actor: issuedBy, actorTier: 'admin', action: 'update-policies', resource: 'global-policies', details: { updates }, success: true });
+    await audit({ actor: issuedBy, actorTier: 'admin', action: 'update-policies', resource: 'global-policies', details: { updates }, success: true });
     return policy;
+  }
+
+  // ═══════════════════════════════════════════════
+  // Heartbeat Metrics (inlined from HeartbeatMonitor — MDC §No Heartbeat Stream)
+  //
+  // Gateway ping/pong handles liveness at the transport layer.
+  // This only records metric payloads (cycle count, PnL, positions).
+  // ═══════════════════════════════════════════════
+
+  private async handleHeartbeatMetrics(agentId: string, payload: Record<string, unknown>): Promise<void> {
+    await this.registry.updateHeartbeat(agentId, Date.now());
+
+    log.trace({
+      agentId,
+      state: payload.state,
+      cycleCount: payload.cycleCount,
+      openPositions: payload.openPositions,
+    }, 'Heartbeat metrics received');
+  }
+
+  async handleAgentDisconnect(agentId: string): Promise<void> {
+    const agent = await this.registry.get(agentId);
+    if (!agent) return;
+
+    if (agent.state === 'running' || agent.state === 'paused') {
+      log.warn({ agentId, previousState: agent.state }, 'Agent offline — marking as error');
+      await this.registry.updateState(agentId, 'error');
+
+      for (const callback of this.deadAgentCallbacks) {
+        try { callback(agentId); } catch (err) {
+          log.error({ err, agentId }, 'Error in dead agent callback');
+        }
+      }
+    }
+  }
+
+  async getHealthSummary(): Promise<{ healthy: number; unhealthy: number; dead: number }> {
+    const agents = await this.registry.getAllByState('running');
+    let healthy = 0;
+    let dead = 0;
+
+    for (const agent of agents) {
+      const online = await this.wsHub.isConnected(agent.agentId);
+      if (online) {
+        healthy++;
+      } else {
+        dead++;
+      }
+    }
+
+    return { healthy, unhealthy: 0, dead };
   }
 
   // ═══════════════════════════════════════════════
@@ -385,7 +490,7 @@ export class MasterAgent {
       totalOpenPositions += agent.metrics.openPositions;
       totalUnrealizedPnlUsd += agent.metrics.pnlUsd;
     }
-    return { halted: isGlobalHalt(), totalAgents: agents.length, runningAgents, totalOpenPositions, totalUnrealizedPnlUsd, agentsInError, agentsHibernated };
+    return { halted: await isGlobalHalt(), totalAgents: agents.length, runningAgents, totalOpenPositions, totalUnrealizedPnlUsd, agentsInError, agentsHibernated };
   }
 
   async getAggregateStats(): Promise<SupervisorStats> {
@@ -433,9 +538,8 @@ export class MasterAgent {
   }
 
   getRecentEvents(limit = 50) { return this.recentEvents.slice(0, limit); }
-  isHalted(): boolean { return isGlobalHalt(); }
+  async isHalted(): Promise<boolean> { return isGlobalHalt(); }
 }
 
-/** Backward-compatible alias */
 export const Supervisor = MasterAgent;
 export type Supervisor = MasterAgent;

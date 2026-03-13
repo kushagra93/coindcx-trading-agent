@@ -1,6 +1,6 @@
-import Redis from 'ioredis';
 import { createChildLogger } from '../core/logger.js';
 import type { Chain } from '../core/types.js';
+import type { WsClient } from '../core/ws-client.js';
 import type { AgentLifecycleState } from '../supervisor/types.js';
 import { AgentReporter } from './agent-reporter.js';
 import { AgentCommandHandler, type CommandReceiver } from './agent-command-handler.js';
@@ -9,10 +9,8 @@ const log = createChildLogger('user-agent');
 
 /**
  * A managed user agent that wraps the existing trading subsystems
- * (orchestrator, executor, risk, positions) into a supervised entity.
- *
- * Reports to the supervisor via AgentReporter and responds to commands
- * via AgentCommandHandler.
+ * into a supervised entity. Communicates with the Master Agent
+ * via WebSocket through the WsClient.
  */
 export class UserAgent implements CommandReceiver {
   private running = false;
@@ -25,7 +23,6 @@ export class UserAgent implements CommandReceiver {
 
   private reporter: AgentReporter;
   private commandHandler: AgentCommandHandler;
-  private redis: Redis;
   private heartbeatTimer: ReturnType<typeof setInterval> | null = null;
   private config: Record<string, unknown> = {};
   private riskOverrides: Record<string, unknown> = {};
@@ -35,13 +32,12 @@ export class UserAgent implements CommandReceiver {
     private userId: string,
     private strategy: string,
     private chain: Chain,
-    redisUrl: string,
+    private wsClient: WsClient,
     private cycleIntervalMs: number = 5_000,
     private heartbeatIntervalMs: number = 15_000,
   ) {
-    this.redis = new Redis(redisUrl);
-    this.reporter = new AgentReporter(this.redis, agentId, userId);
-    this.commandHandler = new AgentCommandHandler(this.redis, agentId, this.reporter);
+    this.reporter = new AgentReporter(wsClient, agentId, userId);
+    this.commandHandler = new AgentCommandHandler(wsClient, agentId, this.reporter);
     this.commandHandler.setAgent(this);
   }
 
@@ -57,19 +53,13 @@ export class UserAgent implements CommandReceiver {
     this.startedAt = Date.now();
     this.cycleCount = 0;
 
-    // Start heartbeat interval
     this.heartbeatTimer = setInterval(() => this.sendHeartbeat(), this.heartbeatIntervalMs);
 
-    // Start command listener (non-blocking)
-    this.commandHandler.startListening().catch(err => {
-      log.error({ err, agentId: this.agentId }, 'Command handler crashed');
-    });
+    this.commandHandler.startListening();
 
-    // Report started
     await this.reporter.sendEvent('started', { strategy: this.strategy, chain: this.chain });
     log.info({ agentId: this.agentId, strategy: this.strategy, chain: this.chain }, 'User agent started');
 
-    // Main trading loop
     while (this.running) {
       try {
         await this.runCycle();
@@ -92,7 +82,6 @@ export class UserAgent implements CommandReceiver {
       this.heartbeatTimer = null;
     }
 
-    await this.commandHandler.stopListening();
     await this.reporter.sendEvent('stopped', {});
     log.info({ agentId: this.agentId }, 'User agent stopped');
   }
@@ -112,7 +101,7 @@ export class UserAgent implements CommandReceiver {
   async destroy(): Promise<void> {
     await this.forceClosePositions();
     await this.stop();
-    this.redis.disconnect();
+    this.wsClient.disconnect();
     log.info({ agentId: this.agentId }, 'User agent destroyed');
   }
 
@@ -128,7 +117,6 @@ export class UserAgent implements CommandReceiver {
 
   async forceClosePositions(): Promise<void> {
     log.warn({ agentId: this.agentId }, 'Force closing all positions');
-    // In production: iterate open positions via position-manager and close each
     this.openPositions = 0;
     this.unrealizedPnlUsd = 0;
   }
@@ -137,24 +125,13 @@ export class UserAgent implements CommandReceiver {
   // Trading Cycle
   // ═══════════════════════════════════════════════
 
-  /** Main trading cycle — called by the event loop */
   private async runCycle(): Promise<void> {
     this.cycleCount++;
 
-    // Skip if paused
     if (this.paused) {
       log.trace({ agentId: this.agentId }, 'Cycle skipped (paused)');
       return;
     }
-
-    // In production, this would:
-    // 1. Check circuit breaker (isTradingAllowed from circuit-breaker.ts)
-    // 2. Fetch latest signals / price data
-    // 3. Evaluate strategy
-    // 4. Validate risk (validateTrade from risk-manager.ts)
-    // 5. Execute trades (executeTrade from order-executor.ts)
-    // 6. Update positions (position-manager.ts)
-    // 7. Report trade events to supervisor
 
     log.trace({
       agentId: this.agentId,

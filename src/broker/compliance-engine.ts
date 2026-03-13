@@ -144,7 +144,7 @@ export function evaluateCompliance(
     brokerId: `broker-${jurisdiction.toLowerCase()}`,
   };
 
-  audit({
+  void audit({
     actor: `broker-${jurisdiction.toLowerCase()}`,
     actorTier: 'broker',
     action: result.passed ? 'compliance-passed' : 'compliance-blocked',

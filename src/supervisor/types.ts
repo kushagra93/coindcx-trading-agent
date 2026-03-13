@@ -191,24 +191,5 @@ export const REDIS_KEYS = {
   userAgents: (userId: string) => `user:${userId}:agents`,
 } as const;
 
-export const REDIS_STREAMS = {
-  SUPERVISOR_COMMANDS: 'stream:supervisor:commands',
-  AGENT_EVENTS: 'stream:agent:events',
-  AGENT_HEARTBEATS: 'stream:agent:heartbeats',
-  TRADE_APPROVALS: 'stream:master:approvals',
-  MARKET_DATA: 'stream:market:data',
-  FEE_LEDGER: 'stream:master:fees',
-  COMPLIANCE_RESULTS: 'stream:compliance:results',
-  agentCommands: (id: string) => `stream:agent:${id}:commands`,
-  brokerCommands: (jurisdiction: string) => `stream:broker:${jurisdiction}:commands`,
-  helperTasks: (type: string) => `stream:helper:${type}:tasks`,
-  helperResults: (type: string) => `stream:helper:${type}:results`,
-} as const;
-
-export const REDIS_CHANNELS = {
-  EMERGENCY: 'channel:emergency',
-  POLICY_UPDATE: 'channel:policy:update',
-  STRATEGY_UPDATE: 'channel:strategy:update',
-  MARKET_TICK: 'channel:market:tick',
-  TRADE_SIGNAL: 'channel:trade:signal',
-} as const;
+// Redis Streams and Pub/Sub channels have been replaced by WebSocket communication.
+// See src/core/ws-hub.ts and src/core/ws-types.ts for the new messaging layer.

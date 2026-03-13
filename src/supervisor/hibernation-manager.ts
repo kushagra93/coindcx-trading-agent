@@ -121,7 +121,7 @@ export class HibernationManager {
 
     if (transitioned > 0) {
       log.info({ transitioned, breakdown }, 'Hibernation sweep completed');
-      audit({
+      await audit({
         actor: 'hibernation-manager',
         actorTier: 'system',
         action: 'hibernation-sweep',
@@ -168,7 +168,7 @@ export class HibernationManager {
 
     const latencyMs = Date.now() - start;
 
-    audit({
+    await audit({
       actor: 'hibernation-manager',
       actorTier: 'system',
       action: 'agent-woken',

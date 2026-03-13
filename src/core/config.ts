@@ -135,6 +135,13 @@ export interface AppConfig {
 
   /** Per-chain RPC URL overrides (env: CHAIN_RPC_{CHAIN_NAME}) */
   chainRpcOverrides: Record<string, string>;
+  wsHub: {
+    url: string;
+  };
+
+  gateway: {
+    jwtSecret: string;
+  };
 }
 
 export function loadConfig(): AppConfig {
@@ -243,6 +250,13 @@ export function loadConfig(): AppConfig {
     },
 
     chainRpcOverrides: loadChainRpcOverrides(),
+    wsHub: {
+      url: envOrDefault('WS_HUB_URL', 'ws://localhost:3000/ws/agents'),
+    },
+
+    gateway: {
+      jwtSecret: envOrDefault('GATEWAY_JWT_SECRET', 'dev-secret-change-in-production'),
+    },
   };
 }
 

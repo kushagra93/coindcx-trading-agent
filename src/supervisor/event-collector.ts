@@ -1,83 +1,29 @@
-import type Redis from 'ioredis';
 import { createChildLogger } from '../core/logger.js';
 import type { AgentRegistry } from './agent-registry.js';
 import type { AgentEvent } from './types.js';
-import { REDIS_STREAMS } from './types.js';
 
 const log = createChildLogger('event-collector');
 
-const CONSUMER_GROUP = 'supervisor-group';
-const CONSUMER_NAME = 'supervisor-0';
-
 /**
- * Consumes events from agents via Redis Streams using consumer groups
- * for reliable at-least-once delivery.
+ * Processes agent events received via WebSocket.
+ * No longer runs a Redis Stream consumer loop — events are pushed
+ * directly by the WsHub message router in supervisor.ts.
  */
 export class EventCollector {
-  private running = false;
-
   constructor(
-    private redis: Redis,
     private registry: AgentRegistry,
     private onEvent?: (event: AgentEvent) => Promise<void>,
   ) {}
 
-  /** Start consuming events from the agent events stream */
-  async start(): Promise<void> {
-    // Create consumer group (ignore if already exists)
-    try {
-      await this.redis.xgroup(
-        'CREATE', REDIS_STREAMS.AGENT_EVENTS, CONSUMER_GROUP, '$', 'MKSTREAM',
-      );
-      log.info('Created consumer group for agent events');
-    } catch (err: any) {
-      if (!err.message?.includes('BUSYGROUP')) throw err;
-    }
-
-    this.running = true;
-    log.info('Event collector started');
-
-    while (this.running) {
-      try {
-        const results = await this.redis.xreadgroup(
-          'GROUP', CONSUMER_GROUP, CONSUMER_NAME,
-          'COUNT', '100',
-          'BLOCK', '5000',
-          'STREAMS', REDIS_STREAMS.AGENT_EVENTS, '>',
-        ) as [string, [string, string[]][]][] | null;
-
-        if (!results) continue;
-
-        for (const [, messages] of results) {
-          for (const [messageId, fields] of messages) {
-            const event = this.parseEvent(fields);
-            if (event) {
-              await this.processEvent(event);
-              if (this.onEvent) await this.onEvent(event);
-            }
-            // Acknowledge the message
-            await this.redis.xack(REDIS_STREAMS.AGENT_EVENTS, CONSUMER_GROUP, messageId);
-          }
-        }
-      } catch (err) {
-        if (this.running) {
-          log.error({ err }, 'Error reading agent events');
-          await new Promise(r => setTimeout(r, 1000));
-        }
-      }
-    }
-  }
-
-  /** Stop consuming events */
-  async stop(): Promise<void> {
-    this.running = false;
-    log.info('Event collector stopped');
-  }
-
-  /** Process a single agent event — update registry, log */
-  private async processEvent(event: AgentEvent): Promise<void> {
+  /** Handle an agent event pushed from the WsHub message router */
+  async handleEvent(event: AgentEvent): Promise<void> {
     log.debug({ type: event.type, agentId: event.agentId }, 'Processing agent event');
 
+    await this.processEvent(event);
+    if (this.onEvent) await this.onEvent(event);
+  }
+
+  private async processEvent(event: AgentEvent): Promise<void> {
     switch (event.type) {
       case 'started':
         await this.registry.updateState(event.agentId, 'running');
@@ -147,27 +93,6 @@ export class EventCollector {
       case 'command-rejected':
         log.warn({ agentId: event.agentId, commandId: event.payload.commandId, reason: event.payload.reason }, 'Command rejected');
         break;
-    }
-  }
-
-  /** Parse raw Redis stream fields into AgentEvent */
-  private parseEvent(fields: string[]): AgentEvent | null {
-    try {
-      const data: Record<string, string> = {};
-      for (let i = 0; i < fields.length; i += 2) {
-        data[fields[i]] = fields[i + 1];
-      }
-      return {
-        id: data.id,
-        type: data.type as AgentEvent['type'],
-        agentId: data.agentId,
-        userId: data.userId,
-        payload: data.payload ? JSON.parse(data.payload) : {},
-        timestamp: parseInt(data.timestamp) || Date.now(),
-      };
-    } catch {
-      log.error('Failed to parse agent event');
-      return null;
     }
   }
 }

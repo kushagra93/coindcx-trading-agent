@@ -1,7 +1,9 @@
 import { config, type ServiceMode } from './core/config.js';
 import { logger, createChildLogger } from './core/logger.js';
 import { startOrchestrator } from './core/orchestrator.js';
-import { startServer } from './api/server.js';
+import { startServer, mintGatewayJwt } from './api/server.js';
+import { WsClient } from './core/ws-client.js';
+import { WsGateway } from './core/ws-gateway.js';
 
 const log = createChildLogger('main');
 
@@ -32,8 +34,6 @@ async function main() {
     case 'supervisor':
       await startSupervisorMode();
       break;
-
-    // === Multi-tier agent modes ===
 
     case 'master':
       await startMasterMode();
@@ -67,65 +67,55 @@ async function startDataIngestionMode() {
   log.info('Starting in Data Ingestion mode');
 
   await startOrchestrator(async () => {
-    // 1. Fetch price feeds (CoinGecko, Jupiter, DexScreener)
-    // 2. Process wallet tracker events (Helius, Alchemy WebSocket)
-    // 3. Publish events to Redis Streams
     log.debug('Data ingestion cycle');
-  }, 30_000); // 30 second cycle for price feeds
+  }, 30_000);
 }
 
 async function startSignalWorkerMode() {
   log.info('Starting in Signal Worker mode');
 
   await startOrchestrator(async () => {
-    // 1. Consume price/wallet events from Redis Streams
-    // 2. Evaluate strategies for affected users
-    // 3. Run risk validation
-    // 4. Query host app policy engine
-    // 5. Publish approved trade intents to execution queue
     log.debug('Signal worker cycle');
-  }, 5_000); // 5 second cycle for signal evaluation
+  }, 5_000);
 }
 
 async function startExecutorMode() {
   log.info('Starting in Executor mode');
 
   await startOrchestrator(async () => {
-    // 1. Consume trade intents from Redis Streams
-    // 2. Write PENDING to DB (WAL)
-    // 3. Reserve fee
-    // 4. Decrypt user key from KMS
-    // 5. Execute via Jupiter/1inch/Hyperliquid
-    // 6. Update trade state
-    // 7. Update position
     log.debug('Executor cycle');
-  }, 2_000); // 2 second cycle for trade execution
+  }, 2_000);
 }
 
 async function startSupervisorMode() {
   log.info('Starting in Supervisor mode (legacy — use "master" for multi-tier)');
 
   const { Supervisor } = await import('./supervisor/supervisor.js');
-  const supervisor = new Supervisor(config.redis.url, config.supervisor.deadAgentTimeoutMs);
+  const supervisor = new Supervisor(config.redis.url);
   await supervisor.start();
 
-  // Start API server with supervisor routes
   await startServer();
   log.info('Supervisor mode started — master agent controlling all user agents');
 }
 
-// ===== Multi-Tier Agent Modes =====
+// ═════════════════════════════════════════════════
+// Multi-Tier Agent Modes (MDC Architecture)
+// ═════════════════════════════════════════════════
 
 async function startMasterMode() {
   log.info('Starting in Master Agent mode');
 
   const { MasterAgent } = await import('./supervisor/supervisor.js');
-  const master = new MasterAgent(config.redis.url, config.supervisor.deadAgentTimeoutMs);
+  const master = new MasterAgent(config.redis.url);
   await master.start();
 
-  // Start API server with all routes (supervisor, broker, gateway)
-  await startServer();
-  log.info('Master Agent mode started — root of trust chain, trade approval, fee ledger');
+  const gateway = new WsGateway(config.redis.url);
+  await gateway.start();
+
+  await startServer(gateway);
+  log.info({
+    gatewayId: gateway.gatewayId,
+  }, 'Master Agent mode started — Gateway on /ws/agents, Master uses Redis backbone');
 }
 
 async function startBrokerMode() {
@@ -146,7 +136,7 @@ async function startBrokerMode() {
       positionLimits: {
         maxPositionsPerUser: config.broker.positionLimitPerUser,
         maxPositionSizePct: config.broker.maxPositionSizePct,
-        maxTotalExposureUsd: config.broker.maxUsers * 1000, // derived limit
+        maxTotalExposureUsd: config.broker.maxUsers * 1000,
       },
     },
   );
@@ -159,48 +149,68 @@ async function startHelperMode(mode: ServiceMode) {
   const helperType = mode.replace('helper-', '');
   log.info({ helperType }, 'Starting in Helper Agent mode');
 
-  const Redis = (await import('ioredis')).default;
-  const redis = new Redis(config.redis.url);
+  const gatewayUrl = config.wsHub.url;
 
   switch (mode) {
     case 'helper-market': {
+      const Redis = (await import('ioredis')).default;
+      const redis = new Redis(config.redis.url);
+      const agentId = `helper-market-${Date.now()}`;
+      const token = mintGatewayJwt({ agentId, userId: 'system', tier: 'helper', helperType: 'market-data' });
+      const wsClient = new WsClient(gatewayUrl, token, agentId, 'helper', 'market-data');
+      await wsClient.connect();
+
       const { MarketDataAgent } = await import('./helpers/market-data-agent.js');
-      const agent = new MarketDataAgent(redis);
+      const agent = new MarketDataAgent(wsClient, redis);
       await agent.start();
-      // Start continuous market data publishing
-      agent.startPublishing(30_000); // 30s intervals
-      log.info('Market Data Helper started — publishing to stream:market:data');
+      agent.startPublishing(30_000);
+      log.info('Market Data Helper started — publishing via WebSocket');
       break;
     }
 
     case 'helper-risk': {
+      const agentId = `helper-risk-${Date.now()}`;
+      const token = mintGatewayJwt({ agentId, userId: 'system', tier: 'helper', helperType: 'risk-analyzer' });
+      const wsClient = new WsClient(gatewayUrl, token, agentId, 'helper', 'risk-analyzer');
+      await wsClient.connect();
+
       const { RiskAnalyzerAgent } = await import('./helpers/risk-analyzer-agent.js');
-      const agent = new RiskAnalyzerAgent(redis);
+      const agent = new RiskAnalyzerAgent(wsClient);
       await agent.start();
-      log.info('Risk Analyzer Helper started — consuming risk analysis tasks');
+      log.info('Risk Analyzer Helper started — receiving tasks via WebSocket');
       break;
     }
 
     case 'helper-executor': {
+      const agentId = `helper-executor-${Date.now()}`;
+      const token = mintGatewayJwt({ agentId, userId: 'system', tier: 'helper', helperType: 'strategy-executor' });
+      const wsClient = new WsClient(gatewayUrl, token, agentId, 'helper', 'strategy-executor');
+      await wsClient.connect();
+
       const { StrategyExecutorAgent } = await import('./helpers/strategy-executor-agent.js');
-      const agent = new StrategyExecutorAgent(redis);
+      const agent = new StrategyExecutorAgent(wsClient);
       await agent.start();
-      log.info('Strategy Executor Helper started — consuming trade execution tasks');
+      log.info('Strategy Executor Helper started — receiving tasks via WebSocket');
       break;
     }
 
     case 'helper-notification': {
+      const Redis = (await import('ioredis')).default;
+      const redis = new Redis(config.redis.url);
+      const agentId = `helper-notification-${Date.now()}`;
+      const token = mintGatewayJwt({ agentId, userId: 'system', tier: 'helper', helperType: 'notification' });
+      const wsClient = new WsClient(gatewayUrl, token, agentId, 'helper', 'notification');
+      await wsClient.connect();
+
       const { NotificationAgent } = await import('./helpers/notification-agent.js');
-      const agent = new NotificationAgent(redis);
+      const agent = new NotificationAgent(wsClient, redis);
       await agent.start();
-      log.info('Notification Helper started — consuming notification tasks');
+      log.info('Notification Helper started — receiving tasks via WebSocket');
       break;
     }
 
     case 'helper-chat': {
       log.info('Chat/NLP Helper started — consuming NLP tasks (uses Anthropic API)');
-      // Chat NLP agent would be implemented in helpers/chat-nlp-agent.ts
-      // Uses config.ai.anthropicApiKey for Claude API calls
       await startOrchestrator(async () => {
         log.debug('Chat/NLP helper cycle');
       }, 5_000);
@@ -209,7 +219,6 @@ async function startHelperMode(mode: ServiceMode) {
 
     case 'helper-backtest': {
       log.info('Backtesting Helper started — consuming backtest tasks');
-      // Backtesting agent would be implemented in helpers/backtesting-agent.ts
       await startOrchestrator(async () => {
         log.debug('Backtesting helper cycle');
       }, 10_000);

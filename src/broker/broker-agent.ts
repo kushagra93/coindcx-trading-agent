@@ -206,7 +206,7 @@ export class BrokerAgent {
     // 3. Generate broker co-signature
     const brokerSignature = `broker_sig_${randomUUID().slice(0, 16)}`;
 
-    audit({
+    await audit({
       actor: this.config.brokerId,
       actorTier: 'broker',
       action: 'dual-sign-withdrawal',

@@ -439,7 +439,7 @@ export async function extractIntent(
 
 const SOLANA_ADDR = /\b[1-9A-HJ-NP-Za-km-z]{32,44}\b/;
 const EVM_ADDR = /\b0x[a-fA-F0-9]{40}\b/;
-const ALL_TOKENS = /\b(sol|bonk|eth|wif|pepe|jup|aero|brett|btc|degen|toshi|fartcoin|popcat|myro|giga|mew|bome|mog|wen|arb|gmx|pendle|pol|aave|bnb|op|avax|shib|link|uni|sui|apt)\b/i;
+export const ALL_TOKENS = /\b(sol|bonk|eth|wif|pepe|jup|aero|brett|btc|degen|toshi|fartcoin|popcat|myro|giga|mew|bome|mog|wen|arb|gmx|pendle|pol|aave|bnb|op|avax|shib|link|uni|sui|apt)\b/i;
 
 function extractTokenRegex(text: string): string | null {
   const match = text.match(ALL_TOKENS);

@@ -1,65 +1,49 @@
 /**
- * Immutable Fee Ledger — append-only fee records maintained by the Master Agent.
+ * Immutable Fee Ledger — PostgreSQL-backed append-only fee records.
  *
  * All fee calculations reuse the existing fee-manager.ts:
  *   - getFeeRate() for tiered rates (0.15-0.25% by AUM)
  *   - calculateFee() for per-trade fee computation
  *   - calculateProfitShare() for copy-trade 10% profit share
  *
- * This ledger adds:
+ * This ledger provides:
  *   - Append-only storage (no updates, no deletes)
  *   - Per-broker aggregation and reconciliation
  *   - Builder fee tracking (Hyperliquid referrals)
  *   - Regulatory reporting summaries
- *
- * Production: PostgreSQL `fee_ledger` table with INSERT-only grants.
  */
 
 import { randomUUID } from 'node:crypto';
+import { eq, and, gte, lte, sql, desc } from 'drizzle-orm';
 import { createChildLogger } from '../core/logger.js';
 import { audit } from '../audit/audit-logger.js';
+import { getDb } from '../db/index.js';
+import { feeLedger as feeLedgerTable } from '../db/schema.js';
 
 const log = createChildLogger('fee-ledger');
 
-// ===== Fee Entry Types =====
-
 export type FeeType =
-  | 'trade-fee'          // Standard per-trade fee (0.15-0.25%)
-  | 'copy-trade-share'   // 10% of copy-trade profits
-  | 'builder-fee'        // Hyperliquid builder/referral fee
-  | 'withdrawal-fee'     // Withdrawal processing fee
-  | 'platform-fee';      // General platform fee
+  | 'trade-fee'
+  | 'copy-trade-share'
+  | 'builder-fee'
+  | 'withdrawal-fee'
+  | 'platform-fee';
 
 export interface FeeEntry {
-  /** Unique entry ID */
   id: string;
-  /** Monotonic sequence number */
   sequence: number;
-  /** ISO-8601 timestamp */
   timestamp: string;
-  /** Fee type classification */
   type: FeeType;
-  /** User who paid the fee */
   userId: string;
-  /** Agent that initiated the trade */
   agentId: string;
-  /** Broker that aggregated the fee */
   brokerId: string;
-  /** Trade/transaction this fee relates to */
   tradeId: string;
-  /** Fee amount in USD */
   amountUsd: number;
-  /** Fee amount in the token paid */
   amountToken: string;
-  /** Token used for fee payment */
   feeToken: string;
-  /** Chain where the fee was collected */
   chain: string;
-  /** Fee rate applied (e.g., 0.0020 for 0.20%) */
   feeRate: number;
-  /** Correlation ID for trade lifecycle tracing */
   corr_id: string;
-  /** Additional metadata */
   metadata?: Record<string, unknown>;
 }
 
@@ -80,17 +64,27 @@ export interface BrokerReconciliation {
   reconciledAt: string;
 }
 
-// ===== Fee Ledger Implementation =====
+function rowToFeeEntry(row: typeof feeLedgerTable.$inferSelect): FeeEntry {
+  return {
+    id: row.id,
+    sequence: row.sequence,
+    timestamp: row.timestamp,
+    type: row.type as FeeType,
+    userId: row.userId,
+    agentId: row.agentId,
+    brokerId: row.brokerId,
+    tradeId: row.tradeId,
+    amountUsd: row.amountUsd,
+    amountToken: row.amountToken,
+    feeToken: row.feeToken,
+    chain: row.chain,
+    feeRate: row.feeRate,
+    corr_id: row.corrId,
+    metadata: (row.metadata ?? undefined) as Record<string, unknown> | undefined,
+  };
+}
 
-/** In-memory append-only ledger (production: PostgreSQL) */
-const ledger: FeeEntry[] = [];
-let sequenceCounter = 0;
-
-/**
- * Record a fee in the immutable ledger.
- * This is INSERT-only — entries can never be modified or deleted.
- */
-export function recordFee(params: {
+export async function recordFee(params: {
   type: FeeType;
   userId: string;
   agentId: string;
@@ -103,104 +97,121 @@ export function recordFee(params: {
   feeRate: number;
   corr_id: string;
   metadata?: Record<string, unknown>;
-}): FeeEntry {
-  const entry: FeeEntry = {
-    id: `fee_${randomUUID()}`,
-    sequence: ++sequenceCounter,
-    timestamp: new Date().toISOString(),
-    ...params,
-  };
+}): Promise<FeeEntry> {
+  const db = getDb();
+  const id = `fee_${randomUUID()}`;
+  const timestamp = new Date().toISOString();
 
-  // Append-only: never modify existing entries
-  ledger.push(entry);
+  const [inserted] = await db
+    .insert(feeLedgerTable)
+    .values({
+      id,
+      timestamp,
+      type: params.type,
+      userId: params.userId,
+      agentId: params.agentId,
+      brokerId: params.brokerId,
+      tradeId: params.tradeId,
+      amountUsd: params.amountUsd,
+      amountToken: params.amountToken,
+      feeToken: params.feeToken,
+      chain: params.chain,
+      feeRate: params.feeRate,
+      corrId: params.corr_id,
+      metadata: params.metadata ?? null,
+    })
+    .returning();
 
-  audit({
+  await audit({
     actor: 'master-agent',
     actorTier: 'admin',
     action: 'fee-recorded',
-    resource: entry.id,
+    resource: id,
     details: {
-      type: entry.type,
-      userId: entry.userId,
-      brokerId: entry.brokerId,
-      amountUsd: entry.amountUsd,
-      chain: entry.chain,
+      type: params.type,
+      userId: params.userId,
+      brokerId: params.brokerId,
+      amountUsd: params.amountUsd,
+      chain: params.chain,
     },
     success: true,
-    corr_id: entry.corr_id,
+    corr_id: params.corr_id,
   });
 
   log.info({
-    feeId: entry.id,
-    type: entry.type,
-    userId: entry.userId,
-    amountUsd: entry.amountUsd,
-    brokerId: entry.brokerId,
-    corrId: entry.corr_id,
+    feeId: id,
+    type: params.type,
+    userId: params.userId,
+    amountUsd: params.amountUsd,
+    brokerId: params.brokerId,
+    corrId: params.corr_id,
   }, 'Fee recorded in ledger');
 
-  return entry;
+  return rowToFeeEntry(inserted);
 }
 
-/**
- * Get a summary of fees over a time range.
- */
-export function getFeeSummary(
+export async function getFeeSummary(
   from?: string,
   to?: string,
-): FeeSummary {
-  const fromDate = from ? new Date(from) : new Date(0);
-  const toDate = to ? new Date(to) : new Date();
+): Promise<FeeSummary> {
+  const db = getDb();
+  const fromDate = from ?? new Date(0).toISOString();
+  const toDate = to ?? new Date().toISOString();
 
-  const filtered = ledger.filter(e => {
-    const ts = new Date(e.timestamp);
-    return ts >= fromDate && ts <= toDate;
-  });
+  const rows = await db
+    .select()
+    .from(feeLedgerTable)
+    .where(and(
+      gte(feeLedgerTable.timestamp, fromDate),
+      lte(feeLedgerTable.timestamp, toDate),
+    ));
 
   const summary: FeeSummary = {
     totalFeesUsd: 0,
-    totalEntries: filtered.length,
+    totalEntries: rows.length,
     byType: {} as Record<FeeType, number>,
     byBroker: {},
     byChain: {},
-    period: { from: fromDate.toISOString(), to: toDate.toISOString() },
+    period: { from: fromDate, to: toDate },
   };
 
-  for (const entry of filtered) {
-    summary.totalFeesUsd += entry.amountUsd;
-    summary.byType[entry.type] = (summary.byType[entry.type] || 0) + entry.amountUsd;
-    summary.byBroker[entry.brokerId] = (summary.byBroker[entry.brokerId] || 0) + entry.amountUsd;
-    summary.byChain[entry.chain] = (summary.byChain[entry.chain] || 0) + entry.amountUsd;
+  for (const row of rows) {
+    summary.totalFeesUsd += row.amountUsd;
+    summary.byType[row.type as FeeType] = (summary.byType[row.type as FeeType] || 0) + row.amountUsd;
+    summary.byBroker[row.brokerId] = (summary.byBroker[row.brokerId] || 0) + row.amountUsd;
+    summary.byChain[row.chain] = (summary.byChain[row.chain] || 0) + row.amountUsd;
   }
 
   return summary;
 }
 
-/**
- * Reconcile fees for a specific broker.
- * Returns all fee entries attributed to the broker for verification.
- */
-export function reconcileFees(
+export async function reconcileFees(
   brokerId: string,
   from?: string,
   to?: string,
-): BrokerReconciliation {
-  const fromDate = from ? new Date(from) : new Date(0);
-  const toDate = to ? new Date(to) : new Date();
+): Promise<BrokerReconciliation> {
+  const db = getDb();
+  const fromDate = from ?? new Date(0).toISOString();
+  const toDate = to ?? new Date().toISOString();
 
-  const entries = ledger.filter(e => {
-    const ts = new Date(e.timestamp);
-    return e.brokerId === brokerId && ts >= fromDate && ts <= toDate;
-  });
+  const rows = await db
+    .select()
+    .from(feeLedgerTable)
+    .where(and(
+      eq(feeLedgerTable.brokerId, brokerId),
+      gte(feeLedgerTable.timestamp, fromDate),
+      lte(feeLedgerTable.timestamp, toDate),
+    ));
 
+  const entries = rows.map(rowToFeeEntry);
   const totalFeesUsd = entries.reduce((sum, e) => sum + e.amountUsd, 0);
 
   log.info({
     brokerId,
     totalFeesUsd,
     entryCount: entries.length,
-    from: fromDate.toISOString(),
-    to: toDate.toISOString(),
+    from: fromDate,
+    to: toDate,
   }, 'Fee reconciliation generated');
 
   return {
@@ -212,47 +223,40 @@ export function reconcileFees(
   };
 }
 
-/**
- * Get all fee entries (with optional filters).
- */
-export function getFeeEntries(filters?: {
+export async function getFeeEntries(filters?: {
   userId?: string;
   brokerId?: string;
   type?: FeeType;
   chain?: string;
   corr_id?: string;
   limit?: number;
-}): FeeEntry[] {
-  let entries = [...ledger];
+}): Promise<FeeEntry[]> {
+  const db = getDb();
+  const conditions = [];
 
-  if (filters?.userId) {
-    entries = entries.filter(e => e.userId === filters.userId);
-  }
-  if (filters?.brokerId) {
-    entries = entries.filter(e => e.brokerId === filters.brokerId);
-  }
-  if (filters?.type) {
-    entries = entries.filter(e => e.type === filters.type);
-  }
-  if (filters?.chain) {
-    entries = entries.filter(e => e.chain === filters.chain);
-  }
-  if (filters?.corr_id) {
-    entries = entries.filter(e => e.corr_id === filters.corr_id);
-  }
+  if (filters?.userId) conditions.push(eq(feeLedgerTable.userId, filters.userId));
+  if (filters?.brokerId) conditions.push(eq(feeLedgerTable.brokerId, filters.brokerId));
+  if (filters?.type) conditions.push(eq(feeLedgerTable.type, filters.type));
+  if (filters?.chain) conditions.push(eq(feeLedgerTable.chain, filters.chain));
+  if (filters?.corr_id) conditions.push(eq(feeLedgerTable.corrId, filters.corr_id));
 
+  const where = conditions.length > 0 ? and(...conditions) : undefined;
   const limit = filters?.limit ?? 100;
-  return entries.slice(-limit);
+
+  const rows = await db
+    .select()
+    .from(feeLedgerTable)
+    .where(where)
+    .orderBy(desc(feeLedgerTable.sequence))
+    .limit(limit);
+
+  return rows.map(rowToFeeEntry);
 }
 
-/**
- * Generate a regulatory report summary.
- * Groups fees by jurisdiction (broker) and type for compliance reporting.
- */
-export function generateRegulatoryReport(
+export async function generateRegulatoryReport(
   from: string,
   to: string,
-): {
+): Promise<{
   period: { from: string; to: string };
   totalFeesUsd: number;
   totalTransactions: number;
@@ -261,14 +265,16 @@ export function generateRegulatoryReport(
     transactionCount: number;
     byType: Record<string, number>;
   }>;
-} {
-  const fromDate = new Date(from);
-  const toDate = new Date(to);
+}> {
+  const db = getDb();
 
-  const filtered = ledger.filter(e => {
-    const ts = new Date(e.timestamp);
-    return ts >= fromDate && ts <= toDate;
-  });
+  const rows = await db
+    .select()
+    .from(feeLedgerTable)
+    .where(and(
+      gte(feeLedgerTable.timestamp, from),
+      lte(feeLedgerTable.timestamp, to),
+    ));
 
   const byBroker: Record<string, {
     totalFeesUsd: number;
@@ -276,20 +282,20 @@ export function generateRegulatoryReport(
     byType: Record<string, number>;
   }> = {};
 
-  for (const entry of filtered) {
-    if (!byBroker[entry.brokerId]) {
-      byBroker[entry.brokerId] = { totalFeesUsd: 0, transactionCount: 0, byType: {} };
+  for (const row of rows) {
+    if (!byBroker[row.brokerId]) {
+      byBroker[row.brokerId] = { totalFeesUsd: 0, transactionCount: 0, byType: {} };
     }
-    const broker = byBroker[entry.brokerId];
-    broker.totalFeesUsd += entry.amountUsd;
+    const broker = byBroker[row.brokerId];
+    broker.totalFeesUsd += row.amountUsd;
     broker.transactionCount++;
-    broker.byType[entry.type] = (broker.byType[entry.type] || 0) + entry.amountUsd;
+    broker.byType[row.type] = (broker.byType[row.type] || 0) + row.amountUsd;
   }
 
   return {
     period: { from, to },
-    totalFeesUsd: filtered.reduce((sum, e) => sum + e.amountUsd, 0),
-    totalTransactions: filtered.length,
+    totalFeesUsd: rows.reduce((sum, r) => sum + r.amountUsd, 0),
+    totalTransactions: rows.length,
     byBroker,
   };
 }

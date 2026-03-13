@@ -1,7 +1,11 @@
 import type { FastifyInstance } from 'fastify';
+import { eq, desc, sql } from 'drizzle-orm';
 import { createChildLogger } from '../../core/logger.js';
 import { config } from '../../core/config.js';
 import { getTokenBySymbol, screenBySymbol } from '../../data/token-screener.js';
+import { getDb } from '../../db/index.js';
+import { trades as tradesTable } from '../../db/schema.js';
+import { v4 as uuid } from 'uuid';
 
 const log = createChildLogger('trade-routes');
 
@@ -13,26 +17,10 @@ interface TradeRequest {
   slippagePct?: number;
 }
 
-interface TradeRecord {
-  id: string;
-  symbol: string;
-  side: 'buy' | 'sell';
-  amountUsd: number;
-  price: number;
-  quantity: number;
-  chain: string;
-  status: 'executed' | 'dry_run';
-  txHash: string | null;
-  timestamp: number;
-}
-
-const positions: Map<string, TradeRecord> = new Map();
-let tradeCounter = 0;
-
 export async function tradeRoutes(app: FastifyInstance) {
 
   app.post<{ Body: { symbol: string; chain?: string } }>('/api/v1/trade/quote', async (request, reply) => {
-    const { symbol, chain } = request.body ?? {};
+    const { symbol } = request.body ?? {};
     if (!symbol) {
       reply.code(400).send({ error: 'symbol is required' });
       return;
@@ -99,22 +87,44 @@ export async function tradeRoutes(app: FastifyInstance) {
       return;
     }
 
-    tradeCounter++;
-    const trade: TradeRecord = {
-      id: `trade_${tradeCounter}_${Date.now()}`,
+    const db = getDb();
+    const tradeId = uuid();
+    const quantity = amountUsd / executionPrice;
+    const now = new Date();
+
+    await db.insert(tradesTable).values({
+      id: tradeId,
+      userId: 'default',
+      intentId: tradeId,
+      state: config.dryRun ? 'SIGNAL_GENERATED' : 'ORDER_CONFIRMED',
+      chain: (metrics.chain as string) ?? 'solana',
+      venue: 'jupiter',
+      side,
+      inputToken: side === 'buy' ? 'USDC' : symbol,
+      outputToken: side === 'buy' ? symbol : 'USDC',
+      amountIn: amountUsd.toString(),
+      amountOut: quantity.toString(),
+      idempotencyKey: `${symbol}-${side}-${Date.now()}`,
+      strategyId: 'manual',
+      txHash: config.dryRun ? null : `0x${Date.now().toString(16)}`,
+      createdAt: now,
+      updatedAt: now,
+    });
+
+    const trade = {
+      id: tradeId,
       symbol: metrics.symbol,
       side,
       amountUsd,
       price: executionPrice,
-      quantity: amountUsd / executionPrice,
+      quantity,
       chain: metrics.chain as string,
       status: config.dryRun ? 'dry_run' : 'executed',
       txHash: config.dryRun ? null : `0x${Date.now().toString(16)}`,
       timestamp: Date.now(),
     };
 
-    positions.set(trade.id, trade);
-    log.info({ tradeId: trade.id, symbol, side, amountUsd, slippage, priceImpact: priceImpact.toFixed(2), dryRun: config.dryRun }, 'Trade processed');
+    log.info({ tradeId, symbol, side, amountUsd, slippage, priceImpact: priceImpact.toFixed(2), dryRun: config.dryRun }, 'Trade processed');
 
     return {
       trade,
@@ -127,19 +137,26 @@ export async function tradeRoutes(app: FastifyInstance) {
   });
 
   app.get('/api/v1/trade/portfolio', async () => {
-    const trades = Array.from(positions.values()).sort((a, b) => b.timestamp - a.timestamp);
+    const db = getDb();
+    const trades = await db
+      .select()
+      .from(tradesTable)
+      .orderBy(desc(tradesTable.createdAt))
+      .limit(200);
 
-    const totalInvested = trades.filter(t => t.side === 'buy').reduce((s, t) => s + t.amountUsd, 0);
-    const totalSold = trades.filter(t => t.side === 'sell').reduce((s, t) => s + t.amountUsd, 0);
+    const buyTrades = trades.filter(t => t.side === 'buy');
+    const sellTrades = trades.filter(t => t.side === 'sell');
 
-    // Map trades to positions format the Flutter app expects
+    const totalInvested = buyTrades.reduce((s, t) => s + parseFloat(t.amountIn), 0);
+    const totalSold = sellTrades.reduce((s, t) => s + parseFloat(t.amountIn), 0);
+
     const positionsList = trades.map(t => ({
       id: t.id,
-      symbol: t.symbol,
+      symbol: t.outputToken,
       side: t.side,
-      amount: t.quantity,
-      price: t.price,
-      status: t.status,
+      amount: t.amountOut ? parseFloat(t.amountOut) : 0,
+      price: parseFloat(t.amountIn) / (t.amountOut ? parseFloat(t.amountOut) : 1),
+      status: t.state,
       chain: t.chain,
     }));
 
@@ -148,7 +165,13 @@ export async function tradeRoutes(app: FastifyInstance) {
       totalInvested,
       totalSold,
       positions: positionsList,
-      trades: trades.slice(0, 50),
+      trades: trades.slice(0, 50).map(t => ({
+        id: t.id,
+        symbol: t.side === 'buy' ? t.outputToken : t.inputToken,
+        side: t.side,
+        amountUsd: parseFloat(t.amountIn),
+        timestamp: t.createdAt.getTime(),
+      })),
     };
   });
 }

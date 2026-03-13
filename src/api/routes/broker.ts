@@ -21,7 +21,7 @@ let supervisor: Supervisor | null = null;
 
 function getSupervisor(): Supervisor {
   if (!supervisor) {
-    supervisor = new Supervisor(config.redis.url, config.supervisor.deadAgentTimeoutMs);
+    supervisor = new Supervisor(config.redis.url);
     supervisor.start().catch(() => { /* handled in start */ });
   }
   return supervisor;

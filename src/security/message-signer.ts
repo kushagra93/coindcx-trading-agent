@@ -1,7 +1,6 @@
 /**
  * HMAC-SHA256 message signing and verification for inter-agent communication.
- * Every message flowing through Redis Streams/Pub/Sub gets wrapped in a
- * SignedMessage envelope to ensure authenticity, integrity, and replay prevention.
+ * Every message is signed before sending over WebSocket and verified on receipt.
  *
  * Security guarantees:
  * 1. Authenticity — only the holder of the private key can sign
@@ -15,6 +14,7 @@ import type { Redis } from 'ioredis';
 import { createChildLogger } from '../core/logger.js';
 import type { AgentMessageType, SignedMessage } from './types.js';
 import { SECURITY_DEFAULTS, SECURITY_REDIS_KEYS } from './types.js';
+import type { WsMessage } from '../core/ws-types.js';
 
 const log = createChildLogger('message-signer');
 
@@ -173,26 +173,92 @@ export async function validateSignedMessage(
   return { valid: true };
 }
 
-/**
- * Serialize a SignedMessage to a flat key-value map for Redis Stream XADD.
- */
-export function serializeForStream(msg: SignedMessage): Record<string, string> {
-  return {
-    envelope: JSON.stringify(msg),
-  };
+// ═══════════════════════════════════════════════
+// WsMessage signing (MDC §Message Signing & Authenticity)
+// ═══════════════════════════════════════════════
+
+function canonicalizeWsPayload(payload: Record<string, unknown>): string {
+  return JSON.stringify(payload, Object.keys(payload).sort());
 }
 
 /**
- * Deserialize a SignedMessage from Redis Stream fields.
+ * Sign a WsMessage in-place: populates `signature` and `nonce` fields.
+ * Signs: from|to|type|canonical(payload)|timestamp|nonce|corrId
  */
-export function deserializeFromStream(fields: Record<string, string>): SignedMessage | null {
-  try {
-    if (fields.envelope) {
-      return JSON.parse(fields.envelope) as SignedMessage;
-    }
-    return null;
-  } catch {
-    log.error({ fields }, 'Failed to deserialize signed message from stream');
-    return null;
-  }
+export function signWsMessage(msg: WsMessage, privateKey: string): WsMessage {
+  const nonce = randomUUID();
+  const corrId = msg.corrId ?? '';
+  const signInput = `${msg.from}|${msg.to}|${msg.type}|${canonicalizeWsPayload(msg.payload)}|${msg.timestamp}|${nonce}|${corrId}`;
+  const signature = createHmac(SECURITY_DEFAULTS.MESSAGE_SIGN_ALGO, privateKey)
+    .update(signInput)
+    .digest('hex');
+
+  msg.nonce = nonce;
+  msg.signature = signature;
+  return msg;
 }
+
+/**
+ * Verify the HMAC-SHA256 signature on a WsMessage.
+ */
+export function verifyWsSignature(msg: WsMessage, senderKey: string): boolean {
+  if (!msg.signature || !msg.nonce) return false;
+
+  const corrId = msg.corrId ?? '';
+  const signInput = `${msg.from}|${msg.to}|${msg.type}|${canonicalizeWsPayload(msg.payload)}|${msg.timestamp}|${msg.nonce}|${corrId}`;
+  const expected = createHmac(SECURITY_DEFAULTS.MESSAGE_SIGN_ALGO, senderKey)
+    .update(signInput)
+    .digest('hex');
+
+  if (expected.length !== msg.signature.length) return false;
+  let result = 0;
+  for (let i = 0; i < expected.length; i++) {
+    result |= expected.charCodeAt(i) ^ msg.signature.charCodeAt(i);
+  }
+  return result === 0;
+}
+
+/**
+ * Check WsMessage timestamp freshness (numeric epoch ms).
+ */
+export function isWsTimestampFresh(
+  timestamp: number,
+  maxAgeMs: number = SECURITY_DEFAULTS.MESSAGE_EXPIRY_MS,
+): boolean {
+  const age = Date.now() - timestamp;
+  return age >= -5000 && age <= maxAgeMs;
+}
+
+/**
+ * Full validation of an inbound WsMessage:
+ * 1. Timestamp freshness (30s window)
+ * 2. Nonce uniqueness (replay prevention)
+ * 3. HMAC signature verification
+ */
+export async function validateWsMessage(
+  msg: WsMessage,
+  senderKey: string,
+  redis: Redis,
+): Promise<{ valid: boolean; error?: string }> {
+  if (!isWsTimestampFresh(msg.timestamp)) {
+    return { valid: false, error: 'Message timestamp expired or future' };
+  }
+
+  if (!msg.nonce) {
+    return { valid: false, error: 'Missing nonce' };
+  }
+
+  const nonceKey = `${SECURITY_REDIS_KEYS.usedNonces}:${msg.nonce}`;
+  const nonceExists = await redis.exists(nonceKey);
+  if (nonceExists) {
+    return { valid: false, error: 'Nonce already used (replay)' };
+  }
+
+  if (!verifyWsSignature(msg, senderKey)) {
+    return { valid: false, error: 'Invalid signature' };
+  }
+
+  await markNonceUsed(msg.nonce, redis);
+  return { valid: true };
+}
+

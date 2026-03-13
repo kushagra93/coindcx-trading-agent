@@ -1,7 +1,7 @@
 /**
  * Types for the Helper Agent Pool (Tier 4).
- * Helpers are stateless, horizontally-scalable workers that process
- * tasks from Redis Stream consumer groups.
+ * Helpers are stateless, horizontally-scalable workers that receive
+ * tasks via WebSocket from the WS Hub (round-robin distributed).
  */
 
 export type HelperAgentType =
@@ -18,7 +18,6 @@ export interface HelperTask {
   requestingAgentId: string;
   userId: string;
   payload: Record<string, unknown>;
-  responseStream: string;
   deadline: string;
   priority: 'low' | 'normal' | 'high' | 'critical';
   corr_id: string;

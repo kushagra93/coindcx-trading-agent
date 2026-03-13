@@ -1,112 +1,172 @@
-import { LRUCache } from 'lru-cache';
+import { eq, desc, inArray } from 'drizzle-orm';
 import { createChildLogger } from '../core/logger.js';
 import type { TradeRecord, TradeState } from '../core/types.js';
 import { assertTransition, getRecoverableStates } from '../core/state-machine.js';
+import { getDb } from '../db/index.js';
+import { trades as tradesTable } from '../db/schema.js';
 import { v4 as uuid } from 'uuid';
 
 const log = createChildLogger('trade-memory');
 
-// In-memory trade store (production: PostgreSQL with WAL)
-const trades = new Map<string, TradeRecord>();
+function rowToTradeRecord(row: typeof tradesTable.$inferSelect): TradeRecord {
+  return {
+    id: row.id,
+    userId: row.userId,
+    intentId: row.intentId,
+    state: row.state as TradeState,
+    chain: row.chain as TradeRecord['chain'],
+    venue: row.venue as TradeRecord['venue'],
+    side: row.side as TradeRecord['side'],
+    inputToken: row.inputToken,
+    outputToken: row.outputToken,
+    amountIn: row.amountIn,
+    amountOut: row.amountOut ?? undefined,
+    feeAmount: row.feeAmount ?? undefined,
+    feeToken: row.feeToken ?? undefined,
+    txHash: row.txHash ?? undefined,
+    error: row.error ?? undefined,
+    idempotencyKey: row.idempotencyKey,
+    strategyId: row.strategyId,
+    createdAt: row.createdAt,
+    updatedAt: row.updatedAt,
+  };
+}
 
-// LRU cache for idempotency keys to prevent unbounded growth
-const idempotencyIndex = new LRUCache<string, string>({
-  max: 50_000,
-  ttl: 24 * 60 * 60 * 1000, // 24 hour TTL
-});
+export async function createTradeRecord(
+  params: Omit<TradeRecord, 'id' | 'state' | 'createdAt' | 'updatedAt'>
+): Promise<TradeRecord> {
+  const db = getDb();
 
-/**
- * Create a new trade record.
- */
-export function createTradeRecord(params: Omit<TradeRecord, 'id' | 'state' | 'createdAt' | 'updatedAt'>): TradeRecord {
-  // Check idempotency
-  const existing = idempotencyIndex.get(params.idempotencyKey);
+  const [existing] = await db
+    .select()
+    .from(tradesTable)
+    .where(eq(tradesTable.idempotencyKey, params.idempotencyKey))
+    .limit(1);
+
   if (existing) {
-    const existingTrade = trades.get(existing);
-    if (existingTrade) {
-      log.info({ idempotencyKey: params.idempotencyKey, tradeId: existing }, 'Duplicate trade detected, returning existing');
-      return existingTrade;
-    }
+    log.info({ idempotencyKey: params.idempotencyKey, tradeId: existing.id }, 'Duplicate trade detected, returning existing');
+    return rowToTradeRecord(existing);
   }
 
-  const trade: TradeRecord = {
-    ...params,
+  const now = new Date();
+  const trade: typeof tradesTable.$inferInsert = {
     id: uuid(),
+    userId: params.userId,
+    intentId: params.intentId,
     state: 'SIGNAL_GENERATED',
-    createdAt: new Date(),
-    updatedAt: new Date(),
+    chain: params.chain,
+    venue: params.venue,
+    side: params.side,
+    inputToken: params.inputToken,
+    outputToken: params.outputToken,
+    amountIn: params.amountIn,
+    amountOut: params.amountOut ?? null,
+    feeAmount: params.feeAmount ?? null,
+    feeToken: params.feeToken ?? null,
+    txHash: params.txHash ?? null,
+    error: params.error ?? null,
+    idempotencyKey: params.idempotencyKey,
+    strategyId: params.strategyId,
+    createdAt: now,
+    updatedAt: now,
   };
 
-  trades.set(trade.id, trade);
-  idempotencyIndex.set(params.idempotencyKey, trade.id);
+  await db.insert(tradesTable).values(trade);
 
   log.info({ tradeId: trade.id, userId: trade.userId, chain: trade.chain }, 'Trade record created');
 
-  return trade;
+  return {
+    ...params,
+    id: trade.id!,
+    state: 'SIGNAL_GENERATED',
+    createdAt: now,
+    updatedAt: now,
+  };
 }
 
-/**
- * Transition a trade to a new state (WAL pattern).
- * Validates the transition and persists the change.
- */
-export function transitionTrade(tradeId: string, newState: TradeState, updates?: Partial<TradeRecord>): TradeRecord {
-  const trade = trades.get(tradeId);
-  if (!trade) {
+export async function transitionTrade(
+  tradeId: string,
+  newState: TradeState,
+  updates?: Partial<TradeRecord>
+): Promise<TradeRecord> {
+  const db = getDb();
+
+  const [row] = await db
+    .select()
+    .from(tradesTable)
+    .where(eq(tradesTable.id, tradeId))
+    .limit(1);
+
+  if (!row) {
     throw new Error(`Trade not found: ${tradeId}`);
   }
 
-  // Capture old state BEFORE mutation for logging
-  const fromState = trade.state;
-
-  // Validate state transition
+  const fromState = row.state as TradeState;
   assertTransition(fromState, newState, tradeId);
 
-  trade.state = newState;
-  trade.updatedAt = new Date();
+  const updateFields: Partial<typeof tradesTable.$inferInsert> = {
+    state: newState,
+    updatedAt: new Date(),
+  };
 
   if (updates) {
-    // Filter out protected fields — state, id, userId, idempotencyKey cannot be overwritten
-    const { state: _s, id: _i, userId: _u, idempotencyKey: _k, ...safeUpdates } = updates;
-    Object.assign(trade, safeUpdates);
+    if (updates.amountOut !== undefined) updateFields.amountOut = updates.amountOut;
+    if (updates.feeAmount !== undefined) updateFields.feeAmount = updates.feeAmount;
+    if (updates.feeToken !== undefined) updateFields.feeToken = updates.feeToken;
+    if (updates.txHash !== undefined) updateFields.txHash = updates.txHash;
+    if (updates.error !== undefined) updateFields.error = updates.error;
   }
+
+  const [updated] = await db
+    .update(tradesTable)
+    .set(updateFields)
+    .where(eq(tradesTable.id, tradeId))
+    .returning();
 
   log.info({ tradeId, from: fromState, to: newState }, 'Trade state transition');
 
-  return trade;
+  return rowToTradeRecord(updated);
 }
 
-/**
- * Get a trade by ID.
- */
-export function getTrade(tradeId: string): TradeRecord | undefined {
-  return trades.get(tradeId);
+export async function getTrade(tradeId: string): Promise<TradeRecord | undefined> {
+  const db = getDb();
+  const [row] = await db
+    .select()
+    .from(tradesTable)
+    .where(eq(tradesTable.id, tradeId))
+    .limit(1);
+
+  return row ? rowToTradeRecord(row) : undefined;
 }
 
-/**
- * Get trades by user ID.
- */
-export function getUserTrades(userId: string, limit: number = 50): TradeRecord[] {
-  return Array.from(trades.values())
-    .filter(t => t.userId === userId)
-    .sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime())
-    .slice(0, limit);
+export async function getUserTrades(userId: string, limit: number = 50): Promise<TradeRecord[]> {
+  const db = getDb();
+  const rows = await db
+    .select()
+    .from(tradesTable)
+    .where(eq(tradesTable.userId, userId))
+    .orderBy(desc(tradesTable.createdAt))
+    .limit(limit);
+
+  return rows.map(rowToTradeRecord);
 }
 
-/**
- * Get trades in non-terminal states (for crash recovery).
- */
-export function getRecoverableTrades(): TradeRecord[] {
-  const recoverableStates = new Set(getRecoverableStates());
-  return Array.from(trades.values()).filter(t => recoverableStates.has(t.state));
+export async function getRecoverableTrades(): Promise<TradeRecord[]> {
+  const db = getDb();
+  const recoverableStates = getRecoverableStates();
+
+  const rows = await db
+    .select()
+    .from(tradesTable)
+    .where(inArray(tradesTable.state, recoverableStates));
+
+  return rows.map(rowToTradeRecord);
 }
 
-/**
- * Recover a stuck trade by checking on-chain status.
- */
 export async function recoverTrades(
   reconcile: (trade: TradeRecord) => Promise<TradeState>
 ): Promise<number> {
-  const stuckTrades = getRecoverableTrades();
+  const stuckTrades = await getRecoverableTrades();
 
   if (stuckTrades.length === 0) {
     log.info('No trades to recover');
@@ -120,7 +180,7 @@ export async function recoverTrades(
     try {
       const resolvedState = await reconcile(trade);
       if (resolvedState !== trade.state) {
-        transitionTrade(trade.id, resolvedState);
+        await transitionTrade(trade.id, resolvedState);
         recovered++;
         log.info({ tradeId: trade.id, resolvedTo: resolvedState }, 'Trade recovered');
       }

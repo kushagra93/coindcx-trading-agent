@@ -42,7 +42,7 @@ export async function processWithdrawal(
 
   // 1. Verify dual signatures
   if (!request.userAgentSignature || !brokerSignature) {
-    audit({
+    await audit({
       actor: 'withdraw-gateway',
       actorTier: 'system',
       action: 'withdrawal-rejected',
@@ -74,7 +74,7 @@ export async function processWithdrawal(
   // 3. Execute withdrawal (in production: calls deposit-withdraw.ts)
 
   // 4. Audit
-  audit({
+  await audit({
     actor: 'withdraw-gateway',
     actorTier: 'system',
     action: 'withdrawal-processed',

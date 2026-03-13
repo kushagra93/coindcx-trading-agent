@@ -3,11 +3,10 @@ import { getUserPositions, getUserStats, getUserClosedTrades } from '../../trade
 import { getUnsettledFees } from '../../trader/fee-manager.js';
 
 export async function portfolioRoutes(app: FastifyInstance) {
-  // Get portfolio balances across all chains
   app.get('/api/v1/portfolio', async (request) => {
-    const userId = (request as any).userId as string; // Set by auth middleware
-    const stats = getUserStats(userId);
-    const unsettledFees = getUnsettledFees(userId);
+    const userId = (request as any).userId as string;
+    const stats = await getUserStats(userId);
+    const unsettledFees = await getUnsettledFees(userId);
 
     const feesObj: Record<string, number> = {};
     for (const [key, value] of unsettledFees) {
@@ -26,10 +25,9 @@ export async function portfolioRoutes(app: FastifyInstance) {
     };
   });
 
-  // Get open positions with live P&L
   app.get('/api/v1/positions', async (request) => {
     const userId = (request as any).userId as string;
-    const positions = getUserPositions(userId);
+    const positions = await getUserPositions(userId);
 
     return {
       positions: positions.map(p => ({
@@ -50,10 +48,9 @@ export async function portfolioRoutes(app: FastifyInstance) {
     };
   });
 
-  // Get position detail with "why this trade" explanation
   app.get<{ Params: { id: string } }>('/api/v1/positions/:id', async (request) => {
     const userId = (request as any).userId as string;
-    const positions = getUserPositions(userId);
+    const positions = await getUserPositions(userId);
     const position = positions.find(p => p.id === request.params.id);
 
     if (!position) {
@@ -62,18 +59,16 @@ export async function portfolioRoutes(app: FastifyInstance) {
 
     return {
       position,
-      // TODO: Generate explanation using Claude
       explanation: 'Trade executed based on strategy rules',
     };
   });
 
-  // Get trade history (paginated)
   app.get<{ Querystring: { page?: string; limit?: string } }>('/api/v1/trades', async (request) => {
     const userId = (request as any).userId as string;
     const page = parseInt(request.query.page ?? '1');
     const limit = Math.min(parseInt(request.query.limit ?? '20'), 100);
 
-    const trades = getUserClosedTrades(userId);
+    const trades = await getUserClosedTrades(userId);
     const start = (page - 1) * limit;
     const paginated = trades.slice(start, start + limit);
 

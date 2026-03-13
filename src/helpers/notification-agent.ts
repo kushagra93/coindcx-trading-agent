@@ -1,12 +1,12 @@
 /**
  * Notification Helper — sends human-readable notifications to users.
- *
  * Task types: trade-confirmation, risk-alert, compliance-alert, pnl-update.
- * Channels: push notification, in-app, webhook.
+ * Uses Redis for persistent notification storage (state, not messaging).
  */
 
 import type { Redis } from 'ioredis';
 import { createChildLogger } from '../core/logger.js';
+import type { WsClient } from '../core/ws-client.js';
 import { BaseHelper } from './base-helper.js';
 import type { HelperTask, HelperResult } from './types.js';
 
@@ -21,8 +21,11 @@ export type NotificationType =
   | 'agent-status';
 
 export class NotificationAgent extends BaseHelper {
-  constructor(redis: Redis) {
-    super(redis, 'notification');
+  constructor(
+    wsClient: WsClient,
+    private redis: Redis,
+  ) {
+    super(wsClient, 'notification');
   }
 
   async processTask(task: HelperTask): Promise<HelperResult> {
@@ -34,7 +37,6 @@ export class NotificationAgent extends BaseHelper {
 
       const message = this.formatNotification(notificationType, payload);
 
-      // Store notification in user's namespace
       const notifKey = `ns:${userId}:notifications`;
       await this.redis.lpush(notifKey, JSON.stringify({
         id: taskId,
@@ -44,13 +46,9 @@ export class NotificationAgent extends BaseHelper {
         read: false,
         corr_id,
       }));
-      await this.redis.ltrim(notifKey, 0, 199); // Keep last 200
+      await this.redis.ltrim(notifKey, 0, 199);
 
-      log.info({
-        userId,
-        type: notificationType,
-        corrId: corr_id,
-      }, 'Notification sent');
+      log.info({ userId, type: notificationType, corrId: corr_id }, 'Notification sent');
 
       return {
         taskId,

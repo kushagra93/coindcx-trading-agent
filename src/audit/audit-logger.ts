@@ -1,12 +1,13 @@
 import { createHash, randomUUID } from 'node:crypto';
+import { eq, desc, and, sql } from 'drizzle-orm';
 import { createChildLogger } from '../core/logger.js';
 import type { PermissionTier } from '../core/types.js';
 import type { ImmutableAuditEntry, AgentTier } from '../security/types.js';
 import { SECURITY_DEFAULTS } from '../security/types.js';
+import { getDb } from '../db/index.js';
+import { auditLog as auditLogTable } from '../db/schema.js';
 
 const log = createChildLogger('audit');
-
-// ===== Legacy Interface (kept for backward compatibility) =====
 
 export interface AuditEntry {
   id: string;
@@ -20,24 +21,6 @@ export interface AuditEntry {
   error?: string;
 }
 
-// ===== Immutable Audit Log with Hash Chain =====
-
-/**
- * In-memory append-only audit log with SHA-256 hash chain.
- * Each entry's hash includes the previous entry's hash,
- * forming a tamper-evident chain.
- *
- * Production: PostgreSQL append-only table with INSERT-only grants.
- * The hash chain is still computed for tamper detection.
- */
-const auditLog: ImmutableAuditEntry[] = [];
-let sequenceCounter = 0;
-let lastEntryHash = '0'.repeat(64); // Genesis hash
-
-/**
- * Compute SHA-256 hash of an audit entry including the previous entry's hash.
- * This creates a hash chain: modifying any earlier entry invalidates all subsequent hashes.
- */
 function computeEntryHash(entry: Omit<ImmutableAuditEntry, 'entryHash'>): string {
   const data = JSON.stringify({
     id: entry.id,
@@ -59,11 +42,7 @@ function computeEntryHash(entry: Omit<ImmutableAuditEntry, 'entryHash'>): string
     .digest('hex');
 }
 
-/**
- * Log an auditable action to the immutable audit log.
- * Supports both the legacy PermissionTier and the new AgentTier for actorTier.
- */
-export function audit(params: {
+export async function audit(params: {
   actor: string;
   actorTier: PermissionTier | AgentTier | 'admin' | 'ops' | 'system';
   action: string;
@@ -72,14 +51,22 @@ export function audit(params: {
   success?: boolean;
   error?: string;
   corr_id?: string;
-}): ImmutableAuditEntry {
-  const sequence = ++sequenceCounter;
+}): Promise<ImmutableAuditEntry> {
+  const db = getDb();
   const id = `audit-${randomUUID()}`;
   const timestamp = new Date().toISOString();
 
+  const [lastEntry] = await db
+    .select({ entryHash: auditLogTable.entryHash })
+    .from(auditLogTable)
+    .orderBy(desc(auditLogTable.sequence))
+    .limit(1);
+
+  const previousHash = lastEntry?.entryHash ?? '0'.repeat(64);
+
   const entryWithoutHash: Omit<ImmutableAuditEntry, 'entryHash'> = {
     id,
-    sequence,
+    sequence: 0, // will be set by DB serial
     timestamp,
     actor: params.actor,
     actorTier: params.actorTier as ImmutableAuditEntry['actorTier'],
@@ -88,22 +75,36 @@ export function audit(params: {
     details: params.details ?? {},
     success: params.success ?? true,
     error: params.error,
-    previousHash: lastEntryHash,
+    previousHash,
     corr_id: params.corr_id,
   };
 
   const entryHash = computeEntryHash(entryWithoutHash);
 
+  const [inserted] = await db
+    .insert(auditLogTable)
+    .values({
+      id,
+      timestamp,
+      actor: params.actor,
+      actorTier: params.actorTier,
+      action: params.action,
+      resource: params.resource,
+      details: params.details ?? {},
+      success: params.success ?? true,
+      error: params.error ?? null,
+      previousHash,
+      entryHash,
+      corrId: params.corr_id ?? null,
+    })
+    .returning();
+
   const entry: ImmutableAuditEntry = {
     ...entryWithoutHash,
+    sequence: inserted.sequence,
     entryHash,
   };
 
-  // Append to log (never modify/delete)
-  auditLog.push(entry);
-  lastEntryHash = entryHash;
-
-  // Also log to structured logger for streaming/external consumption
   log.info({
     auditId: entry.id,
     sequence: entry.sequence,
@@ -119,101 +120,134 @@ export function audit(params: {
   return entry;
 }
 
-/**
- * Get recent audit entries.
- */
-export function getAuditLog(limit: number = 100, filter?: {
+export async function getAuditLog(limit: number = 100, filter?: {
   actor?: string;
   action?: string;
   resource?: string;
   corr_id?: string;
   actorTier?: string;
-}): ImmutableAuditEntry[] {
-  let entries: ImmutableAuditEntry[] = auditLog;
+}): Promise<ImmutableAuditEntry[]> {
+  const db = getDb();
+  const conditions = [];
 
-  if (filter?.actor) {
-    entries = entries.filter(e => e.actor === filter.actor);
-  }
-  if (filter?.action) {
-    entries = entries.filter(e => e.action === filter.action);
-  }
-  if (filter?.resource) {
-    entries = entries.filter(e => e.resource === filter.resource);
-  }
-  if (filter?.corr_id) {
-    entries = entries.filter(e => e.corr_id === filter.corr_id);
-  }
-  if (filter?.actorTier) {
-    entries = entries.filter(e => e.actorTier === filter.actorTier);
-  }
+  if (filter?.actor) conditions.push(eq(auditLogTable.actor, filter.actor));
+  if (filter?.action) conditions.push(eq(auditLogTable.action, filter.action));
+  if (filter?.resource) conditions.push(eq(auditLogTable.resource, filter.resource));
+  if (filter?.corr_id) conditions.push(eq(auditLogTable.corrId, filter.corr_id));
+  if (filter?.actorTier) conditions.push(eq(auditLogTable.actorTier, filter.actorTier));
 
-  return entries.slice(-limit);
+  const where = conditions.length > 0 ? and(...conditions) : undefined;
+
+  const rows = await db
+    .select()
+    .from(auditLogTable)
+    .where(where)
+    .orderBy(desc(auditLogTable.sequence))
+    .limit(limit);
+
+  return rows.map(rowToAuditEntry);
 }
 
-// ===== Hash Chain Verification =====
+function rowToAuditEntry(row: typeof auditLogTable.$inferSelect): ImmutableAuditEntry {
+  return {
+    id: row.id,
+    sequence: row.sequence,
+    timestamp: row.timestamp,
+    actor: row.actor,
+    actorTier: row.actorTier as ImmutableAuditEntry['actorTier'],
+    action: row.action,
+    resource: row.resource,
+    details: (row.details ?? {}) as Record<string, unknown>,
+    success: row.success,
+    error: row.error ?? undefined,
+    previousHash: row.previousHash,
+    entryHash: row.entryHash,
+    corr_id: row.corrId ?? undefined,
+  };
+}
 
-/**
- * Verify the integrity of the entire audit log hash chain.
- * If any entry has been tampered with, the chain will be broken.
- *
- * @returns Object with validity status and index of first broken link (if any)
- */
-export function verifyAuditChain(): {
+export async function verifyAuditChain(): Promise<{
   valid: boolean;
   brokenAt?: number;
   totalEntries: number;
   error?: string;
-} {
-  if (auditLog.length === 0) {
+}> {
+  const db = getDb();
+
+  const [countResult] = await db
+    .select({ count: sql<number>`count(*)::int` })
+    .from(auditLogTable);
+
+  const totalEntries = countResult?.count ?? 0;
+  if (totalEntries === 0) {
     return { valid: true, totalEntries: 0 };
   }
 
-  let previousHash = '0'.repeat(64); // Genesis
+  const batchSize = 500;
+  let previousHash = '0'.repeat(64);
+  let offset = 0;
 
-  for (let i = 0; i < auditLog.length; i++) {
-    const entry = auditLog[i];
+  while (offset < totalEntries) {
+    const rows = await db
+      .select()
+      .from(auditLogTable)
+      .orderBy(auditLogTable.sequence)
+      .limit(batchSize)
+      .offset(offset);
 
-    // Check the previous hash link
-    if (entry.previousHash !== previousHash) {
-      return {
-        valid: false,
-        brokenAt: i,
-        totalEntries: auditLog.length,
-        error: `Hash chain broken at entry ${i} (seq ${entry.sequence}): expected previousHash ${previousHash.substring(0, 16)}... got ${entry.previousHash.substring(0, 16)}...`,
-      };
+    for (const row of rows) {
+      const entry = rowToAuditEntry(row);
+
+      if (entry.previousHash !== previousHash) {
+        return {
+          valid: false,
+          brokenAt: entry.sequence,
+          totalEntries,
+          error: `Hash chain broken at entry seq ${entry.sequence}: expected previousHash ${previousHash.substring(0, 16)}... got ${entry.previousHash.substring(0, 16)}...`,
+        };
+      }
+
+      const { entryHash: _, ...rest } = entry;
+      const recomputed = computeEntryHash(rest as Omit<ImmutableAuditEntry, 'entryHash'>);
+      if (recomputed !== entry.entryHash) {
+        return {
+          valid: false,
+          brokenAt: entry.sequence,
+          totalEntries,
+          error: `Entry hash mismatch at seq ${entry.sequence}: data has been tampered with`,
+        };
+      }
+
+      previousHash = entry.entryHash;
     }
 
-    // Recompute and verify the entry's own hash
-    const { entryHash: _, ...rest } = entry;
-    const recomputed = computeEntryHash(rest as Omit<ImmutableAuditEntry, 'entryHash'>);
-    if (recomputed !== entry.entryHash) {
-      return {
-        valid: false,
-        brokenAt: i,
-        totalEntries: auditLog.length,
-        error: `Entry hash mismatch at entry ${i} (seq ${entry.sequence}): data has been tampered with`,
-      };
-    }
-
-    previousHash = entry.entryHash;
+    offset += batchSize;
   }
 
-  return { valid: true, totalEntries: auditLog.length };
+  return { valid: true, totalEntries };
 }
 
-/**
- * Get a specific audit entry by correlation ID (for trade lifecycle tracing).
- */
-export function getAuditTrail(corrId: string): ImmutableAuditEntry[] {
-  return auditLog.filter(e => e.corr_id === corrId);
+export async function getAuditTrail(corrId: string): Promise<ImmutableAuditEntry[]> {
+  const db = getDb();
+  const rows = await db
+    .select()
+    .from(auditLogTable)
+    .where(eq(auditLogTable.corrId, corrId))
+    .orderBy(auditLogTable.sequence);
+
+  return rows.map(rowToAuditEntry);
 }
 
-/**
- * Get the current chain head hash (for external verification).
- */
-export function getChainHead(): { hash: string; sequence: number } {
+export async function getChainHead(): Promise<{ hash: string; sequence: number }> {
+  const db = getDb();
+  const [row] = await db
+    .select({ entryHash: auditLogTable.entryHash, sequence: auditLogTable.sequence })
+    .from(auditLogTable)
+    .orderBy(desc(auditLogTable.sequence))
+    .limit(1);
+
   return {
-    hash: lastEntryHash,
-    sequence: sequenceCounter,
+    hash: row?.entryHash ?? '0'.repeat(64),
+    sequence: row?.sequence ?? 0,
   };
 }

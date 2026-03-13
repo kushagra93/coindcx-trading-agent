@@ -109,7 +109,7 @@ export function startLifecycle(params: {
     startedAt: new Date().toISOString(),
   };
 
-  audit({
+  void audit({
     actor: params.agentId,
     actorTier: 'user',
     action: 'trade-lifecycle-started',

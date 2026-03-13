@@ -1,59 +1,55 @@
+import { eq, and, gte, sql } from 'drizzle-orm';
 import { createChildLogger } from '../core/logger.js';
 import { config } from '../core/config.js';
+import { getDb } from '../db/index.js';
+import {
+  circuitBreakerLosses,
+  circuitBreakerTrips,
+  globalSettings,
+} from '../db/schema.js';
 
 const log = createChildLogger('circuit-breaker');
 
-interface LossRecord {
-  amount: number;
-  timestamp: number;
+const GLOBAL_HALT_KEY = 'global_halt';
+
+export async function recordLoss(userId: string, lossUsd: number): Promise<void> {
+  if (lossUsd >= 0) return;
+
+  const db = getDb();
+  await db.insert(circuitBreakerLosses).values({
+    userId,
+    amount: Math.abs(lossUsd),
+    recordedAt: new Date(),
+  });
 }
 
-// Per-user loss tracking
-const userLosses = new Map<string, LossRecord[]>();
-const trippedBreakers = new Set<string>();
+export async function shouldTrip(userId: string, portfolioValueUsd: number): Promise<boolean> {
+  if (await isGlobalHalt()) return true;
+  if (await isTripped(userId)) return true;
 
-// Global emergency halt
-let globalHalt = false;
-
-/**
- * Record a loss for a user.
- */
-export function recordLoss(userId: string, lossUsd: number): void {
-  if (lossUsd >= 0) return; // Only track losses
-
-  const losses = userLosses.get(userId) ?? [];
-  losses.push({ amount: Math.abs(lossUsd), timestamp: Date.now() });
-  userLosses.set(userId, losses);
-}
-
-/**
- * Check if the circuit breaker should trip for a user.
- * Guards against division-by-zero when portfolio value is zero or negative.
- */
-export function shouldTrip(userId: string, portfolioValueUsd: number): boolean {
-  if (globalHalt) return true;
-  if (trippedBreakers.has(userId)) return true;
-
-  // Guard: zero or negative portfolio → trip immediately
   if (portfolioValueUsd <= 0) {
     log.warn({ userId, portfolioValueUsd }, 'Portfolio value is zero or negative — circuit breaker tripped');
-    trippedBreakers.add(userId);
+    await tripBreaker(userId, 'Portfolio value zero or negative');
     return true;
   }
 
+  const db = getDb();
   const windowMs = config.risk.circuitBreakerWindowHours * 60 * 60 * 1000;
-  const cutoff = Date.now() - windowMs;
-  const losses = userLosses.get(userId) ?? [];
+  const cutoff = new Date(Date.now() - windowMs);
 
-  // Clean up old records
-  const recentLosses = losses.filter(l => l.timestamp > cutoff);
-  userLosses.set(userId, recentLosses);
+  const [result] = await db
+    .select({ totalLoss: sql<number>`coalesce(sum(${circuitBreakerLosses.amount}), 0)` })
+    .from(circuitBreakerLosses)
+    .where(and(
+      eq(circuitBreakerLosses.userId, userId),
+      gte(circuitBreakerLosses.recordedAt, cutoff),
+    ));
 
-  const totalLoss = recentLosses.reduce((sum, l) => sum + l.amount, 0);
+  const totalLoss = result?.totalLoss ?? 0;
   const lossPct = (totalLoss / portfolioValueUsd) * 100;
 
   if (lossPct >= config.risk.circuitBreakerLossPct) {
-    trippedBreakers.add(userId);
+    await tripBreaker(userId, `Loss ${lossPct.toFixed(2)}% exceeded threshold ${config.risk.circuitBreakerLossPct}%`);
     log.warn({
       userId,
       lossPct: lossPct.toFixed(2),
@@ -67,49 +63,65 @@ export function shouldTrip(userId: string, portfolioValueUsd: number): boolean {
   return false;
 }
 
-/**
- * Check if trading is allowed for a user.
- */
-export function isTradingAllowed(userId: string): boolean {
-  if (globalHalt) return false;
-  return !trippedBreakers.has(userId);
+async function isTripped(userId: string): Promise<boolean> {
+  const db = getDb();
+  const [row] = await db
+    .select()
+    .from(circuitBreakerTrips)
+    .where(eq(circuitBreakerTrips.userId, userId))
+    .limit(1);
+  return !!row;
 }
 
-/**
- * Reset circuit breaker for a user (admin/ops action).
- */
-export function resetBreaker(userId: string): void {
-  trippedBreakers.delete(userId);
-  userLosses.delete(userId);
+async function tripBreaker(userId: string, reason: string): Promise<void> {
+  const db = getDb();
+  await db
+    .insert(circuitBreakerTrips)
+    .values({ userId, trippedAt: new Date(), reason })
+    .onConflictDoNothing();
+}
+
+export async function isTradingAllowed(userId: string): Promise<boolean> {
+  if (await isGlobalHalt()) return false;
+  return !(await isTripped(userId));
+}
+
+export async function resetBreaker(userId: string): Promise<void> {
+  const db = getDb();
+  await db.delete(circuitBreakerTrips).where(eq(circuitBreakerTrips.userId, userId));
   log.info({ userId }, 'Circuit breaker reset');
 }
 
-/**
- * Emergency halt — stop all trading globally.
- */
-export function emergencyHalt(): void {
-  globalHalt = true;
+export async function emergencyHalt(): Promise<void> {
+  const db = getDb();
+  await db
+    .insert(globalSettings)
+    .values({ key: GLOBAL_HALT_KEY, value: 'true', updatedAt: new Date() })
+    .onConflictDoUpdate({
+      target: globalSettings.key,
+      set: { value: 'true', updatedAt: new Date() },
+    });
   log.warn('EMERGENCY HALT: All trading stopped globally');
 }
 
-/**
- * Resume trading after emergency halt.
- */
-export function resumeTrading(): void {
-  globalHalt = false;
+export async function resumeTrading(): Promise<void> {
+  const db = getDb();
+  await db.delete(globalSettings).where(eq(globalSettings.key, GLOBAL_HALT_KEY));
   log.info('Trading resumed after emergency halt');
 }
 
-/**
- * Check if global halt is active.
- */
-export function isGlobalHalt(): boolean {
-  return globalHalt;
+export async function isGlobalHalt(): Promise<boolean> {
+  const db = getDb();
+  const [row] = await db
+    .select()
+    .from(globalSettings)
+    .where(eq(globalSettings.key, GLOBAL_HALT_KEY))
+    .limit(1);
+  return row?.value === 'true';
 }
 
-/**
- * Get list of users with tripped breakers.
- */
-export function getTrippedUsers(): string[] {
-  return Array.from(trippedBreakers);
+export async function getTrippedUsers(): Promise<string[]> {
+  const db = getDb();
+  const rows = await db.select({ userId: circuitBreakerTrips.userId }).from(circuitBreakerTrips);
+  return rows.map(r => r.userId);
 }

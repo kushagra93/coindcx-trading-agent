@@ -1,8 +1,13 @@
 import Fastify from 'fastify';
 import cors from '@fastify/cors';
+import websocket from '@fastify/websocket';
+import { createHmac, timingSafeEqual } from 'crypto';
 import { config } from '../core/config.js';
 import { createChildLogger } from '../core/logger.js';
 import { getAdapter } from '../adapters/index.js';
+import type { WsGateway } from '../core/ws-gateway.js';
+import type { WsConnectionMeta } from '../core/ws-types.js';
+import type { AgentTier } from '../security/types.js';
 import { healthRoutes } from './routes/health.js';
 import { portfolioRoutes } from './routes/portfolio.js';
 import { configRoutes } from './routes/config.js';
@@ -30,13 +35,69 @@ if (config.nodeEnv !== 'production') {
 const VALID_TIERS = new Set(['admin', 'broker', 'ops', 'user']);
 const MAX_TOKEN_LENGTH = 4096;
 
-export async function createServer() {
+const VALID_AGENT_TIERS = new Set<string>(['master', 'broker', 'user', 'helper']);
+
+// ═══════════════════════════════════════════════
+// JWT helpers (lightweight, no external dep)
+// ═══════════════════════════════════════════════
+
+interface JwtPayload {
+  agentId: string;
+  userId: string;
+  tier: string;
+  helperType?: string;
+  iat?: number;
+  exp?: number;
+}
+
+function base64UrlDecode(str: string): string {
+  const padded = str + '='.repeat((4 - (str.length % 4)) % 4);
+  return Buffer.from(padded, 'base64url').toString('utf8');
+}
+
+function base64UrlEncode(data: string): string {
+  return Buffer.from(data, 'utf8').toString('base64url');
+}
+
+function verifyJwt(token: string, secret: string): JwtPayload | null {
+  const parts = token.split('.');
+  if (parts.length !== 3) return null;
+
+  const [headerB64, payloadB64, signatureB64] = parts;
+  const signInput = `${headerB64}.${payloadB64}`;
+  const expected = createHmac('sha256', secret).update(signInput).digest('base64url');
+
+  if (expected.length !== signatureB64.length) return null;
+  if (!timingSafeEqual(Buffer.from(expected), Buffer.from(signatureB64))) return null;
+
+  try {
+    const payload = JSON.parse(base64UrlDecode(payloadB64)) as JwtPayload;
+    if (payload.exp && Date.now() / 1000 > payload.exp) return null;
+    return payload;
+  } catch {
+    return null;
+  }
+}
+
+/** Utility for other services to mint gateway JWTs (e.g., when creating agents). */
+export function mintGatewayJwt(payload: Omit<JwtPayload, 'iat' | 'exp'>, ttlSeconds = 86_400): string {
+  const header = base64UrlEncode(JSON.stringify({ alg: 'HS256', typ: 'JWT' }));
+  const now = Math.floor(Date.now() / 1000);
+  const body = base64UrlEncode(JSON.stringify({ ...payload, iat: now, exp: now + ttlSeconds }));
+  const signature = createHmac('sha256', config.gateway.jwtSecret).update(`${header}.${body}`).digest('base64url');
+  return `${header}.${body}.${signature}`;
+}
+
+// ═══════════════════════════════════════════════
+// Server Factory
+// ═══════════════════════════════════════════════
+
+export async function createServer(gateway?: WsGateway) {
   const app = Fastify({
-    logger: false, // We use our own pino logger
-    bodyLimit: 1_048_576, // 1MB max body size
+    logger: false,
+    bodyLimit: 1_048_576,
   });
 
-  // CORS — restrict origins in production
   const allowedOrigins = config.nodeEnv === 'production'
     ? ['https://coindcx.com', 'https://app.coindcx.com']
     : true;
@@ -46,9 +107,43 @@ export async function createServer() {
     methods: ['GET', 'POST', 'PUT', 'DELETE'],
   });
 
-  // Auth middleware — extract user from host app token
+  await app.register(websocket);
+
+  // ─── WebSocket endpoint with JWT verification at handshake ───
+  if (gateway) {
+    app.get('/ws/agents', { websocket: true }, (socket, request) => {
+      const token = (request.query as Record<string, string>).token;
+
+      if (!token) {
+        socket.close(4001, 'Missing JWT token');
+        return;
+      }
+
+      const jwt = verifyJwt(token, config.gateway.jwtSecret);
+      if (!jwt) {
+        socket.close(4001, 'Invalid or expired JWT');
+        return;
+      }
+
+      if (!jwt.agentId || !jwt.tier || !VALID_AGENT_TIERS.has(jwt.tier)) {
+        socket.close(4001, 'Invalid JWT claims: agentId and tier required');
+        return;
+      }
+
+      const meta: WsConnectionMeta = {
+        agentId: jwt.agentId,
+        userId: jwt.userId ?? '',
+        tier: jwt.tier as AgentTier,
+        helperType: jwt.helperType,
+        connectedAt: Date.now(),
+      };
+
+      void gateway.registerConnection(socket, meta);
+    });
+  }
+
+  // Auth middleware
   app.addHook('onRequest', async (request, reply) => {
-    // Skip auth for health checks and public API routes (hackathon mode)
     if (request.url === '/health' || request.url === '/ready') return;
     if (request.url.startsWith('/api/v1/tokens/') || request.url.startsWith('/api/v1/chains') || request.url.startsWith('/api/v1/chat') || request.url.startsWith('/api/v1/trade/') || request.url.startsWith('/api/v1/perps/') || request.url.startsWith('/api/v1/proxy/') || request.url.startsWith('/api/v1/leaderboard') || request.url.startsWith('/api/v1/copy')) return;
 
@@ -60,7 +155,6 @@ export async function createServer() {
 
     const token = authHeader.slice(7);
 
-    // Guard against excessively long tokens
     if (token.length > MAX_TOKEN_LENGTH) {
       reply.code(400).send({ error: 'Token too long' });
       return;
@@ -75,7 +169,6 @@ export async function createServer() {
         return;
       }
 
-      // Validate tier from adapter response
       const tier = result.tier ?? 'user';
       if (!VALID_TIERS.has(tier)) {
         log.warn({ userId: result.userId, tier }, 'Invalid tier from adapter — defaulting to user');
@@ -106,7 +199,7 @@ export async function createServer() {
   await app.register(gatewayRoutes);
   await app.register(perpsRoutes);
 
-  // Image proxy for CORS bypass in Flutter web
+  // Image proxy
   app.get<{ Querystring: { url: string } }>('/api/v1/proxy/image', async (request, reply) => {
     const { url } = request.query;
     if (!url || !url.startsWith('https://')) {
@@ -136,7 +229,6 @@ export async function createServer() {
       return;
     }
 
-    // TODO: Look up user's wallet address for the given chain
     return { chain, address: `pending-${userId}-${chain}` };
   });
 
@@ -162,7 +254,6 @@ export async function createServer() {
       return;
     }
 
-    // TODO: Process withdrawal
     return { status: 'pending', userId, chain, token, amount };
   });
 
@@ -183,7 +274,6 @@ export async function createServer() {
       return;
     }
 
-    // TODO: Forward to Claude for strategy generation
     return {
       response: 'AI strategy builder is not yet implemented',
       conversationId: conversationId ?? 'new',
@@ -193,7 +283,6 @@ export async function createServer() {
   // Notifications
   app.get('/api/v1/notifications', async (request) => {
     const userId = (request as any).userId as string;
-    // TODO: Return trade notifications
     return { notifications: [] };
   });
 
@@ -216,11 +305,11 @@ export async function createServer() {
   return app;
 }
 
-export async function startServer() {
-  const app = await createServer();
+export async function startServer(gateway?: WsGateway) {
+  const app = await createServer(gateway);
 
   await app.listen({ port: config.port, host: '0.0.0.0' });
-  log.info({ port: config.port }, 'API server started');
+  log.info({ port: config.port, gwEnabled: !!gateway }, 'API server started');
 
   return app;
 }

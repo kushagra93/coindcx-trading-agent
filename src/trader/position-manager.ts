@@ -1,24 +1,34 @@
+import { eq, and, sql } from 'drizzle-orm';
 import { createChildLogger } from '../core/logger.js';
 import type { Position, Chain } from '../core/types.js';
+import { getDb } from '../db/index.js';
+import { positions as positionsTable, userStats as userStatsTable } from '../db/schema.js';
 import { v4 as uuid } from 'uuid';
 
 const log = createChildLogger('position-manager');
 
-// In-memory position tracking (production: PostgreSQL)
-const positions = new Map<string, Position>();
-const closedPositions: Position[] = [];
+function rowToPosition(row: typeof positionsTable.$inferSelect): Position {
+  return {
+    id: row.id,
+    userId: row.userId,
+    chain: row.chain as Chain,
+    token: row.token,
+    tokenSymbol: row.tokenSymbol,
+    entryPrice: row.entryPrice,
+    currentPrice: row.currentPrice,
+    amount: row.amount,
+    costBasis: row.costBasis,
+    unrealizedPnl: row.unrealizedPnl,
+    unrealizedPnlPct: row.unrealizedPnlPct,
+    highWaterMark: row.highWaterMark,
+    status: row.status as Position['status'],
+    strategyId: row.strategyId,
+    openedAt: row.openedAt,
+    closedAt: row.closedAt ?? undefined,
+  };
+}
 
-// Aggregate stats per user
-const userStats = new Map<string, {
-  totalPnl: number;
-  totalTrades: number;
-  winCount: number;
-}>();
-
-/**
- * Open a new position.
- */
-export function openPosition(params: {
+export async function openPosition(params: {
   userId: string;
   chain: Chain;
   token: string;
@@ -27,10 +37,11 @@ export function openPosition(params: {
   amount: number;
   costBasis: number;
   strategyId: string;
-}): Position {
+}): Promise<Position> {
+  const db = getDb();
   const positionId = uuid();
 
-  const position: Position = {
+  const row: typeof positionsTable.$inferInsert = {
     id: positionId,
     userId: params.userId,
     chain: params.chain,
@@ -48,7 +59,8 @@ export function openPosition(params: {
     openedAt: new Date(),
   };
 
-  positions.set(positionId, position);
+  await db.insert(positionsTable).values(row);
+
   log.info({
     positionId,
     userId: params.userId,
@@ -57,41 +69,49 @@ export function openPosition(params: {
     amount: params.amount,
   }, 'Position opened');
 
-  return position;
+  return rowToPosition(row as typeof positionsTable.$inferSelect);
 }
 
-/**
- * Update price for a position.
- */
-export function updatePositionPrice(positionId: string, currentPrice: number): void {
-  const pos = positions.get(positionId);
-  if (!pos || pos.status !== 'open') return;
+export async function updatePositionPrice(positionId: string, currentPrice: number): Promise<void> {
+  const db = getDb();
 
-  pos.currentPrice = currentPrice;
-  pos.unrealizedPnl = (currentPrice - pos.entryPrice) * pos.amount;
-  pos.unrealizedPnlPct = ((currentPrice - pos.entryPrice) / pos.entryPrice) * 100;
+  const [pos] = await db
+    .select()
+    .from(positionsTable)
+    .where(and(eq(positionsTable.id, positionId), eq(positionsTable.status, 'open')))
+    .limit(1);
 
-  if (currentPrice > pos.highWaterMark) {
-    pos.highWaterMark = currentPrice;
-  }
+  if (!pos) return;
+
+  const unrealizedPnl = (currentPrice - pos.entryPrice) * pos.amount;
+  const unrealizedPnlPct = ((currentPrice - pos.entryPrice) / pos.entryPrice) * 100;
+  const highWaterMark = Math.max(currentPrice, pos.highWaterMark);
+
+  await db
+    .update(positionsTable)
+    .set({ currentPrice, unrealizedPnl, unrealizedPnlPct, highWaterMark })
+    .where(eq(positionsTable.id, positionId));
 }
 
-/**
- * Close a position (full or partial).
- */
-export function closePosition(
+export async function closePosition(
   positionId: string,
   exitPrice: number,
   reason: string,
   sellPct: number = 100
-): { realizedPnl: number; soldAmount: number } | null {
-  const pos = positions.get(positionId);
+): Promise<{ realizedPnl: number; soldAmount: number } | null> {
+  const db = getDb();
+
+  const [pos] = await db
+    .select()
+    .from(positionsTable)
+    .where(eq(positionsTable.id, positionId))
+    .limit(1);
+
   if (!pos || pos.status === 'closed') {
     log.warn({ positionId }, 'Position not found or already closed');
     return null;
   }
 
-  pos.status = 'closing';
   const sellFraction = sellPct / 100;
   const soldAmount = pos.amount * sellFraction;
   const soldCostBasis = pos.costBasis * sellFraction;
@@ -99,22 +119,35 @@ export function closePosition(
   const realizedPnl = proceeds - soldCostBasis;
 
   if (sellPct >= 100) {
-    // Full close
-    pos.status = 'closed';
-    pos.closedAt = new Date();
-    pos.currentPrice = exitPrice;
-    pos.unrealizedPnl = 0;
-    pos.unrealizedPnlPct = 0;
+    await db
+      .update(positionsTable)
+      .set({
+        status: 'closed',
+        closedAt: new Date(),
+        currentPrice: exitPrice,
+        unrealizedPnl: 0,
+        unrealizedPnlPct: 0,
+      })
+      .where(eq(positionsTable.id, positionId));
 
-    positions.delete(positionId);
-    closedPositions.push({ ...pos });
-
-    // Update user stats
-    const stats = userStats.get(pos.userId) ?? { totalPnl: 0, totalTrades: 0, winCount: 0 };
-    stats.totalPnl += realizedPnl;
-    stats.totalTrades++;
-    if (realizedPnl > 0) stats.winCount++;
-    userStats.set(pos.userId, stats);
+    await db
+      .insert(userStatsTable)
+      .values({
+        userId: pos.userId,
+        totalPnl: realizedPnl,
+        totalTrades: 1,
+        winCount: realizedPnl > 0 ? 1 : 0,
+        updatedAt: new Date(),
+      })
+      .onConflictDoUpdate({
+        target: userStatsTable.userId,
+        set: {
+          totalPnl: sql`${userStatsTable.totalPnl} + ${realizedPnl}`,
+          totalTrades: sql`${userStatsTable.totalTrades} + 1`,
+          winCount: sql`${userStatsTable.winCount} + ${realizedPnl > 0 ? 1 : 0}`,
+          updatedAt: new Date(),
+        },
+      });
 
     log.info({
       positionId,
@@ -123,19 +156,28 @@ export function closePosition(
       reason,
     }, 'Position fully closed');
   } else {
-    // Partial close
-    pos.status = 'open';
-    pos.amount -= soldAmount;
-    pos.costBasis -= soldCostBasis;
-    pos.currentPrice = exitPrice;
-    pos.unrealizedPnl = (exitPrice - pos.entryPrice) * pos.amount;
-    pos.unrealizedPnlPct = ((exitPrice - pos.entryPrice) / pos.entryPrice) * 100;
+    const remainingAmount = pos.amount - soldAmount;
+    const remainingCostBasis = pos.costBasis - soldCostBasis;
+    const unrealizedPnl = (exitPrice - pos.entryPrice) * remainingAmount;
+    const unrealizedPnlPct = ((exitPrice - pos.entryPrice) / pos.entryPrice) * 100;
+
+    await db
+      .update(positionsTable)
+      .set({
+        status: 'open',
+        amount: remainingAmount,
+        costBasis: remainingCostBasis,
+        currentPrice: exitPrice,
+        unrealizedPnl,
+        unrealizedPnlPct,
+      })
+      .where(eq(positionsTable.id, positionId));
 
     log.info({
       positionId,
       token: pos.tokenSymbol,
       soldPct: sellPct,
-      remainingAmount: pos.amount,
+      remainingAmount,
       realizedPnl: realizedPnl.toFixed(4),
     }, 'Position partially closed');
   }
@@ -143,71 +185,97 @@ export function closePosition(
   return { realizedPnl, soldAmount };
 }
 
-/**
- * Get all open positions for a user.
- */
-export function getUserPositions(userId: string): Position[] {
-  return Array.from(positions.values()).filter(p => p.userId === userId);
+export async function getUserPositions(userId: string): Promise<Position[]> {
+  const db = getDb();
+  const rows = await db
+    .select()
+    .from(positionsTable)
+    .where(and(eq(positionsTable.userId, userId), eq(positionsTable.status, 'open')));
+
+  return rows.map(rowToPosition);
 }
 
-/**
- * Get a specific position.
- */
-export function getPosition(positionId: string): Position | undefined {
-  return positions.get(positionId);
+export async function getPosition(positionId: string): Promise<Position | undefined> {
+  const db = getDb();
+  const [row] = await db
+    .select()
+    .from(positionsTable)
+    .where(eq(positionsTable.id, positionId))
+    .limit(1);
+
+  return row ? rowToPosition(row) : undefined;
 }
 
-/**
- * Get all open positions.
- */
-export function getAllOpenPositions(): Position[] {
-  return Array.from(positions.values());
+export async function getAllOpenPositions(): Promise<Position[]> {
+  const db = getDb();
+  const rows = await db
+    .select()
+    .from(positionsTable)
+    .where(eq(positionsTable.status, 'open'));
+
+  return rows.map(rowToPosition);
 }
 
-/**
- * Get closed trades for a user.
- */
-export function getUserClosedTrades(userId: string): Position[] {
-  return closedPositions.filter(p => p.userId === userId);
+export async function getUserClosedTrades(userId: string): Promise<Position[]> {
+  const db = getDb();
+  const rows = await db
+    .select()
+    .from(positionsTable)
+    .where(and(eq(positionsTable.userId, userId), eq(positionsTable.status, 'closed')));
+
+  return rows.map(rowToPosition);
 }
 
-/**
- * Get user stats.
- */
-export function getUserStats(userId: string): {
+export async function getUserStats(userId: string): Promise<{
   totalPnl: number;
   totalTrades: number;
   winCount: number;
   winRate: number;
   openPositions: number;
-} {
-  const stats = userStats.get(userId) ?? { totalPnl: 0, totalTrades: 0, winCount: 0 };
-  const openCount = Array.from(positions.values()).filter(p => p.userId === userId).length;
+}> {
+  const db = getDb();
+
+  const [stats] = await db
+    .select()
+    .from(userStatsTable)
+    .where(eq(userStatsTable.userId, userId))
+    .limit(1);
+
+  const [openCount] = await db
+    .select({ count: sql<number>`count(*)::int` })
+    .from(positionsTable)
+    .where(and(eq(positionsTable.userId, userId), eq(positionsTable.status, 'open')));
+
+  const s = stats ?? { totalPnl: 0, totalTrades: 0, winCount: 0 };
 
   return {
-    ...stats,
-    winRate: stats.totalTrades > 0 ? stats.winCount / stats.totalTrades : 0,
-    openPositions: openCount,
+    totalPnl: s.totalPnl,
+    totalTrades: s.totalTrades,
+    winCount: s.winCount,
+    winRate: s.totalTrades > 0 ? s.winCount / s.totalTrades : 0,
+    openPositions: openCount?.count ?? 0,
   };
 }
 
-/**
- * Close all positions for a user (emergency stop).
- */
-export function closeAllPositions(userId: string, exitPrice: number, reason: string): void {
-  const userPositions = getUserPositions(userId);
+export async function closeAllPositions(userId: string, exitPrice: number, reason: string): Promise<void> {
+  const userPositions = await getUserPositions(userId);
   for (const pos of userPositions) {
-    closePosition(pos.id, exitPrice, reason, 100);
+    await closePosition(pos.id, exitPrice, reason, 100);
   }
   log.info({ userId, count: userPositions.length, reason }, 'All positions closed');
 }
 
-/**
- * Get open position count.
- */
-export function getOpenPositionCount(userId?: string): number {
-  if (userId) {
-    return Array.from(positions.values()).filter(p => p.userId === userId).length;
-  }
-  return positions.size;
+export async function getOpenPositionCount(userId?: string): Promise<number> {
+  const db = getDb();
+
+  const condition = userId
+    ? and(eq(positionsTable.userId, userId), eq(positionsTable.status, 'open'))
+    : eq(positionsTable.status, 'open');
+
+  const [result] = await db
+    .select({ count: sql<number>`count(*)::int` })
+    .from(positionsTable)
+    .where(condition);
+
+  return result?.count ?? 0;
 }

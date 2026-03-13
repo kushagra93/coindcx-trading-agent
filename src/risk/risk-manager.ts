@@ -1,5 +1,5 @@
 import { createChildLogger } from '../core/logger.js';
-import { config } from '../core/config.js';
+import { getRedis } from '../core/redis.js';
 import type { RiskLevel, TradeIntent, RiskSettings } from '../core/types.js';
 import type { RiskAssessment, MarketRegime } from './types.js';
 import { RISK_PROFILES } from './types.js';
@@ -8,65 +8,52 @@ import { shouldTrip, isTradingAllowed, recordLoss } from './circuit-breaker.js';
 
 const log = createChildLogger('risk-manager');
 
-// Volatility tracking per token (rolling window)
-const volatilityHistory = new Map<string, number[]>();
+const VOLATILITY_KEY_PREFIX = 'volatility:';
+const VOLATILITY_MAX_ENTRIES = 30;
+const VOLATILITY_TTL_SECONDS = 7 * 24 * 60 * 60; // 7 days
 
-/**
- * Kelly Criterion position sizing.
- * f* = (bp - q) / b
- * where b = odds, p = win probability, q = 1 - p
- */
 export function kellySize(winRate: number, avgWinLossRatio: number, kellyFraction: number): number {
   const b = avgWinLossRatio;
   const p = winRate;
   const q = 1 - p;
   const fullKelly = (b * p - q) / b;
-
-  // Fractional Kelly (conservative)
   const fractionalKelly = Math.max(0, fullKelly * kellyFraction);
-
   return fractionalKelly;
 }
 
-/**
- * Detect market regime from recent volatility.
- */
 export function detectRegime(recentVolatility: number[]): MarketRegime {
   if (recentVolatility.length === 0) return 'medium-volatility';
-
   const avg = recentVolatility.reduce((a, b) => a + b, 0) / recentVolatility.length;
-
-  if (avg < 0.02) return 'low-volatility';    // <2% daily moves
-  if (avg > 0.05) return 'high-volatility';   // >5% daily moves
+  if (avg < 0.02) return 'low-volatility';
+  if (avg > 0.05) return 'high-volatility';
   return 'medium-volatility';
 }
 
-/**
- * Update volatility data for a token.
- */
-export function updateVolatility(token: string, dailyReturn: number): void {
-  const history = volatilityHistory.get(token) ?? [];
-  history.push(Math.abs(dailyReturn));
+export async function updateVolatility(token: string, dailyReturn: number): Promise<void> {
+  const redis = getRedis();
+  const key = `${VOLATILITY_KEY_PREFIX}${token}`;
 
-  // Keep last 30 data points
-  if (history.length > 30) history.shift();
-
-  volatilityHistory.set(token, history);
+  await redis.rpush(key, Math.abs(dailyReturn).toString());
+  await redis.ltrim(key, -VOLATILITY_MAX_ENTRIES, -1);
+  await redis.expire(key, VOLATILITY_TTL_SECONDS);
 }
 
-/**
- * Validate a trade against risk parameters.
- */
-export function validateTrade(
+async function getVolatility(token: string): Promise<number[]> {
+  const redis = getRedis();
+  const key = `${VOLATILITY_KEY_PREFIX}${token}`;
+  const values = await redis.lrange(key, 0, -1);
+  return values.map(Number);
+}
+
+export async function validateTrade(
   intent: TradeIntent,
   userSettings: RiskSettings,
   portfolioValueUsd: number,
   tradeValueUsd: number
-): RiskAssessment {
+): Promise<RiskAssessment> {
   const profile = RISK_PROFILES[userSettings.riskLevel];
 
-  // Check circuit breaker
-  if (!isTradingAllowed(intent.userId)) {
+  if (!(await isTradingAllowed(intent.userId))) {
     return {
       allowed: false,
       reason: 'Circuit breaker tripped — trading paused',
@@ -74,7 +61,6 @@ export function validateTrade(
     };
   }
 
-  // Check portfolio value is non-zero
   if (portfolioValueUsd <= 0) {
     return {
       allowed: false,
@@ -83,7 +69,6 @@ export function validateTrade(
     };
   }
 
-  // Check position size limit
   const positionSizePct = (tradeValueUsd / portfolioValueUsd) * 100;
   const maxPct = Math.min(
     userSettings.maxPerTradePct,
@@ -99,8 +84,7 @@ export function validateTrade(
     };
   }
 
-  // Check daily loss limit
-  if (shouldTrip(intent.userId, portfolioValueUsd)) {
+  if (await shouldTrip(intent.userId, portfolioValueUsd)) {
     return {
       allowed: false,
       reason: 'Daily loss limit reached — trading paused',
@@ -108,11 +92,9 @@ export function validateTrade(
     };
   }
 
-  // Get market regime
-  const volatility = volatilityHistory.get(intent.outputToken) ?? [];
+  const volatility = await getVolatility(intent.outputToken);
   const regime = detectRegime(volatility);
 
-  // Adjust size based on regime and risk profile
   let adjustedSizePct = positionSizePct;
   if (regime === 'high-volatility') {
     adjustedSizePct *= (1 - profile.regimeSensitivity * 0.3);
@@ -137,14 +119,11 @@ export function validateTrade(
   };
 }
 
-/**
- * Get default risk settings for a risk level.
- */
 export function getDefaultRiskSettings(riskLevel: RiskLevel): RiskSettings {
   const profile = RISK_PROFILES[riskLevel];
   return {
     riskLevel,
-    dailyLossLimitUsd: 1000, // Default $1000 daily loss limit
+    dailyLossLimitUsd: 1000,
     maxPerTradePct: profile.maxPositionSizePct,
   };
 }

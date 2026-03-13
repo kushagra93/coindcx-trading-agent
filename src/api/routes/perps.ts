@@ -253,7 +253,7 @@ export async function perpsRoutes(app: FastifyInstance) {
         const fundingData = await hlInfoFetch<Array<{ coin: string; funding: string }>>({
           type: 'metaAndAssetCtxs',
         });
-        const assetCtxs = Array.isArray(fundingData) ? fundingData[1] as Array<{ funding: string }> : [];
+        const assetCtxs = Array.isArray(fundingData) ? (fundingData[1] as unknown) as Array<{ funding: string }> : [];
         const assetIdx = meta.universe.findIndex(u => u.name === hlSymbol);
         if (assetIdx >= 0 && assetCtxs[assetIdx]) {
           fundingRate = parseFloat(assetCtxs[assetIdx].funding ?? '0');

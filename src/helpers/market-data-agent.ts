@@ -1,21 +1,14 @@
 /**
  * Market Data Helper — wraps ALL existing price feeds.
- *
- * Reuses:
- *   - price-feed.ts fetchCoinGeckoPrice() (broad tokens)
- *   - price-feed.ts fetchJupiterPrice() (Solana tokens)
- *   - price-feed.ts fetchDexScreenerPrice() (DEX pairs)
- *   - price-feed.ts batchFetchPrices() for efficiency
- *   - price-feed.ts LRU cache (5-min, 1000 tokens)
- *
- * Continuous publishing loop → stream:market:data
+ * Publishes market snapshots to the WS Hub for broadcast.
  */
 
 import type { Redis } from 'ioredis';
 import { createChildLogger } from '../core/logger.js';
+import type { WsClient } from '../core/ws-client.js';
+import type { WsMessage } from '../core/ws-types.js';
 import { BaseHelper } from './base-helper.js';
 import type { HelperTask, HelperResult } from './types.js';
-import { REDIS_STREAMS } from '../supervisor/types.js';
 
 const log = createChildLogger('market-data');
 
@@ -23,8 +16,11 @@ export class MarketDataAgent extends BaseHelper {
   private publishInterval: ReturnType<typeof setInterval> | null = null;
   private watchedTokens: Set<string> = new Set(['BTC', 'ETH', 'SOL', 'MATIC', 'ARB']);
 
-  constructor(redis: Redis) {
-    super(redis, 'market-data');
+  constructor(
+    wsClient: WsClient,
+    private redis: Redis,
+  ) {
+    super(wsClient, 'market-data');
   }
 
   async processTask(task: HelperTask): Promise<HelperResult> {
@@ -36,7 +32,6 @@ export class MarketDataAgent extends BaseHelper {
       switch (action) {
         case 'get-price': {
           const token = payload.token as string;
-          // In production: calls price-feed.ts fetchCoinGeckoPrice/fetchJupiterPrice
           const price = await this.getTokenPrice(token);
           return {
             taskId,
@@ -96,9 +91,6 @@ export class MarketDataAgent extends BaseHelper {
     }
   }
 
-  /**
-   * Start continuous market data publishing.
-   */
   async startPublishing(intervalMs: number = 5000): Promise<void> {
     this.publishInterval = setInterval(async () => {
       try {
@@ -123,31 +115,27 @@ export class MarketDataAgent extends BaseHelper {
       prices[token] = await this.getTokenPrice(token);
     }
 
-    await this.redis.xadd(
-      REDIS_STREAMS.MARKET_DATA, '*',
-      'prices', JSON.stringify(prices),
-      'timestamp', Date.now().toString(),
-    );
+    const msg: WsMessage = {
+      type: 'market-data',
+      from: this.instanceId,
+      to: '*',
+      payload: { prices, timestamp: Date.now() },
+      timestamp: Date.now(),
+    };
+    this.wsClient.send(msg);
   }
 
-  /**
-   * Get token price (in production: calls price-feed.ts with LRU cache).
-   */
   private async getTokenPrice(token: string): Promise<number> {
-    // Check Redis cache first
     const cached = await this.redis.get(`price:cache:${token}`);
     if (cached) return parseFloat(cached);
 
-    // In production: calls fetchCoinGeckoPrice, fetchJupiterPrice, or fetchDexScreenerPrice
-    // For now, return simulated price
     const basePrices: Record<string, number> = {
       BTC: 65000, ETH: 3500, SOL: 150, MATIC: 0.85,
       ARB: 1.20, LINK: 15, UNI: 8, AAVE: 100,
     };
     const base = basePrices[token.toUpperCase()] || 1;
-    const price = base * (1 + (Math.random() - 0.5) * 0.02); // +/- 1% noise
+    const price = base * (1 + (Math.random() - 0.5) * 0.02);
 
-    // Cache for 5 minutes
     await this.redis.set(`price:cache:${token}`, price.toString(), 'EX', 300);
 
     return price;

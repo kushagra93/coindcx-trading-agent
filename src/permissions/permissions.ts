@@ -74,7 +74,7 @@ export function hasPermission(context: AuthContext, action: string): boolean {
  */
 export function assertPermission(context: AuthContext, action: string): void {
   if (!hasPermission(context, action)) {
-    audit({
+    void audit({
       actor: context.userId,
       actorTier: context.tier,
       action,

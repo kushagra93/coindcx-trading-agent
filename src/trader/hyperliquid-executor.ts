@@ -225,7 +225,7 @@ export class HyperliquidExecutor implements OrderExecutor {
         // Record builder fee for this trade
         const filledVolumeUsd = parseFloat(filled.totalSz) * parseFloat(filled.avgPx);
         if (builderCode) {
-          recordBuilderFee(intent.id, filledVolumeUsd, builderFeeBps, builderCode);
+          await recordBuilderFee(intent.id, filledVolumeUsd, builderFeeBps, builderCode);
         }
 
         return {

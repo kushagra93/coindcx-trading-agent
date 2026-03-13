@@ -1,14 +1,13 @@
 import type { FastifyInstance, FastifyReply } from 'fastify';
+import { eq } from 'drizzle-orm';
 import { emergencyHalt, resumeTrading, isGlobalHalt, resetBreaker, getTrippedUsers } from '../../risk/circuit-breaker.js';
 import { getDefaultRiskSettings } from '../../risk/risk-manager.js';
 import { assertPermission, PermissionError } from '../../permissions/permissions.js';
-import { clampDailyLossLimit, clampPositionSize } from '../../risk/parameter-bounds.js';
+import { clampPositionSize } from '../../risk/parameter-bounds.js';
 import type { RiskLevel, RiskSettings, AuthContext } from '../../core/types.js';
 import { audit } from '../../audit/audit-logger.js';
-
-// In-memory agent status (production: Redis)
-const agentStatus = new Map<string, { running: boolean; startedAt?: Date; stoppedAt?: Date }>();
-const userRiskSettings = new Map<string, RiskSettings>();
+import { getDb } from '../../db/index.js';
+import { agentInstances, riskSettings as riskSettingsTable } from '../../db/schema.js';
 
 const VALID_RISK_LEVELS: Set<string> = new Set(['conservative', 'moderate', 'aggressive']);
 
@@ -29,7 +28,6 @@ function handlePermissionError(err: unknown, reply: FastifyReply): void {
 }
 
 export async function controlRoutes(app: FastifyInstance) {
-  // Start trading agent
   app.post('/api/v1/agent/start', async (request, reply) => {
     const ctx = getAuthContext(request);
 
@@ -39,13 +37,20 @@ export async function controlRoutes(app: FastifyInstance) {
       return handlePermissionError(err, reply);
     }
 
-    if (isGlobalHalt()) {
+    if (await isGlobalHalt()) {
       return reply.code(503).send({ error: 'Trading is globally halted by admin' });
     }
 
-    agentStatus.set(ctx.userId, { running: true, startedAt: new Date() });
+    const db = getDb();
+    await db
+      .insert(agentInstances)
+      .values({ agentId: `agent_${ctx.userId}`, userId: ctx.userId, tier: 'user', running: true, startedAt: new Date() })
+      .onConflictDoUpdate({
+        target: agentInstances.agentId,
+        set: { running: true, startedAt: new Date(), stoppedAt: null },
+      });
 
-    audit({
+    await audit({
       actor: ctx.userId,
       actorTier: ctx.tier,
       action: 'agent.start',
@@ -55,7 +60,6 @@ export async function controlRoutes(app: FastifyInstance) {
     return { status: 'started', userId: ctx.userId };
   });
 
-  // Stop trading agent
   app.post('/api/v1/agent/stop', async (request, reply) => {
     const ctx = getAuthContext(request);
 
@@ -65,9 +69,13 @@ export async function controlRoutes(app: FastifyInstance) {
       return handlePermissionError(err, reply);
     }
 
-    agentStatus.set(ctx.userId, { running: false, stoppedAt: new Date() });
+    const db = getDb();
+    await db
+      .update(agentInstances)
+      .set({ running: false, stoppedAt: new Date() })
+      .where(eq(agentInstances.agentId, `agent_${ctx.userId}`));
 
-    audit({
+    await audit({
       actor: ctx.userId,
       actorTier: ctx.tier,
       action: 'agent.stop',
@@ -77,7 +85,6 @@ export async function controlRoutes(app: FastifyInstance) {
     return { status: 'stopped', userId: ctx.userId };
   });
 
-  // Emergency stop (halt + close all positions)
   app.post('/api/v1/agent/emergency-stop', async (request, reply) => {
     const ctx = getAuthContext(request);
 
@@ -87,9 +94,13 @@ export async function controlRoutes(app: FastifyInstance) {
       return handlePermissionError(err, reply);
     }
 
-    agentStatus.set(ctx.userId, { running: false, stoppedAt: new Date() });
+    const db = getDb();
+    await db
+      .update(agentInstances)
+      .set({ running: false, stoppedAt: new Date() })
+      .where(eq(agentInstances.agentId, `agent_${ctx.userId}`));
 
-    audit({
+    await audit({
       actor: ctx.userId,
       actorTier: ctx.tier,
       action: 'agent.emergency-stop',
@@ -100,26 +111,42 @@ export async function controlRoutes(app: FastifyInstance) {
     return { status: 'emergency-stopped', userId: ctx.userId, positionsClosed: true };
   });
 
-  // Get agent status
   app.get('/api/v1/agent/status', async (request) => {
     const userId = (request as any).userId as string;
-    const status = agentStatus.get(userId) ?? { running: false };
+    const db = getDb();
+
+    const [agent] = await db
+      .select()
+      .from(agentInstances)
+      .where(eq(agentInstances.agentId, `agent_${userId}`))
+      .limit(1);
 
     return {
       userId,
-      ...status,
-      globalHalt: isGlobalHalt(),
+      running: agent?.running ?? false,
+      startedAt: agent?.startedAt,
+      stoppedAt: agent?.stoppedAt,
+      globalHalt: await isGlobalHalt(),
     };
   });
 
-  // Get risk settings
   app.get('/api/v1/risk', async (request) => {
     const userId = (request as any).userId as string;
-    const settings = userRiskSettings.get(userId) ?? getDefaultRiskSettings('moderate');
+    const db = getDb();
+
+    const [row] = await db
+      .select()
+      .from(riskSettingsTable)
+      .where(eq(riskSettingsTable.userId, userId))
+      .limit(1);
+
+    const settings: RiskSettings = row
+      ? { riskLevel: row.riskLevel as RiskLevel, dailyLossLimitUsd: row.dailyLossLimitUsd, maxPerTradePct: row.maxPerTradePct }
+      : getDefaultRiskSettings('moderate');
+
     return { settings };
   });
 
-  // Update risk settings — with validation and bounds clamping
   app.put<{
     Body: {
       riskLevel?: RiskLevel;
@@ -135,15 +162,23 @@ export async function controlRoutes(app: FastifyInstance) {
       return handlePermissionError(err, reply);
     }
 
-    const current = userRiskSettings.get(ctx.userId) ?? getDefaultRiskSettings('moderate');
+    const db = getDb();
     const body = request.body;
 
-    // Validate riskLevel
+    const [currentRow] = await db
+      .select()
+      .from(riskSettingsTable)
+      .where(eq(riskSettingsTable.userId, ctx.userId))
+      .limit(1);
+
+    const current: RiskSettings = currentRow
+      ? { riskLevel: currentRow.riskLevel as RiskLevel, dailyLossLimitUsd: currentRow.dailyLossLimitUsd, maxPerTradePct: currentRow.maxPerTradePct }
+      : getDefaultRiskSettings('moderate');
+
     if (body.riskLevel !== undefined && !VALID_RISK_LEVELS.has(body.riskLevel)) {
       return reply.code(400).send({ error: `Invalid riskLevel. Must be one of: ${[...VALID_RISK_LEVELS].join(', ')}` });
     }
 
-    // Validate and clamp numeric values
     if (body.dailyLossLimitUsd !== undefined && (typeof body.dailyLossLimitUsd !== 'number' || body.dailyLossLimitUsd <= 0)) {
       return reply.code(400).send({ error: 'dailyLossLimitUsd must be a positive number' });
     }
@@ -154,16 +189,33 @@ export async function controlRoutes(app: FastifyInstance) {
     const updated: RiskSettings = {
       riskLevel: body.riskLevel ?? current.riskLevel,
       dailyLossLimitUsd: body.dailyLossLimitUsd != null
-        ? Math.max(10, body.dailyLossLimitUsd)  // Minimum $10 daily loss limit
+        ? Math.max(10, body.dailyLossLimitUsd)
         : current.dailyLossLimitUsd,
       maxPerTradePct: body.maxPerTradePct != null
         ? clampPositionSize(body.maxPerTradePct)
         : current.maxPerTradePct,
     };
 
-    userRiskSettings.set(ctx.userId, updated);
+    await db
+      .insert(riskSettingsTable)
+      .values({
+        userId: ctx.userId,
+        riskLevel: updated.riskLevel,
+        dailyLossLimitUsd: updated.dailyLossLimitUsd,
+        maxPerTradePct: updated.maxPerTradePct,
+        updatedAt: new Date(),
+      })
+      .onConflictDoUpdate({
+        target: riskSettingsTable.userId,
+        set: {
+          riskLevel: updated.riskLevel,
+          dailyLossLimitUsd: updated.dailyLossLimitUsd,
+          maxPerTradePct: updated.maxPerTradePct,
+          updatedAt: new Date(),
+        },
+      });
 
-    audit({
+    await audit({
       actor: ctx.userId,
       actorTier: ctx.tier,
       action: 'risk.update',
@@ -174,9 +226,6 @@ export async function controlRoutes(app: FastifyInstance) {
     return { settings: updated };
   });
 
-  // === Admin endpoints — proper 403 responses ===
-
-  // Admin: Emergency halt all
   app.post('/api/v1/admin/emergency-halt', async (request, reply) => {
     const ctx = getAuthContext(request);
 
@@ -186,9 +235,9 @@ export async function controlRoutes(app: FastifyInstance) {
       return handlePermissionError(err, reply);
     }
 
-    emergencyHalt();
+    await emergencyHalt();
 
-    audit({
+    await audit({
       actor: ctx.userId,
       actorTier: 'admin',
       action: 'admin.emergency-halt',
@@ -198,19 +247,18 @@ export async function controlRoutes(app: FastifyInstance) {
     return { status: 'halted', message: 'All trading stopped globally' };
   });
 
-  // Admin: Resume trading
   app.post('/api/v1/admin/resume', async (request, reply) => {
     const ctx = getAuthContext(request);
 
     try {
-      assertPermission(ctx, 'admin.emergency-halt'); // Same permission as halt
+      assertPermission(ctx, 'admin.emergency-halt');
     } catch (err) {
       return handlePermissionError(err, reply);
     }
 
-    resumeTrading();
+    await resumeTrading();
 
-    audit({
+    await audit({
       actor: ctx.userId,
       actorTier: 'admin',
       action: 'admin.resume',
@@ -220,7 +268,6 @@ export async function controlRoutes(app: FastifyInstance) {
     return { status: 'resumed' };
   });
 
-  // Admin/Ops: Get tripped circuit breakers
   app.get('/api/v1/admin/circuit-breakers', async (request, reply) => {
     const ctx = getAuthContext(request);
 
@@ -230,10 +277,9 @@ export async function controlRoutes(app: FastifyInstance) {
       return handlePermissionError(err, reply);
     }
 
-    return { trippedUsers: getTrippedUsers(), globalHalt: isGlobalHalt() };
+    return { trippedUsers: await getTrippedUsers(), globalHalt: await isGlobalHalt() };
   });
 
-  // Admin/Ops: Reset circuit breaker for user
   app.post<{ Params: { userId: string } }>('/api/v1/admin/circuit-breakers/:userId/reset', async (request, reply) => {
     const ctx = getAuthContext(request);
 
@@ -243,9 +289,9 @@ export async function controlRoutes(app: FastifyInstance) {
       return handlePermissionError(err, reply);
     }
 
-    resetBreaker(request.params.userId);
+    await resetBreaker(request.params.userId);
 
-    audit({
+    await audit({
       actor: ctx.userId,
       actorTier: ctx.tier,
       action: 'ops.reset-circuit-breaker',

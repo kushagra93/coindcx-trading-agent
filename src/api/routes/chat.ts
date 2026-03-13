@@ -10,7 +10,7 @@ import {
   type ScreeningResult,
 } from '../../data/token-screener.js';
 import { chatCompletion, isLLMAvailable, type LLMMessage } from '../../data/llm.js';
-import { extractIntent, type ParsedIntent } from '../../data/intent-engine.js';
+import { extractIntent, ALL_TOKENS, type ParsedIntent } from '../../data/intent-engine.js';
 import { createChildLogger } from '../../core/logger.js';
 import {
   startCopyTrading,
@@ -1230,10 +1230,49 @@ function handleHelp(): ChatResponse {
   };
 }
 
-// ─── Conversation memory (in-memory per session) ────────────────────
+// ─── Conversation memory (PostgreSQL-backed) ─────────────────────────
 
-const conversations = new Map<string, LLMMessage[]>();
-let lastToken: string | null = null;
+import { eq, desc, asc } from 'drizzle-orm';
+import { getDb } from '../../db/index.js';
+import { chatMessages } from '../../db/schema.js';
+
+async function getConversationHistory(convId: string, limit = 12): Promise<LLMMessage[]> {
+  const db = getDb();
+  const rows = await db
+    .select()
+    .from(chatMessages)
+    .where(eq(chatMessages.userId, convId))
+    .orderBy(desc(chatMessages.createdAt))
+    .limit(limit);
+
+  return rows
+    .reverse()
+    .map(r => ({ role: r.role as 'user' | 'assistant' | 'system', content: r.content }));
+}
+
+async function appendMessage(convId: string, role: string, content: string): Promise<void> {
+  const db = getDb();
+  await db.insert(chatMessages).values({
+    userId: convId,
+    role,
+    content,
+    createdAt: new Date(),
+  });
+}
+
+async function getLastToken(convId: string): Promise<string | null> {
+  const db = getDb();
+  const [last] = await db
+    .select({ content: chatMessages.content })
+    .from(chatMessages)
+    .where(eq(chatMessages.userId, convId))
+    .orderBy(desc(chatMessages.createdAt))
+    .limit(1);
+
+  if (!last) return null;
+  const match = last.content.match(ALL_TOKENS);
+  return match ? match[1].toUpperCase() : null;
+}
 
 function getConversationContext(history: LLMMessage[], currentLastToken: string | null): string {
   const parts: string[] = [];
@@ -1249,16 +1288,16 @@ function getConversationContext(history: LLMMessage[], currentLastToken: string 
 
 export async function processChat(message: string, conversationId?: string): Promise<ChatResponse> {
   const convId = conversationId ?? 'default';
-  if (!conversations.has(convId)) conversations.set(convId, []);
-  const history = conversations.get(convId)!;
+  const history = await getConversationHistory(convId);
 
+  const lastToken = await getLastToken(convId);
   const conversationContext = getConversationContext(history, lastToken);
   const parsed = await extractIntent(message, conversationContext);
 
   const { action, params } = parsed;
   const token = ((params.token as string) || lastToken || '').toUpperCase() || null;
 
-  history.push({ role: 'user', content: message });
+  await appendMessage(convId, 'user', message);
 
   let resp: ChatResponse;
 
@@ -1403,12 +1442,7 @@ export async function processChat(message: string, conversationId?: string): Pro
       }
   }
 
-  if (resp.token) lastToken = resp.token;
-  history.push({ role: 'assistant', content: resp.text });
-
-  if (history.length > 20) {
-    conversations.set(convId, history.slice(-12));
-  }
+  await appendMessage(convId, 'assistant', resp.text);
 
   return resp;
 }

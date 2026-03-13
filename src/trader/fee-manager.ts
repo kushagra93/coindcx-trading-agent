@@ -1,40 +1,21 @@
+import { eq, and, sql } from 'drizzle-orm';
 import { createChildLogger } from '../core/logger.js';
 import { config } from '../core/config.js';
 import type { Chain, FeeReservation } from '../core/types.js';
+import { getDb } from '../db/index.js';
+import { feeReservations as feeReservationsTable, builderFees as builderFeesTable } from '../db/schema.js';
 import { v4 as uuid } from 'uuid';
 
 const log = createChildLogger('fee-manager');
 
-// Fee tiers by AUM in USD
 const FEE_TIERS = [
-  { minAumUsd: 10_000, feePct: 0.0015 }, // 0.15%
-  { minAumUsd: 1_000,  feePct: 0.0020 }, // 0.20%
-  { minAumUsd: 0,      feePct: 0.0025 }, // 0.25% (base)
+  { minAumUsd: 10_000, feePct: 0.0015 },
+  { minAumUsd: 1_000,  feePct: 0.0020 },
+  { minAumUsd: 0,      feePct: 0.0025 },
 ];
 
-const COPY_TRADE_PROFIT_SHARE = 0.10; // 10%
+const COPY_TRADE_PROFIT_SHARE = 0.10;
 
-// In-memory reservation ledger (production: PostgreSQL)
-const reservations = new Map<string, FeeReservation>();
-const accumulatedFees = new Map<string, number>(); // key: `${chain}:${token}` -> usd value
-
-// Builders code fee tracking (Hyperliquid referral rebates)
-interface BuilderFeeRecord {
-  tradeId: string;
-  volumeUsd: number;
-  feeBps: number;
-  feeUsd: number;
-  builderCode: string;
-  timestamp: Date;
-}
-
-const builderFees: BuilderFeeRecord[] = [];
-let totalBuilderFeeUsd = 0;
-let totalBuilderVolumeUsd = 0;
-
-/**
- * Calculate fee rate based on user's AUM.
- */
 export function getFeeRate(aumUsd: number): number {
   for (const tier of FEE_TIERS) {
     if (aumUsd >= tier.minAumUsd) {
@@ -44,10 +25,6 @@ export function getFeeRate(aumUsd: number): number {
   return FEE_TIERS[FEE_TIERS.length - 1].feePct;
 }
 
-/**
- * Calculate fee amount for a trade.
- * Guards against NaN/invalid input.
- */
 export function calculateFee(amountIn: string, aumUsd: number): { feeAmount: string; feeRate: number } {
   const rate = getFeeRate(aumUsd);
   const amount = parseFloat(amountIn);
@@ -60,26 +37,21 @@ export function calculateFee(amountIn: string, aumUsd: number): { feeAmount: str
   return { feeAmount: fee.toFixed(8), feeRate: rate };
 }
 
-/**
- * Calculate copy trade profit share.
- */
 export function calculateProfitShare(profitUsd: number): number {
   if (profitUsd <= 0) return 0;
   return profitUsd * COPY_TRADE_PROFIT_SHARE;
 }
 
-/**
- * Reserve fee before placing an order.
- * Fee is deducted from the trade amount upfront.
- */
-export function reserveFee(
+export async function reserveFee(
   userId: string,
   tradeId: string,
   amount: string,
   token: string,
   chain: Chain
-): FeeReservation {
-  const reservation: FeeReservation = {
+): Promise<FeeReservation> {
+  const db = getDb();
+
+  const reservation: typeof feeReservationsTable.$inferInsert = {
     id: uuid(),
     userId,
     tradeId,
@@ -90,12 +62,7 @@ export function reserveFee(
     createdAt: new Date(),
   };
 
-  reservations.set(reservation.id, reservation);
-
-  // Track accumulated fees
-  const key = `${chain}:${token}`;
-  const current = accumulatedFees.get(key) ?? 0;
-  accumulatedFees.set(key, current + parseFloat(amount));
+  await db.insert(feeReservationsTable).values(reservation);
 
   log.info({
     reservationId: reservation.id,
@@ -105,21 +72,32 @@ export function reserveFee(
     token,
   }, 'Fee reserved');
 
-  return reservation;
+  return {
+    id: reservation.id!,
+    userId,
+    tradeId,
+    amount,
+    token,
+    chain,
+    status: 'reserved',
+    createdAt: reservation.createdAt!,
+  };
 }
 
-/**
- * Refund a reserved fee (e.g., on trade failure).
- * Requires userId to verify ownership — prevents cross-user refund attacks.
- */
-export function refundFee(reservationId: string, userId: string): boolean {
-  const reservation = reservations.get(reservationId);
+export async function refundFee(reservationId: string, userId: string): Promise<boolean> {
+  const db = getDb();
+
+  const [reservation] = await db
+    .select()
+    .from(feeReservationsTable)
+    .where(eq(feeReservationsTable.id, reservationId))
+    .limit(1);
+
   if (!reservation) {
     log.warn({ reservationId }, 'Fee reservation not found for refund');
     return false;
   }
 
-  // Ownership check: only the reservation owner can refund
   if (reservation.userId !== userId) {
     log.warn({ reservationId, requestedBy: userId, ownedBy: reservation.userId }, 'Fee refund denied — ownership mismatch');
     return false;
@@ -130,36 +108,27 @@ export function refundFee(reservationId: string, userId: string): boolean {
     return false;
   }
 
-  reservation.status = 'refunded';
-
-  // Reduce accumulated fees
-  const key = `${reservation.chain}:${reservation.token}`;
-  const current = accumulatedFees.get(key) ?? 0;
-  accumulatedFees.set(key, Math.max(0, current - parseFloat(reservation.amount)));
+  await db
+    .update(feeReservationsTable)
+    .set({ status: 'refunded' })
+    .where(eq(feeReservationsTable.id, reservationId));
 
   log.info({ reservationId, amount: reservation.amount }, 'Fee refunded');
   return true;
 }
 
-/**
- * Mark fee as settled (transferred to fee wallet).
- */
-export function settleFee(reservationId: string): void {
-  const reservation = reservations.get(reservationId);
-  if (!reservation) return;
+export async function settleFee(reservationId: string): Promise<void> {
+  const db = getDb();
+  await db
+    .update(feeReservationsTable)
+    .set({ status: 'settled', settledAt: new Date() })
+    .where(eq(feeReservationsTable.id, reservationId));
 
-  reservation.status = 'settled';
-  reservation.settledAt = new Date();
-
-  log.info({ reservationId, amount: reservation.amount }, 'Fee settled');
+  log.info({ reservationId }, 'Fee settled');
 }
 
-/**
- * Check if accumulated fees for a token exceed the settlement threshold.
- */
-export function shouldSettle(chain: Chain, token: string): boolean {
-  const key = `${chain}:${token}`;
-  const accumulated = accumulatedFees.get(key) ?? 0;
+export async function shouldSettle(chain: Chain, token: string): Promise<boolean> {
+  const db = getDb();
   const threshold = config.fees.settlementThresholdUsd;
 
   if (threshold <= 0) {
@@ -167,59 +136,83 @@ export function shouldSettle(chain: Chain, token: string): boolean {
     return false;
   }
 
-  return accumulated >= threshold;
+  const [result] = await db
+    .select({ total: sql<number>`coalesce(sum(${feeReservationsTable.amount}::numeric), 0)` })
+    .from(feeReservationsTable)
+    .where(and(
+      eq(feeReservationsTable.chain, chain),
+      eq(feeReservationsTable.token, token),
+      eq(feeReservationsTable.status, 'reserved'),
+    ));
+
+  return (result?.total ?? 0) >= threshold;
 }
 
-/**
- * Get total unsettled fees for a user (subtracted from withdrawable balance).
- */
-export function getUnsettledFees(userId: string): Map<string, number> {
+export async function getUnsettledFees(userId: string): Promise<Map<string, number>> {
+  const db = getDb();
+
+  const rows = await db
+    .select({
+      chain: feeReservationsTable.chain,
+      token: feeReservationsTable.token,
+      total: sql<number>`sum(${feeReservationsTable.amount}::numeric)`,
+    })
+    .from(feeReservationsTable)
+    .where(and(
+      eq(feeReservationsTable.userId, userId),
+      eq(feeReservationsTable.status, 'reserved'),
+    ))
+    .groupBy(feeReservationsTable.chain, feeReservationsTable.token);
+
   const fees = new Map<string, number>();
-
-  for (const reservation of reservations.values()) {
-    if (reservation.userId === userId && reservation.status === 'reserved') {
-      const key = `${reservation.chain}:${reservation.token}`;
-      const current = fees.get(key) ?? 0;
-      fees.set(key, current + parseFloat(reservation.amount));
-    }
+  for (const row of rows) {
+    fees.set(`${row.chain}:${row.token}`, row.total);
   }
-
   return fees;
 }
 
-/**
- * Get all pending reservations for settlement.
- */
-export function getPendingSettlements(chain: Chain, token: string): FeeReservation[] {
-  return Array.from(reservations.values()).filter(
-    r => r.chain === chain && r.token === token && r.status === 'reserved'
-  );
+export async function getPendingSettlements(chain: Chain, token: string): Promise<FeeReservation[]> {
+  const db = getDb();
+
+  const rows = await db
+    .select()
+    .from(feeReservationsTable)
+    .where(and(
+      eq(feeReservationsTable.chain, chain),
+      eq(feeReservationsTable.token, token),
+      eq(feeReservationsTable.status, 'reserved'),
+    ));
+
+  return rows.map(r => ({
+    id: r.id,
+    userId: r.userId,
+    tradeId: r.tradeId,
+    amount: r.amount,
+    token: r.token,
+    chain: r.chain as Chain,
+    status: r.status as FeeReservation['status'],
+    createdAt: r.createdAt,
+    settledAt: r.settledAt ?? undefined,
+  }));
 }
 
-// ===== Builder Fee Tracking (Hyperliquid Referral Program) =====
-
-/**
- * Record a builders code fee for a Hyperliquid perp trade.
- */
-export function recordBuilderFee(
+export async function recordBuilderFee(
   tradeId: string,
   volumeUsd: number,
   feeBps: number,
   builderCode: string
-): void {
+): Promise<void> {
+  const db = getDb();
   const feeUsd = (volumeUsd * feeBps) / 10000;
 
-  builderFees.push({
+  await db.insert(builderFeesTable).values({
     tradeId,
     volumeUsd,
     feeBps,
     feeUsd,
     builderCode,
-    timestamp: new Date(),
+    createdAt: new Date(),
   });
-
-  totalBuilderFeeUsd += feeUsd;
-  totalBuilderVolumeUsd += volumeUsd;
 
   log.info({
     tradeId,
@@ -227,39 +220,75 @@ export function recordBuilderFee(
     feeBps,
     feeUsd,
     builderCode,
-    totalBuilderFeeUsd,
   }, 'Builder fee recorded');
 }
 
-/**
- * Get builders code fee summary.
- */
-export function getBuilderFeeSummary(): {
+export async function getBuilderFeeSummary(): Promise<{
   totalFeeUsd: number;
   totalVolumeUsd: number;
   tradeCount: number;
   builderCode: string;
-  recentFees: BuilderFeeRecord[];
-} {
+  recentFees: Array<{
+    tradeId: string;
+    volumeUsd: number;
+    feeBps: number;
+    feeUsd: number;
+    builderCode: string;
+    timestamp: Date;
+  }>;
+}> {
+  const db = getDb();
+
+  const [agg] = await db
+    .select({
+      totalFeeUsd: sql<number>`coalesce(sum(${builderFeesTable.feeUsd}), 0)`,
+      totalVolumeUsd: sql<number>`coalesce(sum(${builderFeesTable.volumeUsd}), 0)`,
+      tradeCount: sql<number>`count(*)::int`,
+    })
+    .from(builderFeesTable);
+
+  const recentRows = await db
+    .select()
+    .from(builderFeesTable)
+    .orderBy(sql`${builderFeesTable.createdAt} desc`)
+    .limit(50);
+
   return {
-    totalFeeUsd: totalBuilderFeeUsd,
-    totalVolumeUsd: totalBuilderVolumeUsd,
-    tradeCount: builderFees.length,
+    totalFeeUsd: agg?.totalFeeUsd ?? 0,
+    totalVolumeUsd: agg?.totalVolumeUsd ?? 0,
+    tradeCount: agg?.tradeCount ?? 0,
     builderCode: config.hyperliquid.builderCode,
-    recentFees: builderFees.slice(-50),
+    recentFees: recentRows.map(r => ({
+      tradeId: r.tradeId,
+      volumeUsd: r.volumeUsd,
+      feeBps: r.feeBps,
+      feeUsd: r.feeUsd,
+      builderCode: r.builderCode,
+      timestamp: r.createdAt,
+    })),
   };
 }
 
-/**
- * Get total accumulated platform fees (all chains).
- */
-export function getTotalAccumulatedFees(): { byChainToken: Record<string, number>; totalUsd: number } {
+export async function getTotalAccumulatedFees(): Promise<{ byChainToken: Record<string, number>; totalUsd: number }> {
+  const db = getDb();
+
+  const rows = await db
+    .select({
+      chain: feeReservationsTable.chain,
+      token: feeReservationsTable.token,
+      total: sql<number>`coalesce(sum(${feeReservationsTable.amount}::numeric), 0)`,
+    })
+    .from(feeReservationsTable)
+    .where(eq(feeReservationsTable.status, 'reserved'))
+    .groupBy(feeReservationsTable.chain, feeReservationsTable.token);
+
   const byChainToken: Record<string, number> = {};
   let totalUsd = 0;
 
-  for (const [key, value] of accumulatedFees.entries()) {
-    byChainToken[key] = value;
-    totalUsd += value;
+  for (const row of rows) {
+    const key = `${row.chain}:${row.token}`;
+    byChainToken[key] = row.total;
+    totalUsd += row.total;
   }
 
   return { byChainToken, totalUsd };
