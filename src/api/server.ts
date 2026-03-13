@@ -15,9 +15,17 @@ import { chatRoutes } from './routes/chat.js';
 import { tradeRoutes } from './routes/trade.js';
 import { brokerRoutes } from './routes/broker.js';
 import { gatewayRoutes } from './routes/gateway.js';
+import { perpsRoutes } from './routes/perps.js';
 import { VALID_CHAINS } from '../core/chain-registry.js';
+import { registerApiKey } from '../adapters/generic-adapter.js';
 
 const log = createChildLogger('api-server');
+
+// Register development API keys for testing
+if (config.nodeEnv !== 'production') {
+  registerApiKey('dev-test-key-2024', 'user_dev_001', 'admin');
+  registerApiKey('dev-user-key', 'user_dev_002', 'user');
+}
 
 const VALID_TIERS = new Set(['admin', 'broker', 'ops', 'user']);
 const MAX_TOKEN_LENGTH = 4096;
@@ -42,7 +50,7 @@ export async function createServer() {
   app.addHook('onRequest', async (request, reply) => {
     // Skip auth for health checks and public API routes (hackathon mode)
     if (request.url === '/health' || request.url === '/ready') return;
-    if (request.url.startsWith('/api/v1/tokens/') || request.url.startsWith('/api/v1/chains') || request.url.startsWith('/api/v1/chat') || request.url.startsWith('/api/v1/trade/') || request.url.startsWith('/api/v1/proxy/') || request.url.startsWith('/api/v1/leaderboard') || request.url.startsWith('/api/v1/copy')) return;
+    if (request.url.startsWith('/api/v1/tokens/') || request.url.startsWith('/api/v1/chains') || request.url.startsWith('/api/v1/chat') || request.url.startsWith('/api/v1/trade/') || request.url.startsWith('/api/v1/perps/') || request.url.startsWith('/api/v1/proxy/') || request.url.startsWith('/api/v1/leaderboard') || request.url.startsWith('/api/v1/copy')) return;
 
     const authHeader = request.headers.authorization;
     if (!authHeader?.startsWith('Bearer ')) {
@@ -96,6 +104,7 @@ export async function createServer() {
   await app.register(tradeRoutes);
   await app.register(brokerRoutes);
   await app.register(gatewayRoutes);
+  await app.register(perpsRoutes);
 
   // Image proxy for CORS bypass in Flutter web
   app.get<{ Querystring: { url: string } }>('/api/v1/proxy/image', async (request, reply) => {

@@ -17,6 +17,14 @@ class PortfolioScreen extends ConsumerWidget {
         title: const Text('Portfolio'),
         actions: [
           IconButton(
+            icon: const Icon(Icons.history_rounded),
+            onPressed: () => Navigator.pushNamed(context, '/activity'),
+          ),
+          IconButton(
+            icon: const Icon(Icons.settings_rounded),
+            onPressed: () => Navigator.pushNamed(context, '/settings'),
+          ),
+          IconButton(
             icon: const Icon(Icons.refresh_rounded),
             onPressed: () => ref.invalidate(portfolioProvider),
           ),

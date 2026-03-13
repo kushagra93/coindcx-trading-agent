@@ -124,6 +124,16 @@ class _DiscoveryScreenState extends ConsumerState<DiscoveryScreen> {
                 ),
                 const SizedBox(width: CoinDCXSpacing.sm),
                 GestureDetector(
+                  onTap: () => Navigator.pushNamed(context, '/leaderboard'),
+                  child: Icon(Icons.leaderboard_rounded, color: colors.generalForegroundSecondary, size: 22),
+                ),
+                const SizedBox(width: CoinDCXSpacing.sm),
+                GestureDetector(
+                  onTap: () => Navigator.pushNamed(context, '/strategies'),
+                  child: Icon(Icons.auto_graph_rounded, color: colors.generalForegroundSecondary, size: 22),
+                ),
+                const SizedBox(width: CoinDCXSpacing.sm),
+                GestureDetector(
                   onTap: () => ref.invalidate(trendingTokensProvider),
                   child: Icon(Icons.refresh_rounded, color: colors.generalForegroundSecondary, size: 22),
                 ),
