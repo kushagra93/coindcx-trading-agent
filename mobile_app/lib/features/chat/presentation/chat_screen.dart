@@ -2181,7 +2181,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen> with TickerProviderStat
   // ── Shared helpers ─────────────────────────────────────────────────
 
   String _proxyUrl(String url) =>
-    'http://localhost:3000/api/v1/proxy/image?url=${Uri.encodeComponent(url)}';
+    'http://coindcx-staging-2104180850.ap-south-1.elb.amazonaws.com/api/v1/proxy/image?url=${Uri.encodeComponent(url)}';
 
   Widget _buildMiniIcon(String symbol, String? imageUrl, CoinDCXColorScheme colors, {double size = 28}) {
     if (imageUrl != null && imageUrl.isNotEmpty) {

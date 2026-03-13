@@ -421,7 +421,7 @@ class _DiscoveryScreenState extends ConsumerState<DiscoveryScreen> {
   }
 
   String _proxyUrl(String url) =>
-    'http://localhost:3000/api/v1/proxy/image?url=${Uri.encodeComponent(url)}';
+    'http://coindcx-staging-2104180850.ap-south-1.elb.amazonaws.com/api/v1/proxy/image?url=${Uri.encodeComponent(url)}';
 
   Widget _buildTokenIcon(TokenMetrics token, CoinDCXColorScheme colors, {double size = 36}) {
     if (token.imageUrl != null && token.imageUrl!.isNotEmpty) {
