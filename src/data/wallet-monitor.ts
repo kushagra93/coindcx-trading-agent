@@ -99,7 +99,7 @@ async function pollWallet(wallet: string, apiKey: string) {
       jsonrpc: '2.0',
       id: 1,
       method: 'getSignaturesForAddress',
-      params: [wallet, { limit: 5 }],
+      params: [wallet, { limit: 25 }],
     }),
   });
 

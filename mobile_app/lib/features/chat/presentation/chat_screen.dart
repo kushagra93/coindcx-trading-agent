@@ -2355,6 +2355,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen> with TickerProviderStat
                 _quickAction('🔍 Screen', 'screen SOL', colors),
                 _quickAction('📊 TA', 'RSI SOL', colors),
                 _quickAction('💰 Portfolio', 'portfolio', colors),
+                _quickAction('🔄 Copy Trade', 'my copy trades', colors),
                 _quickAction('🏆 Leaders', 'leaderboard', colors),
                 _quickAction('🆕 New tokens', 'new tokens today', colors),
                 _quickAction('❓ Help', 'help', colors),

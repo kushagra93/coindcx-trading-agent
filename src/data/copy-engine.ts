@@ -88,7 +88,8 @@ async function handleSwapEvent(event: SwapEvent) {
       skipReason = 'Sell method set to manual';
       copyAmountUsd = 0;
     } else {
-      copyAmountUsd = event.amountUsd * 0.5;
+      const mirrorAmount = event.amountUsd * 0.5;
+      copyAmountUsd = Math.min(mirrorAmount, config.totalCopied);
     }
   }
 
@@ -154,7 +155,7 @@ async function handleSwapEvent(event: SwapEvent) {
           symbol: event.tokenSymbol,
           side: event.side,
           amountUsd: copyAmountUsd,
-          slippagePct: 2,
+          slippagePct: 15,
         }),
       });
       const body = await res.json() as Record<string, any>;
