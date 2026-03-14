@@ -67,9 +67,36 @@ The app opens at `http://localhost:8080` with backend on `http://localhost:3000`
 ### What's NOT needed for hackathon
 - **PostgreSQL / Redis** — the app starts gracefully without them (guarded with `isDbConfigured()`)
 - **AWS KMS** — not used in dry-run mode
-- **Solana / EVM wallets** — trades are simulated
+- **Solana wallet** — trades are simulated in dry-run; set `DRY_RUN=false` + `SOLANA_PRIVATE_KEY` for live swaps
 - **Docker** — runs directly with Node + Flutter
 - **Paid API tiers** — free plans work for all APIs
+
+> **Note**: The app works without any API keys — trending tokens, screening, and trading all use DexScreener (free, no key needed). The OpenRouter key enables AI-powered chat. Birdeye/Helius keys add richer holder data to screening results.
+
+<details>
+<summary><strong>Full Environment Variables Reference</strong></summary>
+
+| Variable | Required | Default | Description |
+|----------|----------|---------|-------------|
+| `SERVICE_MODE` | Yes | `api` | Service mode (see Service Modes section) |
+| `DRY_RUN` | No | `true` | Paper trading (no on-chain execution) |
+| `PORT` | No | `3000` | HTTP server port |
+| `DATABASE_URL` | For production | — | PostgreSQL connection string |
+| `REDIS_URL` | For production | `redis://localhost:6379` | Redis connection string |
+| `BROKER_JURISDICTION` | For broker mode | `GLOBAL` | `US`, `EU`, `APAC`, or `GLOBAL` |
+| `SOLANA_RPC_URL` | For live trading | — | Solana JSON-RPC (auto-uses Helius mainnet if `HELIUS_API_KEY` is set) |
+| `SOLANA_PRIVATE_KEY` | For live trading | — | Base58-encoded Solana private key (auto-generated if absent) |
+| `JUPITER_API_URL` | No | `https://api.jup.ag/swap/v1` | Jupiter Swap API base URL |
+| `EVM_RPC_URL` | For live trading | — | EVM RPC endpoint |
+| `GATEWAY_JWT_SECRET` | For production | dev default | JWT secret for WebSocket auth |
+| `SECURITY_MASTER_KEY_ID` | For production | — | Master HMAC signing key ID |
+| `SAGEMAKER_REGION` | For ML | `us-west-2` | AWS region for SageMaker |
+| `SAGEMAKER_ROLE_ARN` | For ML | — | IAM role for SageMaker jobs |
+| `SAGEMAKER_S3_BUCKET` | For ML | — | S3 bucket for training data |
+
+See `.env.example` for all supported variables.
+
+</details>
 
 ---
 
@@ -162,7 +189,7 @@ All messages are HMAC-SHA256 signed with UUID nonces and 30-second timestamp fre
 
 ---
 
-## Security Model (6 Layers)
+## Security Model (7 Layers)
 
 1. **Network Isolation** — Each tier runs as a separate service with distinct Redis stream boundaries
 2. **Signed Messaging** — All inter-agent messages use HMAC-SHA256 signed envelopes with UUID nonces (30s expiry, replay prevention)
@@ -170,6 +197,7 @@ All messages are HMAC-SHA256 signed with UUID nonces and 30-second timestamp fre
 4. **Per-User Namespace Isolation** — All user data scoped under `ns:{userId}:*` with cross-access assertion
 5. **Dual-Signature Fund Custody** — Withdrawals require co-signatures from both User Agent and Broker Agent
 6. **Immutable Audit Trail** — SHA-256 hash-chained audit entries (append-only, tamper-evident)
+7. **Prompt Injection Guard** — Multi-pattern detection for instruction override, role hijacking, delimiter injection, code injection, and safety bypass attempts with severity classification (low/medium/high)
 
 ### Trade Approval Flow
 
@@ -242,6 +270,7 @@ Agents transition through 4 states based on activity to optimize resource usage:
 - **Dual LLM backend** — OpenRouter (MiniMax M2.5 / Gemini Flash) with SageMaker fine-tuned model fallback
 - **Contract address screening** — paste any EVM (0x...), Solana (base58), Sui/Aptos (0x + 64 hex), or Move module path to auto-screen
 - **Token name resolution** — 40+ known contracts auto-resolve across all supported chains
+- **Prompt injection guard** — 6-category detection (instruction override, role hijack, prompt extraction, delimiter injection, code injection, safety bypass) with severity-based blocking
 
 ### On-Chain Screening
 - **6-factor scoring** — Age, Volume, Liquidity, Holder concentration, LP Lock, RugCheck score
@@ -251,9 +280,11 @@ Agents transition through 4 states based on activity to optimize resource usage:
 
 ### Multi-Chain Execution
 
+**Live Solana trading** — Set `DRY_RUN=false` + `SOLANA_PRIVATE_KEY` to execute real on-chain swaps via Jupiter v1 Swap API. Auto-generates a wallet if no key is provided. Supports dynamic compute unit limits, priority fees, and dynamic slippage. Transaction results link directly to Solscan.
+
 | Chain | DEX / Venue | Assets |
 |-------|-------------|--------|
-| Solana | Jupiter v6 | Memecoins (FARTCOIN, POPCAT, WIF, BONK, MYRO) |
+| Solana | Jupiter v6 (dry-run) / Jupiter Swap v1 (live) | Memecoins (FARTCOIN, POPCAT, WIF, BONK, MYRO) |
 | Base | Aerodrome | Base tokens (DEGEN, BRETT, TOSHI, AERO) |
 | Ethereum | Uniswap V3 | ETH, PEPE, MOG, blue chips |
 | Arbitrum | Camelot / GMX | ARB, GMX, PENDLE, DeFi |
@@ -309,16 +340,28 @@ Agents transition through 4 states based on activity to optimize resource usage:
 - **Automatic fallback** — SageMaker inference with OpenRouter fallback if endpoint is unavailable
 - **Full pipeline** — one-click export → train → deploy via `POST /api/v1/ml/pipeline`
 
-### Supervisor Dashboard (React, 9 Tabs)
-- **Agents** — full agent CRUD, lifecycle management, status monitoring
-- **Brokers** — regional broker cards (US/EU/APAC) with compliance and leverage details
-- **Policies** — global risk settings, chain/token allowlists
-- **Events** — real-time agent event stream
-- **Trade Lifecycle** — visual 15-step pipeline with 4 terminal states
-- **Helpers** — helper agent health, queue depth, processed count
-- **Hibernation** — 4-state distribution, threshold configuration
-- **Security** — trust chain visualization, 6 security layers, approval token config
-- **Audit** — tamper-evident audit log viewer
+---
+
+## Performance, Automation & Demo
+
+| Folder | Contents |
+|--------|----------|
+| [`Performance/`](Performance/) | Performance testing screenshots and benchmarks |
+| [`Automation/`](Automation/) | Full automation coverage report with file-level breakdown and ~303 test case inventory |
+| [`Demo/`](Demo/) | Demo video and recordings |
+
+### Automation Coverage Highlights
+
+| Metric | Value |
+|--------|-------|
+| Test Files | 29 |
+| Total Test Cases | ~303 |
+| Statement Coverage | **82.87%** (2,840 / 3,427) |
+| Branch Coverage | **89.33%** (419 / 469) |
+| Function Coverage | **87.97%** (161 / 183) |
+| Line Coverage | **82.87%** (2,840 / 3,427) |
+
+> Full detailed report: [`Automation/COVERAGE_REPORT.md`](Automation/COVERAGE_REPORT.md)
 
 ---
 
@@ -378,6 +421,7 @@ coindcx-trading-agent/
 │   │   ├── price-feed.ts        # CoinGecko + Jupiter + DexScreener, LRU cache
 │   │   ├── token-screener.ts    # 6-factor scoring from 5 intelligence sources
 │   │   ├── intent-engine.ts     # LLM function-calling for 18 intents
+│   │   ├── jupiter-swap.ts      # Direct Jupiter v1 swap execution (live on-chain Solana trades)
 │   │   ├── copy-engine.ts       # Wallet monitor → copy trade simulation
 │   │   ├── wallet-monitor.ts    # Helius RPC polling (15s) for swap events
 │   │   ├── dca-engine.ts        # Dollar-cost averaging plans
@@ -401,18 +445,20 @@ coindcx-trading-agent/
 │   │   ├── market-data-agent.ts # Price feeds, 30s publish cycle
 │   │   ├── risk-analyzer-agent.ts   # Kelly sizing, regime detection
 │   │   ├── strategy-executor-agent.ts # DEX execution (Jupiter/1inch/0x/HL)
-│   │   └── notification-agent.ts    # Trade confirmations, alerts
+│   │   ├── notification-agent.ts    # Trade confirmations, alerts
+│   │   └── chain-test-agent.ts  # Chain RPC health testing helper
 │   ├── permissions/         # RBAC (admin/broker/ops/user, 30+ actions)
 │   │   └── permissions.ts
 │   ├── risk/                # Risk engine
 │   │   ├── circuit-breaker.ts   # Rolling loss window, emergency halt (PostgreSQL)
 │   │   ├── risk-manager.ts      # Kelly Criterion, regime detection (Redis)
 │   │   └── parameter-bounds.ts  # Position size clamping, parameter limits
-│   ├── security/            # 6-layer security framework
+│   ├── security/            # 7-layer security framework
 │   │   ├── message-signer.ts    # HMAC-SHA256 signed envelopes + nonce mgmt
 │   │   ├── trust-chain.ts       # ECDSA P-256 certificate hierarchy
 │   │   ├── approval-token.ts    # One-time trade approval tokens (30s TTL)
-│   │   └── data-isolation.ts    # Per-user namespace enforcement (ns:{userId})
+│   │   ├── data-isolation.ts    # Per-user namespace enforcement (ns:{userId})
+│   │   └── prompt-guard.ts      # Prompt injection detection (instruction override, role hijack, delimiter injection)
 │   ├── supervisor/          # Master Agent (Tier 0)
 │   │   ├── supervisor.ts        # MasterAgent: root CA, WsHub, manifest
 │   │   ├── approval-engine.ts   # Multi-factor trade approval
@@ -449,25 +495,27 @@ coindcx-trading-agent/
 │   ├── ml/                      # data-export, sagemaker
 │   ├── audit/                   # audit-logger
 │   └── db/                      # db client
-├── dashboard/               # React 19 + Vite supervisor dashboard
-│   └── src/
-│       ├── pages/               # 11 pages: Supervisor, Admin, Dashboard, etc.
-│       ├── app/
-│       │   ├── screens/         # Mobile-embedded screens (Chat, Home, Portfolio, etc.)
-│       │   ├── components/      # ChatBubble, TraderCard, StrategyTemplateCard, etc.
-│       │   ├── context/         # AppContext, TradingDataContext
-│       │   ├── services/        # blockchain.ts, chatEngine.ts, liveData.ts
-│       │   └── layouts/         # PhoneFrame, MobileLayout
-│       ├── components/          # Shared UI (Button, Card, Badge, StatCard)
-│       └── api/client.ts        # Full API client (supervisor, brokers, gateway)
-├── mobile_app/              # Flutter mobile app
+├── mobile_app/              # Flutter mobile app (Riverpod + CoinDCX Design System)
 │   └── lib/
 │       ├── features/
 │       │   ├── chat/            # AI chat UI with rich cards
 │       │   ├── discovery/       # Trending feed, hot carousel, gainers
 │       │   ├── portfolio/       # Holdings & trade history
-│       │   └── token_detail/    # Full audit, holder data, contract addr
-│       └── core/                # Theme, API client, providers
+│       │   ├── token_detail/    # Full audit, holder data, contract addr
+│       │   ├── copy_trading/    # Copy trading list + trader detail screens
+│       │   ├── leaderboard/     # GMGN leaderboard screen
+│       │   ├── strategies/      # Strategy list + setup screens
+│       │   ├── activity/        # Trade activity feed
+│       │   ├── onboarding/      # First-time user onboarding flow
+│       │   └── settings/        # User preferences
+│       ├── shared/widgets/      # Reusable widgets (score badge, token card)
+│       └── core/                # Theme, API client, providers, formatters
+├── Automation/              # Automation coverage report & test inventory
+│   └── COVERAGE_REPORT.md       # Full coverage report (82.87% statements, ~303 tests)
+├── Performance/             # Performance testing screenshots & benchmarks
+│   └── README.md
+├── Demo/                    # Demo video & recordings
+│   └── README.md
 ├── vitest.config.ts         # Test configuration (V8 coverage)
 ├── docker-compose.yml       # Master + 3 brokers + 6 helpers + infra
 ├── Dockerfile
@@ -541,9 +589,10 @@ The application runs in one of 12 service modes, set via `SERVICE_MODE` environm
 ### Trading
 | Method | Path | Description |
 |--------|------|-------------|
-| POST | `/api/v1/trade/quote` | Get trade quote |
-| POST | `/api/v1/trade/execute` | Execute trade (dry-run or live) |
-| GET | `/api/v1/trade/portfolio` | Portfolio summary |
+| GET | `/api/v1/trade/wallet` | Wallet info (SOL balance, public key in live mode) |
+| POST | `/api/v1/trade/quote` | Get trade quote with screening |
+| POST | `/api/v1/trade/execute` | Execute trade (dry-run simulation or live Jupiter swap) |
+| GET | `/api/v1/trade/portfolio` | Portfolio summary (+ on-chain balances in live mode) |
 
 ### Perpetuals (Hyperliquid)
 | Method | Path | Description |
@@ -665,110 +714,6 @@ The application runs in one of 12 service modes, set via `SERVICE_MODE` environm
 
 ---
 
-## Getting Started
-
-### Prerequisites
-
-- **Node.js 20+** (via nvm)
-- **Flutter 3.32+** (for the mobile app)
-- npm
-
-### Quick Start — Mobile App + Backend API
-
-```bash
-# 1. Clone and install
-git clone https://github.com/kushagra93/coindcx-trading-agent.git
-cd coindcx-trading-agent
-npm install
-
-# 2. Create .env
-cat > .env << 'EOF'
-SERVICE_MODE=api
-DRY_RUN=true
-PORT=3000
-OPENROUTER_API_KEY=your_openrouter_key_here
-OPENROUTER_MODEL=minimax/minimax-m2.5
-BIRDEYE_API_KEY=your_birdeye_key_here
-HELIUS_API_KEY=your_helius_key_here
-EOF
-
-# 3. Start backend (Terminal 1)
-npm run dev
-
-# 4. Start Flutter app (Terminal 2)
-cd mobile_app
-flutter pub get
-flutter run -d chrome --web-port 8080
-
-# Open http://localhost:8080
-```
-
-### Quick Start — Supervisor Dashboard
-
-```bash
-npm install
-cd dashboard && npm install && cd ..
-npm run dashboard
-# Open http://localhost:5174/app/home
-```
-
-### Full Multi-Tier Deployment
-
-```bash
-docker-compose up -d
-
-# Services started:
-#   master        - Master Agent (port 3001)
-#   broker-us     - US Broker Agent
-#   broker-eu     - EU Broker Agent
-#   broker-apac   - APAC Broker Agent
-#   helper-market - Market Data Helper
-#   helper-risk   - Risk Analyzer Helper
-#   helper-exec   - Strategy Executor Helper
-#   helper-notify - Notification Helper
-#   helper-chat   - Chat/NLP Helper
-#   helper-bt     - Backtesting Helper
-#   postgres      - PostgreSQL
-#   redis         - Redis
-```
-
-### API Keys
-
-| Variable | Required | Where to get | Purpose |
-|----------|----------|-------------|---------|
-| `OPENROUTER_API_KEY` | **Yes** (for AI chat) | [openrouter.ai](https://openrouter.ai) | LLM-powered chat responses |
-| `OPENROUTER_MODEL` | No | — | Defaults to `minimax/minimax-m2.5` |
-| `BIRDEYE_API_KEY` | No | [birdeye.so](https://birdeye.so) | Token holder distribution data |
-| `HELIUS_API_KEY` | No | [helius.dev](https://helius.dev) | Solana token holder counts |
-
-> **Note**: The app works without any API keys — trending tokens, screening, and trading all use DexScreener (free, no key needed). The OpenRouter key enables AI-powered chat. Birdeye/Helius keys add richer holder data to screening results.
-
-### Environment Variables (Full Backend)
-
-| Variable | Required | Default | Description |
-|----------|----------|---------|-------------|
-| `SERVICE_MODE` | Yes | `api` | Service mode (see table above) |
-| `DRY_RUN` | No | `true` | Paper trading (no on-chain execution) |
-| `PORT` | No | `3000` | HTTP server port |
-| `DATABASE_URL` | For production | — | PostgreSQL connection string |
-| `REDIS_URL` | For production | `redis://localhost:6379` | Redis connection string |
-| `BROKER_JURISDICTION` | For broker mode | `GLOBAL` | `US`, `EU`, `APAC`, or `GLOBAL` |
-| `SOLANA_RPC_URL` | For live trading | `https://api.devnet.solana.com` | Solana JSON-RPC |
-| `EVM_RPC_URL` | For live trading | — | EVM RPC endpoint |
-| `GATEWAY_JWT_SECRET` | For production | dev default | JWT secret for WebSocket auth |
-| `SECURITY_MASTER_KEY_ID` | For production | — | Master HMAC signing key ID |
-| `SAGEMAKER_REGION` | For ML | `us-west-2` | AWS region for SageMaker |
-| `SAGEMAKER_ROLE_ARN` | For ML | — | IAM role for SageMaker jobs |
-| `SAGEMAKER_S3_BUCKET` | For ML | — | S3 bucket for training data |
-| `SAGEMAKER_BASE_MODEL` | For ML | `mistralai/Mistral-7B-Instruct-v0.3` | Base model for fine-tuning |
-| `SAGEMAKER_USE_INFERENCE` | For ML | `true` | Use SageMaker for inference (fallback to OpenRouter) |
-| `SAGEMAKER_INTENT_ENDPOINT` | For ML | — | SageMaker endpoint for intent classification |
-| `SAGEMAKER_CHAT_ENDPOINT` | For ML | — | SageMaker endpoint for chat completion |
-
-See `TRD.md` §4.9 for the complete list of 60+ environment variables.
-
----
-
 ## Development
 
 ### Project Scripts
@@ -791,26 +736,70 @@ npm run db:generate      # Generate Drizzle migrations
 npm run db:migrate       # Run migrations
 npm run db:push          # Push schema to DB
 npm run db:studio        # Open Drizzle Studio
-
-# Dashboard
-npm run dashboard        # Start Vite dev server on :5174
-cd dashboard && npm run build   # Production build
 ```
 
 ### Test Suite
 
-Unit tests across 29 test files with **80%+ statement coverage**:
+Unit tests across **29 test files** with **~303 test cases** and **82.87% statement coverage** (Vitest + V8).
 
-| Domain | Tests | Coverage Areas |
-|--------|-------|----------------|
-| Core | 4 files | config, ws-types, state-machine, chain-registry |
-| Security | 8 files | message-signer, trust-chain, approval-token, data-isolation, permissions (pure + Redis) |
-| Risk | 4 files | circuit-breaker, risk-manager, parameter-bounds, types |
-| Trader | 4 files | fee-manager, nonce-manager, trade-memory, position-manager |
-| Supervisor | 3 files | command-bus, event-collector, fee-ledger |
-| ML | 2 files | data-export (training data extraction, tool call parsing), sagemaker (schema building, text parsing) |
-| Audit | 1 file | audit-logger |
-| DB | 1 file | db client + isDbConfigured |
+#### Overall Coverage Summary
+
+| Metric | Covered | Total | Percentage |
+|--------|---------|-------|------------|
+| Statements | 2,840 | 3,427 | **82.87%** |
+| Branches | 419 | 469 | **89.33%** |
+| Functions | 161 | 183 | **87.97%** |
+| Lines | 2,840 | 3,427 | **82.87%** |
+
+#### Module Coverage Breakdown
+
+| Module | Statements | Branches | Functions | Lines | Rating |
+|--------|-----------|----------|-----------|-------|--------|
+| audit | 80.95% | 78.12% | 100% | 80.95% | High |
+| core | 99.02% | 95.83% | 95.65% | 99.02% | High |
+| db | 43.24% | 50% | 66.66% | 43.24% | Low |
+| ml | 95.46% | 79.12% | 100% | 95.46% | High |
+| permissions | 100% | 100% | 100% | 100% | Full |
+| risk | 57.19% | 100% | 76.19% | 57.19% | Medium |
+| security | 98.12% | 94% | 100% | 98.12% | High |
+| supervisor | 100% | 87.27% | 100% | 100% | Full |
+| trader | 45.61% | 92% | 57.14% | 45.61% | Low |
+
+#### Test Results by Module
+
+| # | Module | Test File | Tests | Status |
+|---|--------|-----------|-------|--------|
+| 1 | audit | audit-logger.test.ts | 7 | PASS |
+| 2 | core | config.test.ts | 9 | PASS |
+| 3 | core | state-machine.test.ts | 11 | PASS |
+| 4 | core | chain-registry.test.ts | 17 | PASS |
+| 5 | core | ws-types.test.ts | 12 | PASS |
+| 6 | db | index.test.ts | 2 | PASS |
+| 7 | ml | data-export.test.ts | 16 | PASS |
+| 8 | ml | sagemaker.test.ts | 19 | PASS |
+| 9 | risk | circuit-breaker.test.ts | 10 | PASS |
+| 10 | risk | risk-manager.test.ts | 11 | PASS |
+| 11 | risk | parameter-bounds.test.ts | 14 | PASS |
+| 12 | risk | types.test.ts | 4 | PASS |
+| 13 | security | approval-token.test.ts | 11 | PASS |
+| 14 | security | data-isolation.test.ts | 11 | PASS |
+| 15 | security | message-signer.test.ts | 19 | PASS |
+| 16 | security | trust-chain.test.ts | 7 | PASS |
+| 17 | security | permissions.test.ts | 11 | PASS |
+| 18 | security | types.test.ts | 9 | PASS |
+| 19 | security | approval-token-redis.test.ts | 11 | PASS |
+| 20 | security | data-isolation-redis.test.ts | 16 | PASS |
+| 21 | security | message-signer-redis.test.ts | 11 | PASS |
+| 22 | security | trust-chain-redis.test.ts | 9 | PASS |
+| 23 | supervisor | command-bus.test.ts | 10 | PASS |
+| 24 | supervisor | event-collector.test.ts | 13 | PASS |
+| 25 | supervisor | fee-ledger.test.ts | 7 | PASS |
+| 26 | trader | fee-manager.test.ts | 11 | PASS |
+| 27 | trader | nonce-manager.test.ts | 7 | PASS |
+| 28 | trader | position-manager.test.ts | 8 | PASS |
+| 29 | trader | trade-memory.test.ts | 7 | PASS |
+
+> Full detailed coverage report with file-level breakdown and test case inventory available in [`Automation/COVERAGE_REPORT.md`](Automation/COVERAGE_REPORT.md)
 
 Mock infrastructure uses a Proxy-based Drizzle ORM mock and ioredis mock in `tests/helpers/mock-db.ts`.
 
@@ -852,10 +841,9 @@ Set `HOST_APP_ADAPTER=coindcx` or `HOST_APP_ADAPTER=generic` to switch implement
 | Layer | Technologies |
 |-------|-------------|
 | **Backend** | TypeScript, Fastify, Drizzle ORM, PostgreSQL, Redis (Streams + Pub/Sub), Pino, AWS SageMaker |
-| **Dashboard** | React 19, Vite, TypeScript, Recharts, Lucide Icons |
 | **Mobile** | Flutter 3.32, Dart, Riverpod, CoinDCX Design System |
-| **Blockchain** | @solana/web3.js, ethers.js, Jupiter v6 API, Hyperliquid SDK |
-| **Security** | ECDSA P-256 trust chain, HMAC-SHA256 signing, AWS KMS, hash-chained audit |
+| **Blockchain** | @solana/web3.js, ethers.js, Jupiter v6 API (quotes) + Swap v1 (execution), Hyperliquid SDK |
+| **Security** | ECDSA P-256 trust chain, HMAC-SHA256 signing, AWS KMS, hash-chained audit, prompt injection guard |
 | **Communication** | Redis Streams (consumer groups), Redis Pub/Sub (signed envelopes), WebSocket (JWT auth) |
 | **Testing** | Vitest, V8 coverage, Proxy-based mocking |
 | **Infra** | Docker, docker-compose, Kubernetes-ready |
@@ -868,15 +856,12 @@ Set `HOST_APP_ADAPTER=coindcx` or `HOST_APP_ADAPTER=generic` to switch implement
 2. Create a feature branch: `git checkout -b feature/my-feature`
 3. Make changes and ensure `npm run typecheck` passes
 4. Run tests: `npm run test`
-5. Test the dashboard: `npm run dashboard`
-6. Commit with descriptive messages
-7. Push and open a PR
+5. Commit with descriptive messages
+6. Push and open a PR
 
 ### Code Style
 - TypeScript strict mode
-- Functional components with hooks (React/Dashboard)
 - No new dependencies unless necessary
-- Inline CSS-in-JS (dashboard — matches existing pattern)
 
 ---
 
@@ -885,13 +870,26 @@ Set `HOST_APP_ADAPTER=coindcx` or `HOST_APP_ADAPTER=generic` to switch implement
 | Document | Description |
 |----------|-------------|
 | `TRD.md` | Technical Requirements Document with full HLD and LLD |
+| `HANDOFF.md` | Full feature handoff documentation |
 | `COPY_TRADE_HANDOFF.md` | Copy trading production deferred items |
-| `architecture-deviations.mdc` | Documented deviations from target architecture |
 | `CHANGES.md` | Changelog of all uncommitted architectural changes |
+| `Automation/COVERAGE_REPORT.md` | Full coverage report with file-level breakdown and test inventory |
+| `architecture-deviations.mdc` | Documented deviations from target architecture |
+| `coindcx_components.mdc` | CoinDCX component specifications |
+| `flutter_hackathon.mdc` | Flutter hackathon rules and constraints |
 
 ---
 
 ## Changelog
+
+### v0.7.0 — Live On-Chain Trading + Prompt Guard (2026-03-13)
+- **Live Solana swaps**: Jupiter Swap v1 API integration for real on-chain trades when `DRY_RUN=false` — quote, sign, send, confirm with Solscan links
+- **Wallet management**: Auto-generate or load Solana keypair from `SOLANA_PRIVATE_KEY`, with balance display and on-chain token holdings
+- **Wallet endpoint**: `GET /api/v1/trade/wallet` returns public key, SOL balance, and funding URL in live mode
+- **Portfolio on-chain balances**: Portfolio endpoint returns real SPL token balances via `getParsedTokenAccountsByOwner` in live mode
+- **Dynamic token mint registration**: Trade route auto-registers DexScreener-discovered token mints for Jupiter routing
+- **Prompt injection guard**: 7th security layer — regex-based detection for 6 attack categories (instruction override, role hijack, prompt extraction, delimiter injection, code injection, safety bypass) with severity classification and user-facing warnings
+- **Chain test helper**: New helper agent type for chain RPC health testing
 
 ### v0.6.0 — ML Pipeline + SageMaker Fine-Tuning (2026-03-13)
 - **ML training pipeline**: Export chat intents and trade outcomes to S3 as JSONL for supervised fine-tuning
