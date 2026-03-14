@@ -1,0 +1,103 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    command: postgres -c max_connections=200
+    environment:
+      POSTGRES_USER: agent
+      POSTGRES_PASSWORD: agent
+      POSTGRES_DB: trading_agent
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U agent"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    volumes:
+      - redisdata:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  api:
+    build: .
+    environment:
+      SERVICE_MODE: api
+      DATABASE_URL: postgresql://agent:agent@postgres:5432/trading_agent
+      REDIS_URL: redis://redis:6379
+    env_file: .env
+    ports:
+      - "3000:3000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  data-ingestion:
+    build: .
+    environment:
+      SERVICE_MODE: data-ingestion
+      DATABASE_URL: postgresql://agent:agent@postgres:5432/trading_agent
+      REDIS_URL: redis://redis:6379
+    env_file: .env
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  signal-worker:
+    build: .
+    environment:
+      SERVICE_MODE: signal-worker
+      DATABASE_URL: postgresql://agent:agent@postgres:5432/trading_agent
+      REDIS_URL: redis://redis:6379
+    env_file: .env
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  executor:
+    build: .
+    environment:
+      SERVICE_MODE: executor
+      DATABASE_URL: postgresql://agent:agent@postgres:5432/trading_agent
+      REDIS_URL: redis://redis:6379
+    env_file: .env
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  supervisor:
+    build: .
+    environment:
+      SERVICE_MODE: supervisor
+      DATABASE_URL: postgresql://agent:agent@postgres:5432/trading_agent
+      REDIS_URL: redis://redis:6379
+      PORT: 3001
+    env_file: .env
+    ports:
+      - "3001:3001"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+volumes:
+  pgdata:
+  redisdata:

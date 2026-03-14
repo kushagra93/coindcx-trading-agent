@@ -1,0 +1,9 @@
+environment      = "staging"
+aws_region       = "ap-south-1"
+project_name     = "coindcx-trading-agent"
+domain_name      = ""  # Set to your domain for custom ACM cert, e.g. "api.example.com"
+frontend_hosting = "cloudflare"  # "cloudflare" or "cloudfront"
+
+# GitHub Actions OIDC (optional — set to enable CI/CD role)
+github_org  = ""  # e.g. "kushagra93"
+github_repo = ""  # e.g. "coindcx-trading-agent"

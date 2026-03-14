@@ -1,0 +1,287 @@
+---
+description: "CoinDCX Flutter Hackathon — single rule. Applies ONLY to Flutter projects (when pubspec.yaml with flutter dependency exists). Covers FVM, design tokens, stack, .gitignore, navigation, testing, localisation. Ignore when working on non-Flutter code."
+alwaysApply: true
+---
+
+# CoinDCX Flutter Hackathon — Single Rule
+
+**When this rule applies:** Only when the workspace is or contains a **Flutter project** (a directory with **`pubspec.yaml`** that has a **`flutter:`** section and typically **`ios/`**, **`android/`**). If you are working on non-Flutter code, this rule does not apply.
+
+This file is the **single source** for: FVM + Flutter version, project bootstrap, **.gitignore**, CoinDCX design tokens, theme wiring, stack (Riverpod, Navigator, Isar, Crashlytics, etc.), testing (mocktail), and localisation (intl).
+
+**When building or changing any Flutter UI or feature:** Use **only** CoinDCX design tokens (§3) and theme from context (§4); support light and dark; use intl / AppLocalizations for all user-visible strings (§5.5); follow folder layout (§5.4). Before shipping UI, confirm §3, §4, and §5.5 are satisfied.
+
+**Implementation checklist (per screen/feature):**
+- [ ] Theme via `context.colors` / `context.fonts` / `context.sizes` only; no hardcoded colors or raw `TextStyle`
+- [ ] User-facing text from AppLocalizations (intl); no raw strings in UI
+- [ ] Manual Riverpod providers only; no @riverpod
+- [ ] Native Navigator only (no go_router / auto_route)
+- [ ] Layout: `lib/features/<feature>/{data,domain,presentation}` or `lib/core/` as appropriate
+
+---
+
+## 0. Ensure a Flutter project exists first
+
+- **Before** adding app code, features, or dependencies, confirm a **basic Flutter project** already exists: **`ios/`**, **`android/`**, **`pubspec.yaml`** at the project root, standard **`lib/`** layout.
+- If the workspace is empty or has no Flutter project (no `ios/`, no `android/`, or no `pubspec.yaml` with `flutter:`), **create it first**: from the intended project root run **`fvm flutter create .`** or **`fvm flutter create <project_name>`** in the parent directory.
+- Do **not** add features or platform config under a path that is not a valid Flutter project.
+
+---
+
+## 1. .gitignore for Flutter projects
+
+When the project **is** a Flutter project, ensure a **proper .gitignore** exists at the **repository or Flutter project root** so build outputs, IDE files, and secrets are not committed.
+
+**Required / recommended entries:**
+
+```gitignore
+# Dart / Flutter
+.dart_tool/
+.packages
+build/
+*.iml
+.flutter-plugins
+.flutter-plugins-dependencies
+pubspec.lock
+# Uncomment to ignore pubspec.lock for packages; keep for apps for reproducible builds.
+
+# FVM
+.fvm/flutter_sdk
+
+# Generated (optional: ignore generated l10n/Isar if not committed)
+# lib/generated/
+# lib/**/*.g.dart
+
+# iOS
+**/ios/Pods/
+**/ios/.symlinks/
+**/ios/Flutter/Flutter.framework
+**/ios/Flutter/Flutter.podspec
+**/ios/Flutter/Generated.xcconfig
+**/ios/Runner/GeneratedPluginRegistrant.*
+**/ios/**/xcuserdata/
+**/ios/**/DerivedData/
+
+# Android
+**/android/.gradle/
+**/android/captures/
+**/android/local.properties
+**/android/**/build/
+**/android/key.properties
+**/android/.cxx/
+*.jks
+
+# IDE
+.idea/
+.vscode/*
+!.vscode/settings.json
+!.vscode/tasks.json
+!.vscode/launch.json
+*.iml
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Env / secrets
+.env
+.env.*
+!.env.example
+
+# Coverage / test
+coverage/
+test/.test_coverage.dart
+```
+
+- **If .gitignore is missing or incomplete:** add or merge the patterns above. Prefer keeping **`pubspec.lock`** tracked for **applications** (reproducible builds); for **packages** some teams ignore it.
+- **Secrets:** never commit **`key.properties`**, **`.env`** (with secrets), or **`*.jks`**; **`!.env.example`** can be committed as a template.
+
+---
+
+## 2. FVM and Flutter 3.32.7
+
+- **Pin in repo:** **`.fvm/fvm_config.json`** must contain `"flutterSdkVersion": "3.32.7"`. After clone, run **`fvm install`** in the repo.
+- **FVM not installed:** Install via `brew install fvm` (macOS), `choco install fvm` (Windows), or `dart pub global activate fvm`; then **`fvm install`** and **`fvm use 3.32.7`** in the project.
+- **Commands:** Use **`fvm flutter`** and **`fvm dart`** only (not global `flutter`/`dart`). First-time: **`fvm install`** → **`fvm use 3.32.7`** → **`fvm flutter pub get`** → **`fvm flutter run`**.
+- **IDE:** Set **`dart.flutterSdkPath`** to **`.fvm/flutter_sdk`** (e.g. in `.vscode/settings.json`) so the analyzer uses 3.32.7.
+- **pubspec.yaml:** Set **`environment.sdk`** to the Dart version from **`fvm flutter --version`** (e.g. `>=3.x.0 <4.0.0`).
+
+---
+
+## 3. Design tokens — CoinDCX (use ONLY these)
+
+**Font:** Inter. **Weights:** 400, 500, 600.
+
+### 3.1 Colors (light / dark)
+
+Use only these semantic tokens (resolve via `context.colors.*` in Flutter).
+
+**Light:** generalForegroundPrimary #000000E5, generalForegroundSecondary #0000008A, generalForegroundTertiary #00000054; generalBackgroundBgL0Web #F5F5F5, generalBackgroundBgL1 #FFFFFF, generalBackgroundBgL2 #F5F5F5, generalBackgroundBgL3 #F2F2F2; generalStrokeL1 #0000000A, generalStrokeL2 #00000014, generalStrokeL3 #00000038; actionForegroundPrimary #FFFFFF, actionBackgroundPrimary #4965D2, actionBackgroundSecondary #EDF0FB; positiveBackgroundPrimary #37B271, positiveBackgroundSecondary #EBF7F1; negativeBackgroundPrimary #E13B4D, negativeBackgroundSecondary #FCEBED; alertBackgroundPrimary #F7931A, alertBackgroundSecondary #FEF4E8.
+
+**Dark:** generalForegroundPrimary #FFFFFFE5, generalForegroundSecondary #FFFFFF8A, generalForegroundTertiary #FFFFFF54; generalBackgroundBgL0Web #0A0A0A, generalBackgroundBgL1 #000000, generalBackgroundBgL2 #141414, generalBackgroundBgL3 #1F1F1F; generalStrokeL1 #FFFFFF14, generalStrokeL2 #FFFFFF1F, generalStrokeL3 #FFFFFF33; actionBackgroundPrimary #425BBD, actionBackgroundSecondary #292929; positiveBackgroundPrimary #37B271, positiveBackgroundSecondary #1C5939; negativeBackgroundPrimary #B42F3E, negativeBackgroundSecondary #441217; alertBackgroundPrimary #F7931A, alertBackgroundSecondary #4A2C08.
+
+### 3.2 Sizes and radius (px)
+
+**Spacing:** sizeGeneralXXXS=2, XXS=4, XS=8, S=12, M=16, L=20, XL=24, XXL=28, XXXL=32; sizePagePageMargin=20, sizePagePageMarginAlt=12. **Components:** sizeButtonButton=12, sizeButtonSButton=8; sizeChipChip=8; sizeInputInputH=16, sizeInputInputV=6. **Radius:** cornerRadiusGeneralXS=8, S=12, M=16, L=20; cornerRadiusCardCard=16, cornerRadiusCardSCard=8; cornerRadiusButtonButton=8; cornerRadiusInputInput=8; cornerRadiusBottomSheetBottomSheet=20.
+
+### 3.3 Typography (style names only)
+
+**UI:** uiText 14/20. **Body:** body 12/16, sBody 11/16, xsBody 9/12. **Label:** label 10/16, sLabel 8/12, xsLabel 7/12. **Headlines:** headline 16/20, lHeadline 20/24, xlHeadline 24/28. **Hero:** heroText 40/48, sHeroText 32/40. **Marketing:** marketingHeading 28/44, marketingSHeading 20/28, marketingBody 16/24, marketingNum 24/32. Use style names in code (e.g. **bodyR**, **labelSB**, **headlineM**); SB=600, M=500, R=400. Font family **Inter** only.
+
+### 3.4 Typography selection guide — which style for which UI element
+
+**GOLDEN RULE: When in doubt, use `uiTextR` (14/20). Never use anything below `bodyR` (12/16) for readable text. Styles at 10px and below (`label`, `sLabel`, `xsLabel`) are reserved for tags, badges, bottom-nav labels, and tiny count indicators only.**
+
+| UI element | Style | Size | Notes |
+|---|---|---|---|
+| Page / screen title | `lHeadlineSB` or `xlHeadlineSB` | 20–24 | Top-level page heading |
+| Section heading / AppBar title | `headlineSB` | 16 | Card or section title |
+| Card hero value (price, total) | `lHeadlineSB` | 20 | Main financial figure on a card |
+| Card secondary value (invested, P&L) | `uiTextSB` | 14 | Supporting numbers |
+| Primary content / list-item title | `uiTextSB` or `uiTextM` | 14 | Most prominent text in a row |
+| Body text / descriptions | `uiTextR` | 14 | **Default readable style** |
+| Secondary info / subtitle / timestamp | `bodyR` or `bodyM` | 12 | Subordinate details |
+| Caption / label above input field | `bodyR` | 12 | Floating or static field label |
+| Input field value / placeholder | `uiTextR` | 14 | Text the user types or sees |
+| Button text (primary, full-width) | `uiTextSB` | 14 | Standard buttons |
+| Button text (small / compact) | `bodySB` | 12 | Inline or secondary buttons |
+| Dropdown menu item | `uiTextR` | 14 | Each row in a dropdown |
+| Tab label (L1 / L2) | `headlineSB` active / `headlineR` inactive | 16 | Page-level or section tabs |
+| Tab label (L3 chip-style) | `bodySB` active / `bodyR` inactive | 12 | Pill/chip tabs |
+| Toast message | `uiTextM` | 14 | Notification bar text |
+| Error text below input | `bodyR` | 12 | Validation message |
+| Bottom-nav label | `labelM` | 10 | Only here is 10px acceptable |
+| Tag / badge / chip text | `sLabelSB` uppercase | 8 | Small colored pills |
+| Tiny count indicator | `labelM` | 10 | E.g. notification count badge |
+
+**Common mistakes to avoid:**
+- Using `bodyR` (12px) for primary content — use `uiTextR` (14px) instead.
+- Using `labelSB` (10px) for button text — use `uiTextSB` (14px) instead.
+- Using `labelR` (10px) for captions above fields — use `bodyR` (12px) instead.
+- Using `bodySB` (12px) for card values like amounts — use `uiTextSB` (14px) instead.
+- Using `sBody` (11px) or `xsBody` (9px) for anything the user needs to read at a glance.
+
+---
+
+## 4. Theme from context — `context.colors`, `context.fonts`, `context.sizes`
+
+- **Support both light and dark theme.** The app must provide and respect **light** and **dark** themes (e.g. via **`ThemeData`** / **`ThemeExtension`** for both modes and, where applicable, system theme or user preference). All UI must resolve colors and surfaces from the active theme so it looks correct in either mode.
+- **Always** use theme from **`BuildContext`**. No hardcoded hex or raw **`TextStyle(fontSize: …)`** in UI.
+- **Without design system SDK:** Use **`ThemeExtension<CoinDcxThemeData>`** with **`ThemeData(extensions: [CoinDcxThemeData.light()])`** and **`CoinDcxThemeData.dark()`** so both themes are available; **MaterialApp** (or root) should pass the appropriate theme based on **`ThemeMode`** / **`Brightness`**. Expose **`colors`**, **`fonts`**, **`sizes`** via a **BuildContext extension** (e.g. `context.colors`, `context.fonts`, `context.sizes` — not `context.coindcx.colors`).
+- **In UI:** `context.colors.generalForegroundPrimary`, `context.fonts.labelSB`, `context.sizes.sizeGeneralM` only.
+
+### Flutter token usage example
+
+```dart
+final c = context.colors;
+final f = context.fonts;
+final s = context.sizes;
+
+// Card with heading and body text
+Container(
+  padding: EdgeInsets.all(s.sizeGeneralM),
+  decoration: BoxDecoration(
+    color: c.generalBackgroundBgL1,
+    borderRadius: BorderRadius.circular(s.cornerRadiusCardCard),
+    border: Border.all(color: c.generalStrokeL2),
+  ),
+  child: Column(
+    crossAxisAlignment: CrossAxisAlignment.start,
+    children: [
+      Text('Section Title', style: f.headlineSB.copyWith(color: c.generalForegroundPrimary)),
+      SizedBox(height: s.sizeGeneralXS),
+      Text('Body content uses uiTextR — the default readable size.',
+           style: f.uiTextR.copyWith(color: c.generalForegroundSecondary)),
+      SizedBox(height: s.sizeGeneralXXS),
+      Text('Secondary detail', style: f.bodyR.copyWith(color: c.generalForegroundTertiary)),
+    ],
+  ),
+)
+
+// Primary button — uiTextSB for text, never labelSB
+ElevatedButton(
+  style: ElevatedButton.styleFrom(
+    backgroundColor: c.actionBackgroundPrimary,
+    foregroundColor: c.actionForegroundPrimary,
+    padding: EdgeInsets.symmetric(vertical: s.sizeButtonButton, horizontal: s.sizeGeneralL),
+    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(s.cornerRadiusButtonButton)),
+  ),
+  onPressed: () {},
+  child: Text('Submit', style: f.uiTextSB),
+)
+```
+
+**Wrong:** `Colors.blue`, `EdgeInsets.all(20)`, `TextStyle(fontSize: 12, color: Colors.black)`.
+
+**Wrong font choices (see §3.4 for the correct mapping):**
+- `f.bodyR` for primary content → use **`f.uiTextR`** (14px, not 12px)
+- `f.labelSB` for button text → use **`f.uiTextSB`** (14px, not 10px)
+- `f.labelR` for input labels → use **`f.bodyR`** (12px, not 10px)
+- `f.bodySB` for card values → use **`f.uiTextSB`** (14px, not 12px)
+
+---
+
+## 5. Stack conventions
+
+**General:** English; explicit types; PascalCase classes; camelCase members; snake_case files/dirs. **Riverpod only** for DI (no getIt). **Navigation:** native Flutter only (no go_router, auto_route, fluro). **Localisation:** intl + ARB/gen-l10n. **Code generation:** only for **intl** and **Isar**; **not** for Riverpod, Freezed, or testing.
+
+### 5.1 Riverpod (manual providers only)
+
+- **`ProviderScope`** at root. Define **`Provider`**, **`NotifierProvider`**, **`AsyncNotifierProvider`** by hand — **no** `@riverpod` / **riverpod_generator**.
+- **Notifier** / **AsyncNotifier**; **immutable** state with hand-written classes (final fields, optional copyWith or Equatable) — **no Freezed**.
+- **Controller pattern:** notifier methods update state; widgets **`ref.read(…notifier).executeLoad()`**. **`ref.watch`** in build; **`ref.read`** in callbacks.
+- **Testing:** **mocktail** for mocks; **`ProviderScope(overrides: …)`** and **`ProviderContainer`** for notifier tests.
+
+### 5.2 Navigation — native Flutter only
+
+- **Do not** use **go_router**, **auto_route**, **fluro**, or any third-party navigation package.
+- Use **`Navigator.push`** / **`Navigator.pop`** with **`MaterialPageRoute`** / **`CupertinoPageRoute`**, or Navigator 2.0 (**`Router`**, **`RouterDelegate`**, **`RouteInformationParser`**, **`BackButtonDispatcher`**) from **material.dart** / **cupertino.dart** / **widgets.dart**. Extras via constructor args or **`ModalRoute.of(context)?.settings.arguments`**.
+
+### 5.3 DI, persistence, Crashlytics
+
+- **DI:** Providers for **CrashReportingService**, **SecureStorageRepository**, **PreferencesRepository**, **Isar**; **`ref.read`** for one-shot deps. No **@Riverpod** annotations.
+- **Isar:** Repository in domain; **Isar entity/code generation allowed** (build_runner + isar_generator). Indices and migrations on schema change.
+- **shared_preferences:** Non-sensitive only; **PreferencesRepository** + **PreferencesKeys**.
+- **flutter_secure_storage:** Tokens/secrets only; **SecureStorageRepository** behind Provider; never log.
+- **Crashlytics:** Single **CrashReportingService** Provider; **FlutterError.onError** + **runZonedGuarded** in main; recordFatal / recordNonFatal; no PII in keys. **kDebugMode:** no-op or debug-only.
+
+### 5.4 Clean architecture and folders
+
+- **presentation** → **domain** ← **data**; domain has no Flutter imports.
+- **Layout:** **lib/app/** (MaterialApp, ProviderScope, routing); **lib/core/** (theme, crash, providers, constants, extensions); **lib/features/<feature>/{data,domain,presentation}/**; **lib/shared/** (widgets, providers). Repositories + use cases + notifiers with hand-written immutable state.
+
+### 5.5 Localisation — intl
+
+- **intl** + Flutter **gen-l10n** (ARB → generated Dart). **Codegen for localisation is allowed.** Use generated **`AppLocalizations`** in UI; **never** raw user-facing strings. **DateFormat**, **NumberFormat**, **Intl.message** / ICU for plurals and placeholders.
+
+### 5.6 Code generation — only intl and Isar
+
+- **Allowed:** **intl** / gen-l10n (ARB → AppLocalizations), **Isar** (entity/schema via isar_generator).
+- **Not allowed:** Riverpod annotations/generator, Freezed, json_serializable (unless team agrees), codegen for testing. Hand-write providers, state classes, and use **mocktail** without generated mocks.
+
+### 5.7 Testing — mocktail
+
+- **All** tests that need doubles use **mocktail** (Mock, registerFallbackValue, when, verify). Use **ProviderScope(overrides: …)** to inject mocks. Prefer **fake** where possible; **mock** where verification/stubbing is needed.
+
+### 5.8 Performance
+
+- **const** widgets; **ref.watch(provider.select(…))** for granular rebuilds; **ListView.builder** / slivers; **Image** cacheWidth/cacheHeight; **compute** / **Isolate.run** for heavy CPU; **RepaintBoundary** for expensive subtrees; no async/I/O in build.
+
+---
+
+## 6. Rules summary
+
+1. **Applies only to Flutter projects** (pubspec.yaml with flutter).
+2. **Bootstrap:** If no Flutter project, run **fvm flutter create** first.
+3. **.gitignore:** Maintain a proper Flutter .gitignore at repo/project root (§1); include Dart/Flutter, FVM, iOS, Android, IDE, OS, env/secrets, coverage.
+4. **FVM:** Flutter 3.32.7; **fvm flutter** / **fvm dart** only; **.fvm/fvm_config.json** pinned.
+5. **Design:** Use **only** CoinDCX tokens (colors, sizes, typography) via **context.colors** / **context.fonts** / **context.sizes**.
+6. **Theme:** **Support both light and dark theme**; ThemeExtension + BuildContext extension; no hardcoded hex or raw TextStyle in UI.
+7. **Riverpod:** Manual providers only; no @riverpod; hand-written immutable state (no Freezed).
+8. **Navigation:** Native Flutter only (Navigator.push/pop or Router 2.0); no go_router/auto_route.
+9. **Localisation:** intl + ARB/gen-l10n; codegen allowed; no raw user strings in UI.
+10. **Codegen:** Only intl and Isar; not Riverpod, Freezed, or testing.
+11. **Testing:** mocktail for mocks; ProviderScope overrides + ProviderContainer.
+12. **Secrets:** No secrets in repo; .env / dart-define; document in README only.
+
+When generating Flutter code, use **only** the token values defined in §3 for colors, font styles, spacing, and radius. **Always consult §3.4** for which text style to use for each UI element type. For component-level blueprints (buttons, inputs, tabs, tags, toasts, etc.), see the companion rule **`coindcx_components.mdc`**.

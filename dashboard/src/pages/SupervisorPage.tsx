@@ -1,0 +1,641 @@
+import { useState } from 'react';
+import {
+  Eye, Users, Play, Pause, Square, Trash2, AlertTriangle, Shield,
+  Activity, Zap, Settings, FileText, ChevronDown, Globe, GitBranch,
+  Cpu, Moon, Lock, ArrowRightLeft,
+} from 'lucide-react';
+import { Badge } from '../components/Badge';
+import { tokens } from '../styles/theme';
+import { useTradingData, type AgentData } from '../app/context/TradingDataContext';
+
+type AgentState = AgentData['state'];
+
+// ─── Helpers ─────────────────────────────────────────────────
+
+const fmt = (n: number) => n >= 1000 ? `$${(n / 1000).toFixed(1)}K` : `$${n.toFixed(0)}`;
+const ago = (ts: number) => {
+  const s = Math.floor((Date.now() - ts) / 1000);
+  if (s < 60) return `${s}s ago`;
+  if (s < 3600) return `${Math.floor(s / 60)}m ago`;
+  if (s < 86400) return `${Math.floor(s / 3600)}h ago`;
+  return `${Math.floor(s / 86400)}d ago`;
+};
+
+const stateColor: Record<AgentState, 'green' | 'yellow' | 'gray' | 'red' | 'blue'> = {
+  running: 'green', paused: 'yellow', stopped: 'gray', error: 'red', creating: 'blue',
+};
+
+// ─── Component ───────────────────────────────────────────────
+
+type Tab = 'agents' | 'brokers' | 'policies' | 'events' | 'lifecycle' | 'helpers' | 'hibernation' | 'security' | 'audit';
+
+export function SupervisorPage() {
+  const {
+    agents, setAgents, events, auditLog, helpers, brokers,
+    portfolio, addAuditEntry,
+  } = useTradingData();
+  const [tab, setTab] = useState<Tab>('agents');
+  const [globalHalt, setGlobalHalt] = useState(false);
+  const [filterState, setFilterState] = useState<string>('all');
+  const [filterChain, setFilterChain] = useState<string>('all');
+  const [haltConfirm, setHaltConfirm] = useState(false);
+
+  // Policies state
+  const [policies, setPolicies] = useState({
+    maxAgentsPerUser: 5, maxTotalAgents: 10_000,
+    globalMaxPositionSizePct: 25, globalMaxDailyLossUsd: 10_000, globalMaxLeverage: 10,
+    maintenanceMode: false,
+  });
+
+  // Stats
+  const running = agents.filter(a => a.state === 'running').length;
+  const paused = agents.filter(a => a.state === 'paused').length;
+  const errors = agents.filter(a => a.state === 'error').length;
+  const totalVolume = agents.reduce((s, a) => s + a.volumeUsd, 0);
+  const totalPnl = agents.reduce((s, a) => s + a.pnlUsd, 0);
+
+  // Filter agents
+  const filtered = agents.filter(a => {
+    if (filterState !== 'all' && a.state !== filterState) return false;
+    if (filterChain !== 'all' && a.chain !== filterChain) return false;
+    return true;
+  });
+
+  const toggleAgentState = (id: string, action: 'start' | 'pause' | 'stop') => {
+    setAgents(prev => prev.map(a => {
+      if (a.agentId !== id) return a;
+      if (action === 'start') return { ...a, state: 'running' as AgentState, lastHeartbeat: Date.now() };
+      if (action === 'pause') return { ...a, state: 'paused' as AgentState };
+      if (action === 'stop') return { ...a, state: 'stopped' as AgentState, openPositions: 0 };
+      return a;
+    }));
+  };
+
+  const handleEmergencyHalt = () => {
+    setGlobalHalt(true);
+    setAgents(prev => prev.map(a => ({
+      ...a, state: 'stopped' as AgentState, openPositions: 0,
+    })));
+    setHaltConfirm(false);
+  };
+
+  const handleResumeAll = () => {
+    setGlobalHalt(false);
+    setAgents(prev => prev.map(a => ({
+      ...a, state: 'running' as AgentState, lastHeartbeat: Date.now(),
+    })));
+  };
+
+  const statCards = [
+    { label: 'Total Agents', value: agents.length, icon: Users, color: tokens.colors.accent },
+    { label: 'Running', value: running, icon: Activity, color: tokens.colors.positive },
+    { label: 'Paused', value: paused, icon: Pause, color: tokens.colors.warning },
+    { label: 'Errors', value: errors, icon: AlertTriangle, color: tokens.colors.negative },
+    { label: 'Total Volume', value: fmt(totalVolume), icon: Zap, color: '#8b5cf6' },
+    { label: 'Total P&L', value: `${totalPnl >= 0 ? '+' : ''}${fmt(totalPnl)}`, icon: Activity, color: totalPnl >= 0 ? tokens.colors.positive : tokens.colors.negative },
+  ];
+
+  const chains = [...new Set(agents.map(a => a.chain))];
+
+  return (
+    <div>
+      {/* Header */}
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 24 }}>
+        <div>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 4 }}>
+            <Eye size={24} color={tokens.colors.accent} />
+            <h1 style={{ fontSize: 22, fontWeight: 700, margin: 0 }}>Supervisor Control Panel</h1>
+          </div>
+          <div style={{ fontSize: 13, color: tokens.colors.textMuted }}>CoinDCX Master Agent — Full control over all user agents</div>
+        </div>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+          <Badge color={globalHalt ? 'red' : 'green'}>
+            {globalHalt ? 'HALTED' : 'System OK'}
+          </Badge>
+          {globalHalt ? (
+            <button onClick={handleResumeAll} style={{
+              padding: '8px 16px', borderRadius: 8, border: 'none', fontSize: 12, fontWeight: 700,
+              background: tokens.colors.positive, color: '#fff', cursor: 'pointer',
+            }}>Resume All</button>
+          ) : (
+            <button onClick={() => setHaltConfirm(true)} style={{
+              padding: '8px 16px', borderRadius: 8, border: 'none', fontSize: 12, fontWeight: 700,
+              background: tokens.colors.negative, color: '#fff', cursor: 'pointer',
+            }}>
+              <AlertTriangle size={12} style={{ marginRight: 4, verticalAlign: -1 }} />
+              Emergency Halt
+            </button>
+          )}
+        </div>
+      </div>
+
+      {/* Emergency Halt Confirmation */}
+      {haltConfirm && (
+        <div style={{
+          background: tokens.colors.negativeBg, border: `1px solid rgba(248, 113, 113, 0.3)`,
+          borderRadius: 10, padding: 16, marginBottom: 16, display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+        }}>
+          <div>
+            <div style={{ fontWeight: 700, color: tokens.colors.negative, fontSize: 14 }}>Confirm Emergency Halt</div>
+            <div style={{ fontSize: 12, color: tokens.colors.textSecondary, marginTop: 2 }}>
+              This will immediately stop ALL {running + paused} active agents and close all positions.
+            </div>
+          </div>
+          <div style={{ display: 'flex', gap: 8 }}>
+            <button onClick={() => setHaltConfirm(false)} style={{
+              padding: '6px 14px', borderRadius: 6, border: `1px solid ${tokens.colors.border}`, background: 'none', color: tokens.colors.textSecondary, fontSize: 12, cursor: 'pointer',
+            }}>Cancel</button>
+            <button onClick={handleEmergencyHalt} style={{
+              padding: '6px 14px', borderRadius: 6, border: 'none', background: tokens.colors.negative, color: '#fff', fontSize: 12, fontWeight: 700, cursor: 'pointer',
+            }}>HALT ALL AGENTS</button>
+          </div>
+        </div>
+      )}
+
+      {/* Stat Cards */}
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(6, 1fr)', gap: 12, marginBottom: 20 }}>
+        {statCards.map(s => (
+          <div key={s.label} style={{
+            background: tokens.colors.bgSurface, borderRadius: 10, padding: '14px 16px',
+            border: `1px solid ${tokens.colors.border}`,
+          }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 8 }}>
+              <s.icon size={14} color={s.color} />
+              <span style={{ fontSize: 11, color: tokens.colors.textMuted, textTransform: 'uppercase', letterSpacing: '0.03em' }}>{s.label}</span>
+            </div>
+            <div style={{ fontSize: 20, fontWeight: 700, fontFamily: tokens.fonts.mono, color: typeof s.value === 'string' && s.value.startsWith('+') ? tokens.colors.positive : typeof s.value === 'string' && s.value.startsWith('-') ? tokens.colors.negative : tokens.colors.text }}>
+              {s.value}
+            </div>
+          </div>
+        ))}
+      </div>
+
+      {/* Tabs */}
+      <div style={{ display: 'flex', gap: 2, marginBottom: 16, borderBottom: `1px solid ${tokens.colors.border}`, paddingBottom: 1, flexWrap: 'wrap' }}>
+        {([
+          { key: 'agents' as Tab, label: 'Agents', icon: Users },
+          { key: 'brokers' as Tab, label: 'Brokers', icon: Globe },
+          { key: 'policies' as Tab, label: 'Policies', icon: Shield },
+          { key: 'events' as Tab, label: 'Events', icon: Zap },
+          { key: 'lifecycle' as Tab, label: 'Trade Lifecycle', icon: GitBranch },
+          { key: 'helpers' as Tab, label: 'Helpers', icon: Cpu },
+          { key: 'hibernation' as Tab, label: 'Hibernation', icon: Moon },
+          { key: 'security' as Tab, label: 'Security', icon: Lock },
+          { key: 'audit' as Tab, label: 'Audit Log', icon: FileText },
+        ]).map(t => (
+          <button key={t.key} onClick={() => setTab(t.key)} style={{
+            display: 'flex', alignItems: 'center', gap: 5,
+            padding: '8px 12px', border: 'none', borderRadius: '6px 6px 0 0',
+            fontSize: 12, fontWeight: tab === t.key ? 600 : 400, cursor: 'pointer',
+            background: tab === t.key ? tokens.colors.bgInput : 'transparent',
+            color: tab === t.key ? tokens.colors.text : tokens.colors.textMuted,
+          }}>
+            <t.icon size={13} />{t.label}
+          </button>
+        ))}
+      </div>
+
+      {/* ══════ AGENTS TAB ══════ */}
+      {tab === 'agents' && (
+        <div>
+          {/* Filters */}
+          <div style={{ display: 'flex', gap: 8, marginBottom: 12 }}>
+            <select value={filterState} onChange={e => setFilterState(e.target.value)} style={{
+              padding: '6px 10px', borderRadius: 6, border: `1px solid ${tokens.colors.border}`,
+              background: tokens.colors.bg, color: tokens.colors.textSecondary, fontSize: 12,
+            }}>
+              <option value="all">All States</option>
+              <option value="running">Running</option>
+              <option value="paused">Paused</option>
+              <option value="stopped">Stopped</option>
+              <option value="error">Error</option>
+            </select>
+            <select value={filterChain} onChange={e => setFilterChain(e.target.value)} style={{
+              padding: '6px 10px', borderRadius: 6, border: `1px solid ${tokens.colors.border}`,
+              background: tokens.colors.bg, color: tokens.colors.textSecondary, fontSize: 12,
+            }}>
+              <option value="all">All Chains</option>
+              {chains.map(c => <option key={c} value={c}>{c}</option>)}
+            </select>
+            <div style={{ flex: 1 }} />
+            <span style={{ fontSize: 12, color: tokens.colors.textMuted, alignSelf: 'center' }}>
+              {filtered.length} agent{filtered.length !== 1 ? 's' : ''}
+            </span>
+          </div>
+
+          {/* Agent Table */}
+          <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12 }}>
+            <thead>
+              <tr style={{ borderBottom: `1px solid ${tokens.colors.border}` }}>
+                {['Status', 'Agent ID', 'User', 'Strategy', 'Chain', 'Risk', 'Trades', 'Volume', 'P&L', 'Positions', 'Heartbeat', 'Actions'].map(h => (
+                  <th key={h} style={{
+                    padding: '8px 10px', textAlign: 'left', fontSize: 10,
+                    textTransform: 'uppercase', letterSpacing: '0.05em',
+                    color: tokens.colors.textMuted, fontWeight: 600,
+                  }}>{h}</th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {filtered.map(a => (
+                <tr key={a.agentId} style={{ borderBottom: `1px solid ${tokens.colors.border}` }}>
+                  <td style={{ padding: '10px' }}>
+                    <Badge color={stateColor[a.state]}>{a.state}</Badge>
+                  </td>
+                  <td style={{ padding: '10px', fontFamily: tokens.fonts.mono, fontSize: 11 }}>{a.agentId}</td>
+                  <td style={{ padding: '10px', color: tokens.colors.textSecondary }}>{a.userId}</td>
+                  <td style={{ padding: '10px', fontWeight: 600 }}>{a.strategy}</td>
+                  <td style={{ padding: '10px' }}>
+                    <Badge color="blue">{a.chain}</Badge>
+                  </td>
+                  <td style={{ padding: '10px' }}>
+                    <Badge color={a.riskLevel === 'aggressive' ? 'red' : a.riskLevel === 'conservative' ? 'green' : 'yellow'}>
+                      {a.riskLevel}
+                    </Badge>
+                  </td>
+                  <td style={{ padding: '10px', fontFamily: tokens.fonts.mono }}>{a.tradesExecuted}</td>
+                  <td style={{ padding: '10px', fontFamily: tokens.fonts.mono }}>{fmt(a.volumeUsd)}</td>
+                  <td style={{
+                    padding: '10px', fontWeight: 600, fontFamily: tokens.fonts.mono,
+                    color: a.pnlUsd >= 0 ? tokens.colors.positive : tokens.colors.negative,
+                  }}>
+                    {a.pnlUsd >= 0 ? '+' : ''}{fmt(a.pnlUsd)}
+                  </td>
+                  <td style={{ padding: '10px', fontFamily: tokens.fonts.mono }}>{a.openPositions}</td>
+                  <td style={{ padding: '10px', color: tokens.colors.textMuted }}>
+                    {a.state === 'running' ? ago(a.lastHeartbeat) : '—'}
+                  </td>
+                  <td style={{ padding: '10px' }}>
+                    <div style={{ display: 'flex', gap: 4 }}>
+                      {(a.state === 'stopped' || a.state === 'paused' || a.state === 'error') && (
+                        <button onClick={() => toggleAgentState(a.agentId, 'start')} title="Start" style={actionBtnStyle(tokens.colors.positive)}>
+                          <Play size={11} />
+                        </button>
+                      )}
+                      {a.state === 'running' && (
+                        <button onClick={() => toggleAgentState(a.agentId, 'pause')} title="Pause" style={actionBtnStyle(tokens.colors.warning)}>
+                          <Pause size={11} />
+                        </button>
+                      )}
+                      {(a.state === 'running' || a.state === 'paused') && (
+                        <button onClick={() => toggleAgentState(a.agentId, 'stop')} title="Stop" style={actionBtnStyle(tokens.colors.textMuted)}>
+                          <Square size={11} />
+                        </button>
+                      )}
+                      <button title="Force Close" style={actionBtnStyle(tokens.colors.negative)}>
+                        <Trash2 size={11} />
+                      </button>
+                    </div>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+
+      {/* ══════ POLICIES TAB ══════ */}
+      {tab === 'policies' && (
+        <div style={{ maxWidth: 700 }}>
+          <div style={{ background: tokens.colors.bgSurface, borderRadius: 10, padding: 20, border: `1px solid ${tokens.colors.border}` }}>
+            <h3 style={{ fontSize: 15, fontWeight: 700, marginTop: 0, marginBottom: 16 }}>Global Policy Configuration</h3>
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16 }}>
+              {[
+                { label: 'Max Agents per User', key: 'maxAgentsPerUser', min: 1, max: 100 },
+                { label: 'Max Total Agents', key: 'maxTotalAgents', min: 1, max: 100000 },
+                { label: 'Max Position Size %', key: 'globalMaxPositionSizePct', min: 1, max: 50 },
+                { label: 'Max Daily Loss (USD)', key: 'globalMaxDailyLossUsd', min: 100, max: 1000000 },
+                { label: 'Max Leverage', key: 'globalMaxLeverage', min: 1, max: 100 },
+              ].map(f => (
+                <div key={f.key}>
+                  <label style={{ fontSize: 11, color: tokens.colors.textMuted, display: 'block', marginBottom: 4 }}>{f.label}</label>
+                  <input
+                    type="number"
+                    value={(policies as any)[f.key]}
+                    onChange={e => setPolicies(prev => ({ ...prev, [f.key]: parseInt(e.target.value) || 0 }))}
+                    min={f.min}
+                    max={f.max}
+                    style={{
+                      width: '100%', padding: '8px 10px', borderRadius: 6,
+                      border: `1px solid ${tokens.colors.border}`, background: tokens.colors.bg,
+                      color: tokens.colors.text, fontSize: 13, fontFamily: tokens.fonts.mono,
+                    }}
+                  />
+                </div>
+              ))}
+              <div>
+                <label style={{ fontSize: 11, color: tokens.colors.textMuted, display: 'block', marginBottom: 4 }}>Maintenance Mode</label>
+                <button onClick={() => setPolicies(prev => ({ ...prev, maintenanceMode: !prev.maintenanceMode }))} style={{
+                  width: '100%', padding: '8px 10px', borderRadius: 6,
+                  border: `1px solid ${tokens.colors.border}`, cursor: 'pointer',
+                  background: policies.maintenanceMode ? tokens.colors.negativeBg : tokens.colors.positiveBg,
+                  color: policies.maintenanceMode ? tokens.colors.negative : tokens.colors.positive,
+                  fontSize: 13, fontWeight: 600,
+                }}>
+                  {policies.maintenanceMode ? 'ON — Blocking new agents' : 'OFF — Accepting new agents'}
+                </button>
+              </div>
+            </div>
+
+            <div style={{ marginTop: 20 }}>
+              <h4 style={{ fontSize: 13, fontWeight: 600, marginBottom: 10 }}>Allowed Chains</h4>
+              <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+                {['solana', 'ethereum', 'base', 'arbitrum', 'polygon', 'hyperliquid', 'monad', 'sui', 'aptos', 'megaeth', 'avalanche'].map(c => (
+                  <Badge key={c} color="blue" style={{ cursor: 'pointer', opacity: 0.9 }}>{c}</Badge>
+                ))}
+              </div>
+            </div>
+
+            <button style={{
+              marginTop: 20, padding: '10px 24px', borderRadius: 8, border: 'none',
+              background: tokens.colors.accent, color: '#fff', fontSize: 13, fontWeight: 600, cursor: 'pointer',
+            }}>
+              Save Policies
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* ══════ EVENTS TAB ══════ */}
+      {tab === 'events' && (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+          {events.map((e, i) => (
+            <div key={i} style={{
+              display: 'flex', alignItems: 'center', gap: 12, padding: '8px 12px',
+              background: tokens.colors.bgSurface, borderRadius: 8, border: `1px solid ${tokens.colors.border}`,
+            }}>
+              <Badge color={
+                e.type === 'error' || e.type === 'circuit-breaker-tripped' ? 'red' :
+                e.type.includes('trade') || e.type === 'position-opened' ? 'green' :
+                e.type === 'started' || e.type === 'resumed' ? 'blue' :
+                'gray'
+              }>{e.type}</Badge>
+              <span style={{ fontFamily: tokens.fonts.mono, fontSize: 11, color: tokens.colors.textSecondary }}>{e.agentId}</span>
+              <span style={{ fontSize: 12, color: tokens.colors.textMuted, flex: 1 }}>
+                {e.payload && Object.keys(e.payload).length > 0 ? JSON.stringify(e.payload) : ''}
+              </span>
+              <span style={{ fontSize: 11, color: tokens.colors.textMuted, whiteSpace: 'nowrap' }}>{ago(e.timestamp)}</span>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {/* ══════ BROKERS TAB ══════ */}
+      {tab === 'brokers' && (
+        <div>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 12, marginBottom: 20 }}>
+            {brokers.map(b => (
+              <div key={b.jurisdiction} style={{
+                background: tokens.colors.bgSurface, borderRadius: 10, padding: 16,
+                border: `1px solid ${tokens.colors.border}`,
+              }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                    <Globe size={18} color={tokens.colors.accent} />
+                    <span style={{ fontSize: 16, fontWeight: 700 }}>{b.jurisdiction}</span>
+                  </div>
+                  <Badge color="green">{b.status}</Badge>
+                </div>
+                <div style={{ fontSize: 12, color: tokens.colors.textSecondary, marginBottom: 8 }}>
+                  <div>Compliance: <span style={{ color: tokens.colors.text }}>{b.compliance}</span></div>
+                  <div>Max Leverage: <span style={{ color: tokens.colors.text, fontFamily: tokens.fonts.mono }}>{b.maxLeverage}x</span></div>
+                  <div>User Agents: <span style={{ color: tokens.colors.text, fontFamily: tokens.fonts.mono }}>{b.agents.toLocaleString()}</span></div>
+                </div>
+                <div style={{ fontSize: 11, color: tokens.colors.textMuted }}>
+                  Restricted: {b.restricted.map(r => (
+                    <Badge key={r} color="red" style={{ marginRight: 4, marginTop: 4 }}>{r}</Badge>
+                  ))}
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* ══════ TRADE LIFECYCLE TAB ══════ */}
+      {tab === 'lifecycle' && (
+        <div>
+          <div style={{ background: tokens.colors.bgSurface, borderRadius: 10, padding: 20, border: `1px solid ${tokens.colors.border}`, marginBottom: 16 }}>
+            <h3 style={{ fontSize: 15, fontWeight: 700, marginTop: 0, marginBottom: 16 }}>11-Step Trade Lifecycle Pipeline</h3>
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, alignItems: 'center' }}>
+              {[
+                { state: 'SIGNAL_GENERATED', color: tokens.colors.accent },
+                { state: 'RISK_ASSESSED', color: '#8b5cf6' },
+                { state: 'COMPLIANCE_CHECKED', color: '#6366f1' },
+                { state: 'APPROVAL_REQUESTED', color: tokens.colors.warning },
+                { state: 'APPROVED', color: tokens.colors.positive },
+                { state: 'FEE_RESERVED', color: '#f97316' },
+                { state: 'ORDER_SUBMITTED', color: tokens.colors.accent },
+                { state: 'ORDER_CONFIRMED', color: tokens.colors.positive },
+                { state: 'FEE_SETTLED', color: '#f97316' },
+                { state: 'FEE_LEDGER_RECORDED', color: '#8b5cf6' },
+                { state: 'NOTIFICATION_SENT', color: '#06b6d4' },
+                { state: 'POSITION_UPDATED', color: tokens.colors.positive },
+              ].map((s, i) => (
+                <div key={s.state} style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                  <div style={{
+                    padding: '4px 10px', borderRadius: 6, fontSize: 10, fontWeight: 600,
+                    background: `${s.color}20`, color: s.color, fontFamily: tokens.fonts.mono,
+                    whiteSpace: 'nowrap',
+                  }}>{s.state}</div>
+                  {i < 11 && <ArrowRightLeft size={12} color={tokens.colors.textMuted} />}
+                </div>
+              ))}
+            </div>
+            <div style={{ marginTop: 16, display: 'flex', gap: 12 }}>
+              <div style={{ fontSize: 11, color: tokens.colors.textMuted }}>Rejection States:</div>
+              {['RISK_REJECTED', 'COMPLIANCE_REJECTED', 'APPROVAL_REJECTED'].map(s => (
+                <div key={s} style={{
+                  padding: '2px 8px', borderRadius: 4, fontSize: 10, fontWeight: 600,
+                  background: tokens.colors.negativeBg, color: tokens.colors.negative, fontFamily: tokens.fonts.mono,
+                }}>{s}</div>
+              ))}
+            </div>
+          </div>
+          <div style={{ fontSize: 12, color: tokens.colors.textSecondary }}>
+            Each trade follows the full lifecycle pipeline. Atomic rule: fee + trade always succeed or fail together.
+          </div>
+        </div>
+      )}
+
+      {/* ══════ HELPERS TAB ══════ */}
+      {tab === 'helpers' && (
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 12 }}>
+          {helpers.map(h => {
+            const IconMap: Record<string, typeof Activity> = { Activity, Shield, Zap, FileText, GitBranch };
+            const Icon = IconMap[h.icon] ?? Cpu;
+            return (
+              <div key={h.type} style={{
+                background: tokens.colors.bgSurface, borderRadius: 10, padding: 16,
+                border: `1px solid ${tokens.colors.border}`,
+              }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                    <Icon size={16} color={h.color} />
+                    <span style={{ fontSize: 13, fontWeight: 600 }}>{h.type}</span>
+                  </div>
+                  <Badge color={h.status === 'running' ? 'green' : h.status === 'idle' ? 'yellow' : 'red'}>{h.status}</Badge>
+                </div>
+                <div style={{ fontSize: 12, color: tokens.colors.textSecondary }}>
+                  <div>Queue: <span style={{ color: h.queue > 0 ? tokens.colors.warning : tokens.colors.positive, fontWeight: 600, fontFamily: tokens.fonts.mono }}>{h.queue}</span></div>
+                  <div>Processed: <span style={{ color: tokens.colors.text, fontFamily: tokens.fonts.mono }}>{h.processed.toLocaleString()}</span></div>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
+
+      {/* ══════ HIBERNATION TAB ══════ */}
+      {tab === 'hibernation' && (
+        <div>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 12, marginBottom: 20 }}>
+            {(() => {
+              const active = agents.filter(a => a.state === 'running').length;
+              const idle = agents.filter(a => a.state === 'paused').length;
+              const onDemand = agents.filter(a => a.state === 'stopped').length;
+              const archived = agents.filter(a => a.state === 'error').length;
+              const total = Math.max(active + idle + onDemand + archived, 1);
+              // Scale up to show realistic numbers
+              const scale = 1000;
+              return [
+                { state: 'Active', count: active * scale, pct: Math.round(active / total * 100), color: tokens.colors.positive, desc: 'Currently trading' },
+                { state: 'Idle', count: idle * scale, pct: Math.round(idle / total * 100), color: tokens.colors.warning, desc: '30min no activity' },
+                { state: 'On-Demand', count: onDemand * scale, pct: Math.round(onDemand / total * 100), color: tokens.colors.accent, desc: 'Serialized to Redis (<100ms wake)' },
+                { state: 'Deep Archive', count: archived * scale, pct: Math.round(archived / total * 100), color: tokens.colors.textMuted, desc: 'Archived to PostgreSQL (~500ms wake)' },
+              ];
+            })().map(s => (
+              <div key={s.state} style={{
+                background: tokens.colors.bgSurface, borderRadius: 10, padding: 16,
+                border: `1px solid ${tokens.colors.border}`,
+              }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 8 }}>
+                  <Moon size={14} color={s.color} />
+                  <span style={{ fontSize: 11, color: tokens.colors.textMuted, textTransform: 'uppercase' }}>{s.state}</span>
+                </div>
+                <div style={{ fontSize: 24, fontWeight: 700, color: tokens.colors.text, fontFamily: tokens.fonts.mono }}>{s.count.toLocaleString()}</div>
+                <div style={{ fontSize: 11, color: s.color, fontWeight: 600, fontFamily: tokens.fonts.mono }}>{s.pct}%</div>
+                <div style={{ fontSize: 11, color: tokens.colors.textMuted, marginTop: 4 }}>{s.desc}</div>
+              </div>
+            ))}
+          </div>
+          <div style={{ background: tokens.colors.bgSurface, borderRadius: 10, padding: 16, border: `1px solid ${tokens.colors.border}` }}>
+            <h4 style={{ fontSize: 13, fontWeight: 600, marginTop: 0 }}>Hibernation Thresholds</h4>
+            <div style={{ fontSize: 12, color: tokens.colors.textSecondary, display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
+              <div>Idle threshold: <span style={{ color: tokens.colors.text }}>30 minutes</span></div>
+              <div>On-demand threshold: <span style={{ color: tokens.colors.text }}>2 hours</span></div>
+              <div>Archive threshold: <span style={{ color: tokens.colors.text }}>24 hours</span></div>
+              <div>Sweep interval: <span style={{ color: tokens.colors.text }}>5 minutes</span></div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ══════ SECURITY TAB ══════ */}
+      {tab === 'security' && (
+        <div>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: 12, marginBottom: 16 }}>
+            <div style={{ background: tokens.colors.bgSurface, borderRadius: 10, padding: 16, border: `1px solid ${tokens.colors.border}` }}>
+              <h4 style={{ fontSize: 13, fontWeight: 600, marginTop: 0, display: 'flex', alignItems: 'center', gap: 6 }}>
+                <Lock size={14} color={tokens.colors.positive} /> Trust Chain (ECDSA P-256)
+              </h4>
+              <div style={{ fontSize: 12, color: tokens.colors.textSecondary }}>
+                <div style={{ marginBottom: 8 }}>
+                  <Badge color="green" style={{ marginRight: 4 }}>Root CA</Badge>
+                  <span style={{ fontFamily: tokens.fonts.mono, fontSize: 11 }}>master-agent-root</span>
+                </div>
+                <div style={{ paddingLeft: 20, borderLeft: `2px solid ${tokens.colors.border}`, marginBottom: 4 }}>
+                  <Badge color="blue" style={{ marginRight: 4 }}>Broker</Badge> broker-US (SEC/CFTC)
+                </div>
+                <div style={{ paddingLeft: 20, borderLeft: `2px solid ${tokens.colors.border}`, marginBottom: 4 }}>
+                  <Badge color="blue" style={{ marginRight: 4 }}>Broker</Badge> broker-EU (MiFID II)
+                </div>
+                <div style={{ paddingLeft: 20, borderLeft: `2px solid ${tokens.colors.border}`, marginBottom: 4 }}>
+                  <Badge color="blue" style={{ marginRight: 4 }}>Broker</Badge> broker-APAC (MAS)
+                </div>
+                <div style={{ paddingLeft: 40, borderLeft: `2px solid ${tokens.colors.border}`, fontSize: 11, color: tokens.colors.textMuted }}>
+                  User agents issued per-broker certificates
+                </div>
+              </div>
+            </div>
+            <div style={{ background: tokens.colors.bgSurface, borderRadius: 10, padding: 16, border: `1px solid ${tokens.colors.border}` }}>
+              <h4 style={{ fontSize: 13, fontWeight: 600, marginTop: 0, display: 'flex', alignItems: 'center', gap: 6 }}>
+                <Shield size={14} color="#8b5cf6" /> Security Layers
+              </h4>
+              <div style={{ fontSize: 12, color: tokens.colors.textSecondary }}>
+                {[
+                  { layer: 'Network Isolation', desc: 'VPC + security groups', status: 'active' },
+                  { layer: 'Message Signing', desc: 'HMAC-SHA256 (30s expiry)', status: 'active' },
+                  { layer: 'Certificate Chain', desc: 'ECDSA P-256 hierarchy', status: 'active' },
+                  { layer: 'User Namespace', desc: 'Per-user encrypted isolation', status: 'active' },
+                  { layer: 'Dual-Sig Custody', desc: 'User+Broker for withdrawals', status: 'active' },
+                  { layer: 'Immutable Audit', desc: 'SHA-256 hash-chained log', status: 'active' },
+                ].map((l, i) => (
+                  <div key={i} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '4px 0' }}>
+                    <div>
+                      <span style={{ color: tokens.colors.text, fontWeight: 500 }}>{l.layer}</span>
+                      <span style={{ color: tokens.colors.textMuted, marginLeft: 8, fontSize: 11 }}>{l.desc}</span>
+                    </div>
+                    <Badge color="green">{l.status}</Badge>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </div>
+          <div style={{ background: tokens.colors.bgSurface, borderRadius: 10, padding: 16, border: `1px solid ${tokens.colors.border}` }}>
+            <h4 style={{ fontSize: 13, fontWeight: 600, marginTop: 0 }}>Approval Tokens</h4>
+            <div style={{ fontSize: 12, color: tokens.colors.textSecondary, display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 12 }}>
+              <div>Token expiry: <span style={{ color: tokens.colors.text }}>30 seconds</span></div>
+              <div>Nonce window: <span style={{ color: tokens.colors.text }}>60 seconds</span></div>
+              <div>One-time use: <span style={{ color: tokens.colors.positive, fontWeight: 600 }}>Enforced (atomic CAS)</span></div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ══════ AUDIT TAB ══════ */}
+      {tab === 'audit' && (
+        <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12 }}>
+          <thead>
+            <tr style={{ borderBottom: `1px solid ${tokens.colors.border}` }}>
+              {['Time', 'Actor', 'Action', 'Resource', 'Status'].map(h => (
+                <th key={h} style={{
+                  padding: '8px 10px', textAlign: 'left', fontSize: 10,
+                  textTransform: 'uppercase', letterSpacing: '0.05em',
+                  color: tokens.colors.textMuted, fontWeight: 600,
+                }}>{h}</th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {auditLog.map((entry, i) => (
+              <tr key={i} style={{ borderBottom: `1px solid ${tokens.colors.border}` }}>
+                <td style={{ padding: '10px', color: tokens.colors.textMuted }}>{ago(entry.timestamp)}</td>
+                <td style={{ padding: '10px', fontWeight: 600 }}>{entry.actor}</td>
+                <td style={{ padding: '10px' }}>
+                  <Badge color={
+                    entry.action.includes('halt') ? 'red' :
+                    entry.action.includes('create') || entry.action.includes('resume') ? 'green' :
+                    entry.action.includes('override') || entry.action.includes('pause') ? 'yellow' :
+                    'blue'
+                  }>{entry.action}</Badge>
+                </td>
+                <td style={{ padding: '10px', fontFamily: tokens.fonts.mono, fontSize: 11, color: tokens.colors.textSecondary }}>{entry.resource}</td>
+                <td style={{ padding: '10px' }}>
+                  <Badge color={entry.success ? 'green' : 'red'}>{entry.success ? 'OK' : 'FAIL'}</Badge>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      )}
+    </div>
+  );
+}
+
+const actionBtnStyle = (color: string): React.CSSProperties => ({
+  width: 26, height: 26, borderRadius: 6, border: 'none',
+  background: `${color}20`, color,
+  display: 'flex', alignItems: 'center', justifyContent: 'center',
+  cursor: 'pointer', padding: 0,
+});
