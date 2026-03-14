@@ -4,7 +4,7 @@ import 'package:http/http.dart' as http;
 class ApiClient {
   // For development: localhost when running on simulator
   // Change to your machine's IP for physical device testing
-  static const String _baseUrl = 'http://coindcx-staging-2104180850.ap-south-1.elb.amazonaws.com';
+  static const String _baseUrl = 'http://localhost:3000';
 
   final http.Client _client;
 
