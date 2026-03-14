@@ -869,7 +869,7 @@ Set `HOST_APP_ADAPTER=coindcx` or `HOST_APP_ADAPTER=generic` to switch implement
 
 | Document | Description |
 |----------|-------------|
-| `TRD.md` | Technical Requirements Document with full HLD and LLD |
+| `TRD.md` | Technical Requirements Document with full HLD and LLD — [View on Confluence](https://coindcx.atlassian.net/wiki/x/VIAp_/) |
 | `HANDOFF.md` | Full feature handoff documentation |
 | `COPY_TRADE_HANDOFF.md` | Copy trading production deferred items |
 | `CHANGES.md` | Changelog of all uncommitted architectural changes |
