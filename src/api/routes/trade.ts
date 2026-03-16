@@ -23,6 +23,8 @@ import {
   loadOrGenerateKeypair,
 } from '../../data/jupiter-swap.js';
 
+const LAMPORTS_PER_SOL = 1_000_000_000;
+
 const log = createChildLogger('trade-routes');
 
 interface TradeRequest {
@@ -33,6 +35,10 @@ interface TradeRequest {
   slippagePct?: number;
   sellPercentage?: number; // 1-100 — resolves to amountUsd using on-chain balance
 }
+
+// Carries the exact on-chain raw token amount for percentage sells so we never
+// exceed the wallet balance due to floating-point drift.
+let _pendingSellRaw: number | undefined;
 
 interface TradeRecord {
   id: string;
@@ -119,6 +125,7 @@ export async function tradeRoutes(app: FastifyInstance) {
     }
 
     // Resolve sellPercentage → amountUsd using live on-chain balance
+    _pendingSellRaw = undefined;
     if (side === 'sell' && sellPercentage && sellPercentage > 0 && sellPercentage <= 100) {
       try {
         const onChain = await getOnChainBalances();
@@ -129,6 +136,9 @@ export async function tradeRoutes(app: FastifyInstance) {
           const solMetrics = await getTokenBySymbol('SOL');
           const solPrice = solMetrics?.price ?? 130;
           amountUsd = Math.floor(sellableSol * (sellPercentage / 100) * solPrice * 100) / 100;
+          // Pass exact lamports to avoid drift — subtract 5000 lamports for tx fee buffer
+          const exactLamports = Math.floor(sellableSol * (sellPercentage / 100) * LAMPORTS_PER_SOL);
+          _pendingSellRaw = Math.max(0, exactLamports - 5000);
         } else {
           const tok = onChain.tokens.find((t: any) =>
             t.symbol?.toUpperCase() === symbol.toUpperCase() ||
@@ -151,10 +161,16 @@ export async function tradeRoutes(app: FastifyInstance) {
           const price = priceMeta?.price ?? 0;
           amountUsd = Math.floor(tok.uiAmount * (sellPercentage / 100) * price * 100) / 100;
           if (amountUsd < 0.001) amountUsd = 0.001; // minimum to avoid dust
+          // KEY FIX: use exact raw balance from chain — avoids float drift causing 6024
+          // For < 100% reduce slightly to be safe; for 100% use full balance minus 1 atom
+          const rawFull = tok.amount as number;
+          _pendingSellRaw = sellPercentage === 100
+            ? Math.max(0, rawFull - 1)
+            : Math.floor(rawFull * sellPercentage / 100);
           // Normalise symbol to the mint so swapTokens can resolve it later
           symbol = tok.mint;
         }
-        log.info({ symbol, side, sellPercentage, resolvedAmountUsd: amountUsd }, 'Resolved sellPercentage → amountUsd');
+        log.info({ symbol, side, sellPercentage, resolvedAmountUsd: amountUsd, rawAmount: _pendingSellRaw }, 'Resolved sellPercentage → amountUsd');
       } catch (err: any) {
         reply.code(500).send({ error: `Failed to resolve sell percentage: ${err.message}` });
         return;
@@ -238,6 +254,9 @@ export async function tradeRoutes(app: FastifyInstance) {
         let swapResult;
         let executedAmountUsd = amountUsd;
         let effectiveSlippageBps = slippageBps;
+        // For the first attempt use exact raw balance (avoids float drift causing 6024).
+        // On retries we drop the override so swapTokens recalculates from the smaller USD amount.
+        let currentOverrideRaw: number | undefined = _pendingSellRaw;
 
         // Retry strategy for illiquid / transfer-fee tokens:
         // if Jupiter returns 6024 (slippage exceeded), progressively reduce sell size
@@ -249,6 +268,7 @@ export async function tradeRoutes(app: FastifyInstance) {
             executedAmountUsd,
             fromPrice,
             effectiveSlippageBps,
+            currentOverrideRaw,
           );
 
           if (swapResult.success) break;
@@ -260,6 +280,7 @@ export async function tradeRoutes(app: FastifyInstance) {
 
           executedAmountUsd = Math.max(0.05, Math.floor((executedAmountUsd * 0.5) * 100) / 100);
           effectiveSlippageBps = Math.min(9000, effectiveSlippageBps + 1000);
+          currentOverrideRaw = undefined; // subsequent retries use smaller USD amount
           log.warn({
             symbol,
             side,

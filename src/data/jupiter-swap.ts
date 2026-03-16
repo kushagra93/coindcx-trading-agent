@@ -339,6 +339,9 @@ export async function swapTokens(
   amountUsd: number,
   fromPrice: number,
   slippageBps: number = 2500,
+  /** Skip price-based raw-amount calculation and use this exact amount (lamports / token atoms).
+   *  Use for percentage sells so floating-point drift never exceeds the actual wallet balance. */
+  overrideRawAmount?: number,
 ): Promise<SwapResult> {
   const inputMint = resolveTokenMint(fromSymbol);
   const outputMint = resolveTokenMint(toSymbol);
@@ -349,7 +352,10 @@ export async function swapTokens(
   const isInputSol = inputMint === SOL_MINT;
   let amountRaw: number;
 
-  if (isInputSol) {
+  if (overrideRawAmount !== undefined) {
+    // Caller supplied the exact on-chain raw balance — no price math needed.
+    amountRaw = Math.floor(overrideRawAmount);
+  } else if (isInputSol) {
     const solAmount = amountUsd / fromPrice;
     amountRaw = Math.floor(solAmount * LAMPORTS_PER_SOL);
   } else {
@@ -363,6 +369,7 @@ export async function swapTokens(
   log.info({
     from: fromSymbol, to: toSymbol,
     amountUsd, amountRaw,
+    overrideRaw: overrideRawAmount !== undefined,
     expectedOut: quote.outAmount,
     priceImpact: quote.priceImpactPct,
   }, 'Executing swap');
