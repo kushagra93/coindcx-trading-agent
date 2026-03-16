@@ -40,6 +40,27 @@ type SwapCallback = (event: SwapEvent) => void;
 
 const HELIUS_ENHANCED_TX_URL = 'https://api.helius.xyz/v0/transactions';
 
+const STABLECOIN_MINTS_SET = new Set([
+  'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v', // USDC
+  'Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB', // USDT
+]);
+
+let cachedSolPrice = 94;
+let solPriceLastFetched = 0;
+
+async function getSolPrice(): Promise<number> {
+  if (Date.now() - solPriceLastFetched < 60_000) return cachedSolPrice;
+  try {
+    const res = await fetch('https://api.jup.ag/price/v2?ids=So11111111111111111111111111111111111111112');
+    if (res.ok) {
+      const data = await res.json() as any;
+      const price = parseFloat(data?.data?.['So11111111111111111111111111111111111111112']?.price);
+      if (price > 0) { cachedSolPrice = price; solPriceLastFetched = Date.now(); }
+    }
+  } catch { /* use cached */ }
+  return cachedSolPrice;
+}
+
 const watchedWallets = new Set<string>();
 const lastSignatures = new Map<string, string>();
 let pollInterval: ReturnType<typeof setInterval> | null = null;
@@ -135,23 +156,23 @@ async function pollWallet(wallet: string, apiKey: string) {
   if (!txRes.ok) return;
   const txData = await txRes.json() as any[];
 
+  const solPrice = await getSolPrice();
   for (const tx of txData) {
-    const swaps = parseSwaps(tx, wallet);
+    const swaps = parseSwaps(tx, wallet, solPrice);
     for (const swap of swaps) {
-      log.info({ wallet: wallet.slice(0, 6), token: swap.tokenSymbol, side: swap.side, sol: swap.amountSol }, 'Swap detected');
+      log.info({ wallet: wallet.slice(0, 6), token: swap.tokenSymbol, side: swap.side, sol: swap.amountSol, usd: swap.amountUsd.toFixed(2) }, 'Swap detected');
       swapCallback?.(swap);
     }
   }
 }
 
-function parseSwaps(tx: any, walletAddress: string): SwapEvent[] {
+function parseSwaps(tx: any, walletAddress: string, solPrice: number): SwapEvent[] {
   const events: SwapEvent[] = [];
   if (!tx || tx.type !== 'SWAP') return events;
 
   const swapInfo = tx.events?.swap;
   if (!swapInfo) {
-    // Try tokenTransfers-based detection
-    return parseFromTransfers(tx, walletAddress);
+    return parseFromTransfers(tx, walletAddress, solPrice);
   }
 
   const nativeIn = swapInfo.nativeInput;
@@ -159,89 +180,142 @@ function parseSwaps(tx: any, walletAddress: string): SwapEvent[] {
   const tokenIn = swapInfo.tokenInputs?.[0];
   const tokenOut = swapInfo.tokenOutputs?.[0];
 
-  // Buy: SOL in, Token out
+  // Case 1: SOL in → Token out (buy with SOL)
   if (nativeIn && nativeIn.amount > 0 && tokenOut) {
     const solAmount = nativeIn.amount / 1e9;
     events.push({
-      walletAddress,
-      signature: tx.signature,
-      side: 'buy',
+      walletAddress, signature: tx.signature, side: 'buy',
       tokenAddress: tokenOut.mint,
       tokenSymbol: resolveSymbol(tokenOut.mint, tokenOut.symbol),
-      amountSol: solAmount,
-      amountUsd: solAmount * 130,
-      timestamp: tx.timestamp * 1000,
-      source: tx.source || 'unknown',
+      amountSol: solAmount, amountUsd: solAmount * solPrice,
+      timestamp: tx.timestamp * 1000, source: tx.source || 'unknown',
     });
   }
 
-  // Sell: Token in, SOL out
+  // Case 2: Token in → SOL out (sell for SOL)
   if (tokenIn && nativeOut && nativeOut.amount > 0) {
     const solAmount = nativeOut.amount / 1e9;
     events.push({
-      walletAddress,
-      signature: tx.signature,
-      side: 'sell',
+      walletAddress, signature: tx.signature, side: 'sell',
       tokenAddress: tokenIn.mint,
       tokenSymbol: resolveSymbol(tokenIn.mint, tokenIn.symbol),
-      amountSol: solAmount,
-      amountUsd: solAmount * 130,
-      timestamp: tx.timestamp * 1000,
-      source: tx.source || 'unknown',
+      amountSol: solAmount, amountUsd: solAmount * solPrice,
+      timestamp: tx.timestamp * 1000, source: tx.source || 'unknown',
     });
+  }
+
+  // Case 3: Token-to-token swap (e.g. USDC → Token or Token → USDC)
+  if (events.length === 0 && tokenIn && tokenOut) {
+    const inIsStable = STABLECOIN_MINTS_SET.has(tokenIn.mint);
+    const outIsStable = STABLECOIN_MINTS_SET.has(tokenOut.mint);
+
+    if (inIsStable && !outIsStable) {
+      // Stablecoin → Token = buy
+      const usdAmount = parseFloat(tokenIn.tokenAmount ?? tokenIn.rawTokenAmount?.tokenAmount ?? '0') / (10 ** (tokenIn.decimals ?? 6));
+      events.push({
+        walletAddress, signature: tx.signature, side: 'buy',
+        tokenAddress: tokenOut.mint,
+        tokenSymbol: resolveSymbol(tokenOut.mint, tokenOut.symbol),
+        amountSol: usdAmount / solPrice, amountUsd: usdAmount,
+        timestamp: tx.timestamp * 1000, source: tx.source || 'unknown',
+      });
+    } else if (outIsStable && !inIsStable) {
+      // Token → Stablecoin = sell
+      const usdAmount = parseFloat(tokenOut.tokenAmount ?? tokenOut.rawTokenAmount?.tokenAmount ?? '0') / (10 ** (tokenOut.decimals ?? 6));
+      events.push({
+        walletAddress, signature: tx.signature, side: 'sell',
+        tokenAddress: tokenIn.mint,
+        tokenSymbol: resolveSymbol(tokenIn.mint, tokenIn.symbol),
+        amountSol: usdAmount / solPrice, amountUsd: usdAmount,
+        timestamp: tx.timestamp * 1000, source: tx.source || 'unknown',
+      });
+    } else if (!inIsStable && !outIsStable) {
+      // Token → Token (treat as buy of output token, estimate via Jupiter later)
+      events.push({
+        walletAddress, signature: tx.signature, side: 'buy',
+        tokenAddress: tokenOut.mint,
+        tokenSymbol: resolveSymbol(tokenOut.mint, tokenOut.symbol),
+        amountSol: 0, amountUsd: 1, // fallback $1 estimate for token-to-token
+        timestamp: tx.timestamp * 1000, source: tx.source || 'unknown',
+      });
+    }
   }
 
   return events;
 }
 
-function parseFromTransfers(tx: any, walletAddress: string): SwapEvent[] {
+function parseFromTransfers(tx: any, walletAddress: string, solPrice: number): SwapEvent[] {
   const events: SwapEvent[] = [];
   const transfers = tx.tokenTransfers ?? [];
   const nativeTransfers = tx.nativeTransfers ?? [];
 
-  // SOL spent by this wallet
   const solOut = nativeTransfers
     .filter((t: any) => t.fromUserAccount === walletAddress)
     .reduce((s: number, t: any) => s + (t.amount ?? 0), 0) / 1e9;
 
-  // SOL received by this wallet
   const solIn = nativeTransfers
     .filter((t: any) => t.toUserAccount === walletAddress)
     .reduce((s: number, t: any) => s + (t.amount ?? 0), 0) / 1e9;
 
-  // Tokens received (buy)
   const tokensReceived = transfers.filter((t: any) => t.toUserAccount === walletAddress && t.mint);
-  // Tokens sent (sell)
   const tokensSent = transfers.filter((t: any) => t.fromUserAccount === walletAddress && t.mint);
 
+  // SOL-based buys
   if (solOut > 0.001 && tokensReceived.length > 0) {
-    const token = tokensReceived[0];
+    const nonStableReceived = tokensReceived.filter((t: any) => !STABLECOIN_MINTS_SET.has(t.mint));
+    const token = nonStableReceived[0] || tokensReceived[0];
     events.push({
-      walletAddress,
-      signature: tx.signature,
-      side: 'buy',
+      walletAddress, signature: tx.signature, side: 'buy',
       tokenAddress: token.mint,
       tokenSymbol: resolveSymbol(token.mint, token.symbol),
-      amountSol: solOut,
-      amountUsd: solOut * 130,
-      timestamp: (tx.timestamp ?? Date.now() / 1000) * 1000,
-      source: tx.source || 'unknown',
+      amountSol: solOut, amountUsd: solOut * solPrice,
+      timestamp: (tx.timestamp ?? Date.now() / 1000) * 1000, source: tx.source || 'unknown',
     });
   }
 
+  // SOL-based sells
   if (solIn > 0.001 && tokensSent.length > 0) {
-    const token = tokensSent[0];
+    const nonStableSent = tokensSent.filter((t: any) => !STABLECOIN_MINTS_SET.has(t.mint));
+    const token = nonStableSent[0] || tokensSent[0];
     events.push({
-      walletAddress,
-      signature: tx.signature,
-      side: 'sell',
+      walletAddress, signature: tx.signature, side: 'sell',
       tokenAddress: token.mint,
       tokenSymbol: resolveSymbol(token.mint, token.symbol),
-      amountSol: solIn,
-      amountUsd: solIn * 130,
-      timestamp: (tx.timestamp ?? Date.now() / 1000) * 1000,
-      source: tx.source || 'unknown',
+      amountSol: solIn, amountUsd: solIn * solPrice,
+      timestamp: (tx.timestamp ?? Date.now() / 1000) * 1000, source: tx.source || 'unknown',
     });
+  }
+
+  // Stablecoin-based swaps (no SOL involved)
+  if (events.length === 0) {
+    const stableSent = tokensSent.filter((t: any) => STABLECOIN_MINTS_SET.has(t.mint));
+    const stableReceived = tokensReceived.filter((t: any) => STABLECOIN_MINTS_SET.has(t.mint));
+    const nonStableReceived = tokensReceived.filter((t: any) => !STABLECOIN_MINTS_SET.has(t.mint));
+    const nonStableSent = tokensSent.filter((t: any) => !STABLECOIN_MINTS_SET.has(t.mint));
+
+    if (stableSent.length > 0 && nonStableReceived.length > 0) {
+      const usdAmount = parseFloat(stableSent[0].tokenAmount ?? '0');
+      const token = nonStableReceived[0];
+      events.push({
+        walletAddress, signature: tx.signature, side: 'buy',
+        tokenAddress: token.mint,
+        tokenSymbol: resolveSymbol(token.mint, token.symbol),
+        amountSol: usdAmount / solPrice, amountUsd: usdAmount,
+        timestamp: (tx.timestamp ?? Date.now() / 1000) * 1000, source: tx.source || 'unknown',
+      });
+    }
+
+    if (stableReceived.length > 0 && nonStableSent.length > 0) {
+      const usdAmount = parseFloat(stableReceived[0].tokenAmount ?? '0');
+      const token = nonStableSent[0];
+      events.push({
+        walletAddress, signature: tx.signature, side: 'sell',
+        tokenAddress: token.mint,
+        tokenSymbol: resolveSymbol(token.mint, token.symbol),
+        amountSol: usdAmount / solPrice, amountUsd: usdAmount,
+        timestamp: (tx.timestamp ?? Date.now() / 1000) * 1000, source: tx.source || 'unknown',
+      });
+    }
   }
 
   return events;

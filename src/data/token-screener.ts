@@ -574,13 +574,13 @@ export async function fetchNewPairs(): Promise<TokenMetrics[]> {
       const cand = candidateMap.get(addr);
       if (cand?.icon && !m.imageUrl) m.imageUrl = cand.icon;
       if (cand?.boostAmt) m.boosts = cand.boostAmt;
-      if (m.marketCap >= 50_000 && m.liquidity >= 5_000 && m.ageMinutes <= 240) {
+      if (m.marketCap >= 20_000 && m.liquidity >= 2_000 && m.ageMinutes <= 720) {
         results.push(m);
       }
     }
 
     results.sort((a, b) => a.ageMinutes - b.ageMinutes);
-    const final_ = results.slice(0, 40);
+    const final_ = results.slice(0, 50);
     newPairsCache.set('new', final_);
     return final_;
   } catch (e) {

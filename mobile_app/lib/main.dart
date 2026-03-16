@@ -25,7 +25,7 @@ class TradingAgentApp extends StatelessWidget {
     return CoinDCXTheme(
       colors: scheme,
       child: MaterialApp(
-        title: 'CoinDCX Web3',
+        title: 'CereBRO',
         debugShowCheckedModeBanner: false,
         theme: buildMaterialTheme(scheme),
         initialRoute: '/',

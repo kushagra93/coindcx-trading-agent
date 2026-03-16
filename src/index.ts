@@ -10,7 +10,7 @@ async function main() {
     serviceMode: config.serviceMode,
     nodeEnv: config.nodeEnv,
     dryRun: config.dryRun,
-  }, 'CoinDCX Trading Agent starting');
+  }, 'CereBRO Trading Agent starting');
 
   switch (config.serviceMode) {
     case 'api':

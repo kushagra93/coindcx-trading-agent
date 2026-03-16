@@ -49,3 +49,17 @@ final portfolioProvider = FutureProvider<PortfolioData>((ref) async {
   final response = await api.get('/api/v1/trade/portfolio');
   return PortfolioData.fromJson(response);
 });
+
+final pnlLeaderboardProvider = FutureProvider<List<Map<String, dynamic>>>((ref) async {
+  final api = ref.read(apiClientProvider);
+  final response = await api.get('/api/v1/leaderboard', queryParams: {'period': '7d', 'sort': 'pnl', 'limit': '30'});
+  final traders = response['traders'] as List<dynamic>? ?? [];
+  return traders.map((t) => t as Map<String, dynamic>).toList();
+});
+
+final kolLeaderboardProvider = FutureProvider<List<Map<String, dynamic>>>((ref) async {
+  final api = ref.read(apiClientProvider);
+  final response = await api.get('/api/v1/leaderboard/kols');
+  final traders = response['traders'] as List<dynamic>? ?? [];
+  return traders.map((t) => t as Map<String, dynamic>).toList();
+});

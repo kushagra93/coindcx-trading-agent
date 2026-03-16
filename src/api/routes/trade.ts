@@ -1,11 +1,22 @@
 import type { FastifyInstance } from 'fastify';
 import { createChildLogger } from '../../core/logger.js';
 import { config } from '../../core/config.js';
-import { getTokenBySymbol, screenBySymbol } from '../../data/token-screener.js';
+import { getTokenBySymbol, getTokenByAddress, screenBySymbol } from '../../data/token-screener.js';
+
+const SOLANA_MINT_RE = /^[1-9A-HJ-NP-Za-km-z]{32,44}$/;
+function isMintAddress(s: string) { return SOLANA_MINT_RE.test(s.trim()); }
+
+/** Lookup token metrics by symbol or mint address */
+async function getMetrics(symbolOrMint: string) {
+  return isMintAddress(symbolOrMint)
+    ? await getTokenByAddress(symbolOrMint)
+    : await getTokenBySymbol(symbolOrMint);
+}
 import {
   swapTokens,
   getWalletBalance,
   getOnChainBalances,
+  getOwnWalletHistory,
   getPublicKey,
   resolveTokenMint,
   addTokenMint,
@@ -17,9 +28,10 @@ const log = createChildLogger('trade-routes');
 interface TradeRequest {
   symbol: string;
   side: 'buy' | 'sell';
-  amountUsd: number;
+  amountUsd?: number;
   chain?: string;
   slippagePct?: number;
+  sellPercentage?: number; // 1-100 — resolves to amountUsd using on-chain balance
 }
 
 interface TradeRecord {
@@ -95,25 +107,89 @@ export async function tradeRoutes(app: FastifyInstance) {
   });
 
   app.post<{ Body: TradeRequest }>('/api/v1/trade/execute', async (request, reply) => {
-    const { symbol, side, amountUsd, slippagePct } = request.body ?? {};
+    let { symbol, side, amountUsd, slippagePct, sellPercentage } = request.body ?? {};
 
-    if (!symbol || !side || !amountUsd) {
-      reply.code(400).send({ error: 'symbol, side, and amountUsd are required' });
+    if (!symbol || !side) {
+      reply.code(400).send({ error: 'symbol and side are required' });
       return;
     }
     if (!['buy', 'sell'].includes(side)) {
       reply.code(400).send({ error: 'side must be "buy" or "sell"' });
       return;
     }
-    if (amountUsd <= 0 || amountUsd > 10_000) {
-      reply.code(400).send({ error: 'amountUsd must be between 0 and 10000' });
+
+    // Resolve sellPercentage → amountUsd using live on-chain balance
+    if (side === 'sell' && sellPercentage && sellPercentage > 0 && sellPercentage <= 100) {
+      try {
+        const onChain = await getOnChainBalances();
+        const isSol = symbol.toUpperCase() === 'SOL';
+        if (isSol) {
+          // Sell % of SOL balance (keep 0.01 SOL for fees)
+          const sellableSol = Math.max(0, onChain.sol - 0.01);
+          const solMetrics = await getTokenBySymbol('SOL');
+          const solPrice = solMetrics?.price ?? 130;
+          amountUsd = Math.floor(sellableSol * (sellPercentage / 100) * solPrice * 100) / 100;
+        } else {
+          const tok = onChain.tokens.find((t: any) =>
+            t.symbol?.toUpperCase() === symbol.toUpperCase() ||
+            t.mint?.toLowerCase() === symbol.toLowerCase() ||
+            // also allow partial prefix match (e.g. if user typed first 6 chars)
+            (symbol.length >= 6 && t.mint?.toLowerCase().startsWith(symbol.toLowerCase().replace(/\.+$/, ''))),
+          );
+          if (!tok) {
+            const held = onChain.tokens.map((t: any) => t.symbol ?? t.mint?.slice(0, 8)).join(', ');
+            reply.code(400).send({ error: `Token "${symbol}" not found in on-chain wallet. Holdings: ${held || 'none'}` });
+            return;
+          }
+          // Register the mint so resolveTokenMint works downstream
+          if (!resolveTokenMint(symbol)) addTokenMint(symbol, tok.mint);
+          const priceMeta = await getMetrics(tok.mint);
+          // Also register by ticker symbol if we got one back
+          if (priceMeta?.symbol && !resolveTokenMint(priceMeta.symbol)) {
+            addTokenMint(priceMeta.symbol, tok.mint);
+          }
+          const price = priceMeta?.price ?? 0;
+          amountUsd = Math.floor(tok.uiAmount * (sellPercentage / 100) * price * 100) / 100;
+          if (amountUsd < 0.001) amountUsd = 0.001; // minimum to avoid dust
+          // Normalise symbol to the mint so swapTokens can resolve it later
+          symbol = tok.mint;
+        }
+        log.info({ symbol, side, sellPercentage, resolvedAmountUsd: amountUsd }, 'Resolved sellPercentage → amountUsd');
+      } catch (err: any) {
+        reply.code(500).send({ error: `Failed to resolve sell percentage: ${err.message}` });
+        return;
+      }
+    }
+
+    if (!amountUsd || amountUsd <= 0) {
+      reply.code(400).send({ error: 'amountUsd (or sellPercentage for sells) is required' });
+      return;
+    }
+    if (amountUsd > 10_000) {
+      reply.code(400).send({ error: 'amountUsd must be ≤ 10000' });
       return;
     }
 
-    const metrics = await getTokenBySymbol(symbol);
+    const metrics = await getMetrics(symbol);
     if (!metrics) {
       reply.code(404).send({ error: `Token "${symbol}" not found` });
       return;
+    }
+
+    // Register mint under both the input identifier AND the canonical ticker
+    if (metrics.address) {
+      if (!resolveTokenMint(symbol)) {
+        addTokenMint(symbol, metrics.address);
+      }
+      if (metrics.symbol && !resolveTokenMint(metrics.symbol)) {
+        addTokenMint(metrics.symbol, metrics.address);
+        log.info({ symbol: metrics.symbol, mint: metrics.address }, 'Registered token mint for Jupiter');
+      }
+    }
+
+    // If symbol is a mint address, swap using it directly
+    if (isMintAddress(symbol) && !resolveTokenMint(symbol)) {
+      addTokenMint(symbol, symbol);
     }
 
     const screening = await screenBySymbol(symbol);
@@ -121,41 +197,92 @@ export async function tradeRoutes(app: FastifyInstance) {
       log.warn({ symbol, grade: screening.grade }, 'Trade on risky token');
     }
 
-    // Register the token mint address for Jupiter if not already known
-    if (metrics.address && !resolveTokenMint(metrics.symbol)) {
-      addTokenMint(metrics.symbol, metrics.address);
-      log.info({ symbol: metrics.symbol, mint: metrics.address }, 'Registered token mint for Jupiter');
-    }
-
     const isMajor = metrics.liquidity > 100_000;
     const priceImpact = isMajor ? 0.1 : Math.min(amountUsd / (metrics.liquidity || 1) * 100, 15);
-    const slippageBps = slippagePct ? Math.floor(slippagePct * 100) : (isMajor ? 100 : 300);
+    // Meme / Token-2022 sells can carry transfer taxes and volatile routing.
+    // Give sells more default headroom to avoid frequent 6024 (exceeded slippage).
+    const defaultSlippageBps = side === 'sell' ? 5000 : 2500;
+    const slippageBps = slippagePct ? Math.floor(slippagePct * 100) : defaultSlippageBps;
 
     // ── LIVE ON-CHAIN TRADE ──────────────────────────────────────
     if (!config.dryRun) {
       try {
-        const fromSymbol = side === 'buy' ? 'SOL' : symbol;
-        const toSymbol = side === 'buy' ? symbol : 'SOL';
-        const fromPrice = side === 'buy' ? metrics.price : metrics.price; // SOL price for buying, token price for selling
+        const isSol = symbol.toUpperCase() === 'SOL';
+        let fromSymbol: string;
+        let toSymbol: string;
+        let fromPrice: number;
 
-        // For buys, we need SOL price, not the target token price
-        let solPrice = metrics.price;
         if (side === 'buy') {
-          const solMetrics = await getTokenBySymbol('SOL');
-          solPrice = solMetrics?.price ?? 130;
+          if (isSol) {
+            fromSymbol = 'USDC';
+            toSymbol = 'SOL';
+            fromPrice = 1; // USDC is $1
+          } else {
+            fromSymbol = 'SOL';
+            toSymbol = symbol;
+            const solMetrics = await getTokenBySymbol('SOL');
+            fromPrice = solMetrics?.price ?? 130;
+          }
+        } else {
+          if (isSol) {
+            fromSymbol = 'SOL';
+            toSymbol = 'USDC';
+            fromPrice = metrics.price;
+          } else {
+            fromSymbol = symbol;
+            toSymbol = 'SOL';
+            fromPrice = metrics.price;
+          }
         }
 
-        const swapResult = await swapTokens(
-          fromSymbol,
-          toSymbol,
-          amountUsd,
-          side === 'buy' ? solPrice : metrics.price,
-          slippageBps,
-        );
+        let swapResult;
+        let executedAmountUsd = amountUsd;
+        let effectiveSlippageBps = slippageBps;
+
+        // Retry strategy for illiquid / transfer-fee tokens:
+        // if Jupiter returns 6024 (slippage exceeded), progressively reduce sell size
+        // and allow higher slippage headroom to improve fill probability.
+        for (let attempt = 0; attempt < 4; attempt++) {
+          swapResult = await swapTokens(
+            fromSymbol,
+            toSymbol,
+            executedAmountUsd,
+            fromPrice,
+            effectiveSlippageBps,
+          );
+
+          if (swapResult.success) break;
+
+          const errMsg = String(swapResult.error ?? '');
+          const isSlippageExceeded = errMsg.includes('6024') || errMsg.toLowerCase().includes('slippage');
+          const canRetry = side === 'sell' && isSlippageExceeded && executedAmountUsd > 0.05;
+          if (!canRetry || attempt === 3) break;
+
+          executedAmountUsd = Math.max(0.05, Math.floor((executedAmountUsd * 0.5) * 100) / 100);
+          effectiveSlippageBps = Math.min(9000, effectiveSlippageBps + 1000);
+          log.warn({
+            symbol,
+            side,
+            attempt: attempt + 1,
+            retryAmountUsd: executedAmountUsd,
+            retrySlippageBps: effectiveSlippageBps,
+            lastError: errMsg,
+          }, 'Retrying sell after slippage exceeded');
+        }
+
+        // Type narrowing after retry loop
+        if (!swapResult) {
+          reply.code(500).send({ error: 'Swap failed before execution' });
+          return;
+        }
 
         if (!swapResult.success) {
+          const errMsg = String(swapResult.error ?? 'Swap failed on-chain');
+          const is6024 = errMsg.includes('6024');
           reply.code(400).send({
-            error: swapResult.error ?? 'Swap failed on-chain',
+            error: is6024
+              ? `${errMsg}. This token likely has transfer-fee/restriction mechanics; automatic retries (down to tiny size) still exceeded executable bounds.`
+              : errMsg,
             txHash: swapResult.txHash,
             txUrl: swapResult.txUrl,
           });
@@ -167,9 +294,9 @@ export async function tradeRoutes(app: FastifyInstance) {
           id: `trade_${tradeCounter}_${Date.now()}`,
           symbol: metrics.symbol,
           side,
-          amountUsd,
+          amountUsd: executedAmountUsd,
           price: metrics.price,
-          quantity: amountUsd / metrics.price,
+          quantity: executedAmountUsd / metrics.price,
           chain: 'solana',
           status: 'executed',
           txHash: swapResult.txHash,
@@ -179,17 +306,17 @@ export async function tradeRoutes(app: FastifyInstance) {
 
         positions.set(trade.id, trade);
         log.info({
-          tradeId: trade.id, symbol, side, amountUsd,
+          tradeId: trade.id, symbol, side, amountUsd: executedAmountUsd,
           txHash: swapResult.txHash,
           priceImpact: swapResult.priceImpact,
         }, 'ON-CHAIN trade executed');
 
         return {
           trade,
-          slippage: slippageBps / 100,
+          slippage: effectiveSlippageBps / 100,
           priceImpact: swapResult.priceImpact,
           txUrl: swapResult.txUrl,
-          message: `${side.toUpperCase()} $${amountUsd} of ${symbol} executed on-chain. View: ${swapResult.txUrl}`,
+          message: `${side.toUpperCase()} $${executedAmountUsd} of ${symbol} executed on-chain. View: ${swapResult.txUrl}`,
         };
       } catch (err: any) {
         log.error({ symbol, side, amountUsd, error: err.message }, 'On-chain trade failed');
@@ -323,20 +450,68 @@ export async function tradeRoutes(app: FastifyInstance) {
       timestamp: t.timestamp,
     }));
 
-    // Fetch real on-chain balances if in live mode
+    // Fetch real on-chain balances + live USD values if in live mode
     let wallet: any = null;
     if (!config.dryRun) {
       try {
         const onChain = await getOnChainBalances();
+
+        // Fetch live SOL price and token prices from Jupiter
+        let solPrice = 130;
+        let totalWalletUsd = 0;
+        try {
+          const solPriceRes = await fetch('https://api.jup.ag/price/v2?ids=So11111111111111111111111111111111111111112');
+          if (solPriceRes.ok) {
+            const pd = await solPriceRes.json() as any;
+            solPrice = parseFloat(pd?.data?.['So11111111111111111111111111111111111111112']?.price ?? '130');
+          }
+        } catch { /* use fallback */ }
+
+        const solUsd = onChain.sol * solPrice;
+        totalWalletUsd += solUsd;
+
+        // Price all tokens
+        const mintIds = onChain.tokens.map(t => t.mint).filter(Boolean).join(',');
+        let tokenPrices: Record<string, number> = {};
+        if (mintIds) {
+          try {
+            const priceRes = await fetch(`https://api.jup.ag/price/v2?ids=${mintIds}`);
+            if (priceRes.ok) {
+              const pd = await priceRes.json() as any;
+              for (const [mint, info] of Object.entries(pd?.data ?? {})) {
+                tokenPrices[mint] = parseFloat((info as any)?.price ?? '0');
+              }
+            }
+          } catch { /* ignore */ }
+        }
+
+        const tokensWithValue = onChain.tokens.map(t => {
+          const price = tokenPrices[t.mint] ?? 0;
+          const valueUsd = t.uiAmount * price;
+          totalWalletUsd += valueUsd;
+          return { ...t, priceUsd: price, valueUsd };
+        });
+
         wallet = {
           publicKey: onChain.publicKey,
           sol: onChain.sol,
-          tokens: onChain.tokens,
+          solUsd,
+          solPrice,
+          tokens: tokensWithValue,
+          totalValueUsd: totalWalletUsd,
           viewUrl: `https://solscan.io/account/${onChain.publicKey}`,
         };
       } catch (e) {
         log.warn('Could not fetch on-chain balances');
       }
+    }
+
+    // Fetch on-chain tx history (cached 60s) — non-blocking
+    let onChainHistory: any[] = [];
+    if (!config.dryRun) {
+      try {
+        onChainHistory = await getOwnWalletHistory(50);
+      } catch { /* ignore */ }
     }
 
     return {
@@ -346,6 +521,7 @@ export async function tradeRoutes(app: FastifyInstance) {
       positions: holdings,
       history,
       wallet,
+      onChainHistory,
     };
   });
 }

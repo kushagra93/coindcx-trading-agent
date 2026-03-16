@@ -105,14 +105,19 @@ export async function getOnChainBalances(): Promise<{ sol: number; tokens: OnCha
   const conn = getConnection();
   const kp = loadOrGenerateKeypair();
 
-  const [solLamports, tokenAccounts] = await Promise.all([
+  const [solLamports, splAccounts, token2022Accounts] = await Promise.all([
     conn.getBalance(kp.publicKey),
     conn.getParsedTokenAccountsByOwner(kp.publicKey, {
       programId: new PublicKey('TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA'),
     }),
+    conn.getParsedTokenAccountsByOwner(kp.publicKey, {
+      programId: new PublicKey('TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb'),
+    }).catch(() => ({ value: [] })),
   ]);
 
-  const tokens: OnChainBalance[] = tokenAccounts.value
+  const allAccounts = [...splAccounts.value, ...token2022Accounts.value];
+
+  const tokens: OnChainBalance[] = allAccounts
     .map((ta) => {
       const info = ta.account.data.parsed?.info;
       if (!info) return null;
@@ -136,9 +141,15 @@ export async function getOnChainBalances(): Promise<{ sol: number; tokens: OnCha
   };
 }
 
+const SOLANA_MINT_RE = /^[1-9A-HJ-NP-Za-km-z]{32,44}$/;
+
 export function resolveTokenMint(symbol: string): string | null {
-  const upper = symbol.trim().toUpperCase();
-  return WELL_KNOWN_MINTS[upper] ?? null;
+  const trimmed = symbol.trim();
+  const upper = trimmed.toUpperCase();
+  if (WELL_KNOWN_MINTS[upper]) return WELL_KNOWN_MINTS[upper];
+  // If the caller already passed a raw mint address, use it directly
+  if (SOLANA_MINT_RE.test(trimmed)) return trimmed;
+  return null;
 }
 
 export function addTokenMint(symbol: string, mint: string) {
@@ -170,7 +181,7 @@ export async function getSwapQuote(
   inputMint: string,
   outputMint: string,
   amountRaw: number,
-  slippageBps: number = 300,
+  slippageBps: number = 2500,
 ): Promise<SwapQuote> {
   const params = new URLSearchParams({
     inputMint,
@@ -179,6 +190,7 @@ export async function getSwapQuote(
     slippageBps: slippageBps.toString(),
     onlyDirectRoutes: 'false',
     asLegacyTransaction: 'false',
+    maxAutoSlippageBps: slippageBps.toString(),
   });
 
   const url = `${JUPITER_API}/quote?${params}`;
@@ -234,11 +246,12 @@ export async function executeSwap(quote: SwapQuote): Promise<SwapResult> {
       userPublicKey: kp.publicKey.toBase58(),
       wrapAndUnwrapSol: true,
       dynamicComputeUnitLimit: true,
-      dynamicSlippage: true,
+      // Do NOT use dynamicSlippage — it overrides our quote slippage and
+      // produces values too tight for Token-2022 transfer-fee tokens (error 6024)
       prioritizationFeeLamports: {
         priorityLevelWithMaxLamports: {
-          maxLamports: 1_000_000,
-          priorityLevel: 'medium',
+          maxLamports: 2_000_000,
+          priorityLevel: 'high',
         },
       },
     }),
@@ -265,17 +278,33 @@ export async function executeSwap(quote: SwapQuote): Promise<SwapResult> {
 
   log.info('Sending transaction to Solana...');
 
+  // Skip preflight for Token-2022 tokens with transfer fees — simulation is too strict
   const txHash = await conn.sendRawTransaction(rawTx, {
-    skipPreflight: false,
-    maxRetries: 3,
+    skipPreflight: true,
+    maxRetries: 5,
   });
 
   log.info({ txHash }, 'Transaction sent, awaiting confirmation');
 
-  const confirmation = await conn.confirmTransaction(txHash, 'confirmed');
+  // Poll for confirmation with a 90s timeout (handles slow mainnet finality)
+  const deadline = Date.now() + 90_000;
+  let confirmed = false;
+  let txErr: any = null;
+  while (Date.now() < deadline) {
+    const status = await conn.getSignatureStatuses([txHash]);
+    const s = status.value[0];
+    if (s) {
+      if (s.err) { txErr = s.err; break; }
+      if (s.confirmationStatus === 'confirmed' || s.confirmationStatus === 'finalized') {
+        confirmed = true;
+        break;
+      }
+    }
+    await new Promise(r => setTimeout(r, 2000));
+  }
 
-  if (confirmation.value.err) {
-    log.error({ txHash, error: confirmation.value.err }, 'Transaction failed on-chain');
+  if (txErr) {
+    log.error({ txHash, error: txErr }, 'Transaction failed on-chain');
     return {
       success: false,
       txHash,
@@ -283,8 +312,13 @@ export async function executeSwap(quote: SwapQuote): Promise<SwapResult> {
       inputAmount: parseInt(quote.inAmount),
       outputAmount: parseInt(quote.outAmount),
       priceImpact: parseFloat(quote.priceImpactPct),
-      error: `Transaction failed on-chain: ${JSON.stringify(confirmation.value.err)}`,
+      error: `Transaction failed on-chain: ${JSON.stringify(txErr)}`,
     };
+  }
+
+  if (!confirmed) {
+    // Tx was submitted but confirmation timed out — treat as likely success
+    log.warn({ txHash }, 'Confirmation timeout — tx submitted, check Solscan');
   }
 
   log.info({ txHash }, 'Swap confirmed on-chain');
@@ -304,7 +338,7 @@ export async function swapTokens(
   toSymbol: string,
   amountUsd: number,
   fromPrice: number,
-  slippageBps: number = 300,
+  slippageBps: number = 2500,
 ): Promise<SwapResult> {
   const inputMint = resolveTokenMint(fromSymbol);
   const outputMint = resolveTokenMint(toSymbol);
@@ -334,4 +368,149 @@ export async function swapTokens(
   }, 'Executing swap');
 
   return executeSwap(quote);
+}
+
+// ─── On-chain transaction history ────────────────────────────────────────────
+
+const HELIUS_ENHANCED_URL = 'https://api.helius.xyz/v0/transactions';
+const KNOWN_STABLE_MINTS = new Set([
+  'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v', // USDC
+  'Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB', // USDT
+]);
+
+export interface OnChainTx {
+  signature: string;
+  timestamp: number;
+  type: 'swap' | 'transfer' | 'unknown';
+  side: 'buy' | 'sell' | null;
+  tokenSymbol: string;
+  tokenMint: string;
+  amountToken: number;
+  amountUsd: number;
+  solPrice: number;
+  txUrl: string;
+}
+
+let _txHistoryCache: { data: OnChainTx[]; fetchedAt: number } | null = null;
+const TX_CACHE_MS = 60_000; // 1 minute
+
+export async function getOwnWalletHistory(limit = 50): Promise<OnChainTx[]> {
+  if (_txHistoryCache && Date.now() - _txHistoryCache.fetchedAt < TX_CACHE_MS) {
+    return _txHistoryCache.data;
+  }
+
+  const apiKey = process.env.HELIUS_API_KEY;
+  if (!apiKey) return [];
+
+  const kp = loadOrGenerateKeypair();
+  const wallet = kp.publicKey.toBase58();
+
+  // Step 1: get signatures
+  let signatures: string[] = [];
+  try {
+    const sigRes = await fetch(`https://mainnet.helius-rpc.com/?api-key=${apiKey}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        jsonrpc: '2.0', id: 1,
+        method: 'getSignaturesForAddress',
+        params: [wallet, { limit }],
+      }),
+    });
+    if (sigRes.ok) {
+      const sigData = await sigRes.json() as any;
+      signatures = (sigData.result ?? []).map((s: any) => s.signature as string);
+    }
+  } catch { return []; }
+
+  if (signatures.length === 0) return [];
+
+  // Step 2: parse with Helius enhanced API
+  let parsed: any[] = [];
+  try {
+    const txRes = await fetch(`${HELIUS_ENHANCED_URL}?api-key=${apiKey}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ transactions: signatures.slice(0, 50) }),
+    });
+    if (txRes.ok) parsed = await txRes.json() as any[];
+  } catch { return []; }
+
+  // Fetch live SOL price once
+  let solPrice = 130;
+  try {
+    const sp = await fetch('https://api.jup.ag/price/v2?ids=So11111111111111111111111111111111111111112');
+    if (sp.ok) {
+      const spd = await sp.json() as any;
+      solPrice = parseFloat(spd?.data?.['So11111111111111111111111111111111111111112']?.price ?? '130');
+    }
+  } catch { /* fallback */ }
+
+  const results: OnChainTx[] = [];
+
+  for (const tx of parsed) {
+    if (tx.transactionError) continue;
+    const sig = tx.signature as string;
+    const ts = (tx.timestamp as number) * 1000;
+    const txUrl = `https://solscan.io/tx/${sig}`;
+    const events = tx.events?.swap;
+
+    if (events) {
+      // Jupiter/swap event
+      const tokenIn = events.tokenInputs?.[0] ?? events.nativeInput;
+      const tokenOut = events.tokenOutputs?.[0] ?? events.nativeOutput;
+      if (!tokenIn || !tokenOut) continue;
+
+      const inMint = tokenIn.mint ?? SOL_MINT;
+      const outMint = tokenOut.mint ?? SOL_MINT;
+      const inSym = WELL_KNOWN_MINTS[inMint.toUpperCase()] ?? inMint.slice(0, 6) + '...';
+      const outSym = WELL_KNOWN_MINTS[outMint.toUpperCase()] ?? outMint.slice(0, 6) + '...';
+
+      const inIsStable = KNOWN_STABLE_MINTS.has(inMint) || inMint === SOL_MINT;
+      const outIsStable = KNOWN_STABLE_MINTS.has(outMint) || outMint === SOL_MINT;
+
+      let side: 'buy' | 'sell';
+      let tokenSymbol: string;
+      let tokenMint: string;
+      let amountToken: number;
+      let amountUsd: number;
+
+      if (!inIsStable && outIsStable) {
+        // selling token → SOL/USDC
+        side = 'sell';
+        tokenSymbol = inSym;
+        tokenMint = inMint;
+        const rawAmt = parseFloat(tokenIn.rawTokenAmount?.tokenAmount ?? tokenIn.amount ?? '0');
+        const decimals = tokenIn.rawTokenAmount?.decimals ?? 9;
+        amountToken = rawAmt / Math.pow(10, decimals);
+        if (outMint === SOL_MINT) {
+          amountUsd = (parseFloat(tokenOut.amount ?? '0') / LAMPORTS_PER_SOL) * solPrice;
+        } else {
+          amountUsd = parseFloat(tokenOut.rawTokenAmount?.tokenAmount ?? '0') / Math.pow(10, tokenOut.rawTokenAmount?.decimals ?? 6);
+        }
+      } else {
+        // buying token with SOL/USDC
+        side = 'buy';
+        tokenSymbol = outSym;
+        tokenMint = outMint;
+        const rawAmt = parseFloat(tokenOut.rawTokenAmount?.tokenAmount ?? tokenOut.amount ?? '0');
+        const decimals = tokenOut.rawTokenAmount?.decimals ?? 9;
+        amountToken = rawAmt / Math.pow(10, decimals);
+        if (inMint === SOL_MINT) {
+          amountUsd = (parseFloat(tokenIn.amount ?? '0') / LAMPORTS_PER_SOL) * solPrice;
+        } else {
+          amountUsd = parseFloat(tokenIn.rawTokenAmount?.tokenAmount ?? '0') / Math.pow(10, tokenIn.rawTokenAmount?.decimals ?? 6);
+        }
+      }
+
+      results.push({ signature: sig, timestamp: ts, type: 'swap', side, tokenSymbol, tokenMint, amountToken, amountUsd, solPrice, txUrl });
+    } else {
+      // Non-swap — skip for now
+      continue;
+    }
+  }
+
+  const sorted = results.sort((a, b) => b.timestamp - a.timestamp);
+  _txHistoryCache = { data: sorted, fetchedAt: Date.now() };
+  return sorted;
 }

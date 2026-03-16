@@ -66,7 +66,7 @@ async function callOpenRouter(
       'Authorization': `Bearer ${apiKey}`,
       'Content-Type': 'application/json',
       'HTTP-Referer': 'https://coindcx.com',
-      'X-Title': 'CoinDCX Trading Agent',
+      'X-Title': 'CereBRO Trading Agent',
     },
     body: JSON.stringify(body),
   });
