@@ -661,7 +661,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen> with TickerProviderStat
           SizedBox(
             width: double.infinity,
             child: ElevatedButton(
-              onPressed: () { _controller.text = 'confirm buy $symbol \$${amount.toStringAsFixed(0)}'; _sendMessage(); },
+              onPressed: () { _controller.text = 'confirm buy $symbol \$${amount.toStringAsFixed(2)}'; _sendMessage(); },
               style: ElevatedButton.styleFrom(backgroundColor: colors.positiveBackgroundPrimary, minimumSize: const Size(double.infinity, 40)),
               child: Text('Confirm Buy', style: CoinDCXTypography.buttonMd.copyWith(color: Colors.white)),
             ),
@@ -1085,7 +1085,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen> with TickerProviderStat
                     Column(
                       crossAxisAlignment: CrossAxisAlignment.end,
                       children: [
-                        Text('\$${amountUsd.toStringAsFixed(0)}',
+                        Text('\$${amountUsd.toStringAsFixed(2)}',
                           style: CoinDCXTypography.numberSm.copyWith(color: colors.generalForegroundPrimary, fontSize: 10)),
                         Text('$dateStr $timeStr',
                           style: CoinDCXTypography.caption.copyWith(color: colors.generalForegroundTertiary, fontSize: 8)),
@@ -1313,7 +1313,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen> with TickerProviderStat
     String buyMode = defaults['buyMode'] as String? ?? 'fixed_buy';
     double buyAmount = (defaults['buyAmount'] as num?)?.toDouble() ?? 50;
     String sellMethod = defaults['sellMethod'] as String? ?? 'mirror_sell';
-    final amountController = TextEditingController(text: buyAmount.toStringAsFixed(0));
+    final amountController = TextEditingController(text: buyAmount.toStringAsFixed(2));
     final colors = CoinDCXTheme.of(context);
 
     showModalBottomSheet(
@@ -1594,10 +1594,10 @@ class _ChatScreenState extends ConsumerState<ChatScreen> with TickerProviderStat
                   const SizedBox(height: 4),
                   Row(
                     children: [
-                      Text('$buyMode · \$${buyAmt.toStringAsFixed(0)} · $sellMeth',
+                      Text('$buyMode · \$${buyAmt.toStringAsFixed(2)} · $sellMeth',
                         style: CoinDCXTypography.caption.copyWith(color: colors.generalForegroundTertiary, fontSize: 9)),
                       const Spacer(),
-                      Text('Copied: \$${copied.toStringAsFixed(0)}',
+                      Text('Copied: \$${copied.toStringAsFixed(2)}',
                         style: CoinDCXTypography.caption.copyWith(
                           color: colors.positiveBackgroundPrimary, fontSize: 9, fontWeight: FontWeight.w600)),
                     ],
@@ -1652,7 +1652,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen> with TickerProviderStat
                         if (isSkipped)
                           Text(skipReason, style: CoinDCXTypography.caption.copyWith(color: colors.generalForegroundTertiary, fontSize: 8))
                         else
-                          Text('\$${amount.toStringAsFixed(0)}',
+                          Text('\$${amount.toStringAsFixed(2)}',
                             style: CoinDCXTypography.caption.copyWith(color: colors.positiveBackgroundPrimary, fontSize: 9)),
                       ],
                     ),
@@ -1751,7 +1751,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen> with TickerProviderStat
                     crossAxisAlignment: CrossAxisAlignment.end,
                     children: [
                       Text(_formatPrice(trigger), style: CoinDCXTypography.numberSm.copyWith(color: typeColor, fontSize: 11)),
-                      Text('${pctChange >= 0 ? '+' : ''}${pctChange.toStringAsFixed(1)}% · \$${amount.toStringAsFixed(0)}',
+                      Text('${pctChange >= 0 ? '+' : ''}${pctChange.toStringAsFixed(1)}% · \$${amount.toStringAsFixed(2)}',
                         style: CoinDCXTypography.caption.copyWith(color: colors.generalForegroundTertiary, fontSize: 9)),
                     ],
                   ),
@@ -1821,11 +1821,11 @@ class _ChatScreenState extends ConsumerState<ChatScreen> with TickerProviderStat
           const SizedBox(height: CoinDCXSpacing.xs),
           Row(
             children: [
-              _statChip('Amount', '\$${amountPerBuy.toStringAsFixed(0)}', colors.generalForegroundPrimary, colors),
+              _statChip('Amount', '\$${amountPerBuy.toStringAsFixed(2)}', colors.generalForegroundPrimary, colors),
               const SizedBox(width: CoinDCXSpacing.md),
               _statChip('Every', intervalLabel, colors.generalForegroundPrimary, colors),
               const SizedBox(width: CoinDCXSpacing.md),
-              _statChip('Total', '\$${totalCost.toStringAsFixed(0)}', colors.generalForegroundSecondary, colors),
+              _statChip('Total', '\$${totalCost.toStringAsFixed(2)}', colors.generalForegroundSecondary, colors),
             ],
           ),
           const SizedBox(height: CoinDCXSpacing.xs),
@@ -1843,7 +1843,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen> with TickerProviderStat
           Row(
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
-              Text('$completedBuys/$totalBuys buys · \$${totalSpent.toStringAsFixed(0)} spent',
+              Text('$completedBuys/$totalBuys buys · \$${totalSpent.toStringAsFixed(2)} spent',
                 style: CoinDCXTypography.caption.copyWith(color: colors.generalForegroundTertiary, fontSize: 9)),
               if (status == 'active')
                 GestureDetector(
@@ -2391,8 +2391,8 @@ class _ChatScreenState extends ConsumerState<ChatScreen> with TickerProviderStat
   String _formatLargeNum(double value) {
     if (value >= 1e9) return '\$${(value / 1e9).toStringAsFixed(1)}B';
     if (value >= 1e6) return '\$${(value / 1e6).toStringAsFixed(1)}M';
-    if (value >= 1e3) return '\$${(value / 1e3).toStringAsFixed(0)}K';
-    return '\$${value.toStringAsFixed(0)}';
+    if (value >= 1e3) return '\$${(value / 1e3).toStringAsFixed(1)}K';
+    return '\$${value.toStringAsFixed(2)}';
   }
 
   String _truncAddr(String addr) {

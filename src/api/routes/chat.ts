@@ -597,7 +597,7 @@ async function handleManageDCA(
   if (action === 'stop' && planId) {
     const plan = stopDCA(planId);
     if (!plan) return { text: 'DCA plan not found.', intent: 'dca', cards: [], suggestions: ['show my DCA plans'] };
-    const text = await generateLLMResponse(userMsg, `DCA plan ${plan.id} (${plan.token}) stopped. Total spent: $${plan.totalSpent.toFixed(0)} over ${plan.completedBuys} buys.`, history);
+    const text = await generateLLMResponse(userMsg, `DCA plan ${plan.id} (${plan.token}) stopped. Total spent: $${plan.totalSpent.toFixed(2)} over ${plan.completedBuys} buys.`, history);
     return { text, intent: 'dca', cards: [], suggestions: ['portfolio', 'trending'] };
   }
 
@@ -609,7 +609,7 @@ async function handleManageDCA(
 
   const context = `Active DCA plans:\n` + plans.map((p, i) => {
     const intervalLabel = p.intervalMs >= 86400_000 ? `${(p.intervalMs / 86400_000).toFixed(0)}d` : `${(p.intervalMs / 3600_000).toFixed(0)}h`;
-    return `${i + 1}. [${p.id}] ${p.token} — $${p.amountPerBuy} every ${intervalLabel} | ${p.completedBuys}/${p.totalBuys} buys | $${p.totalSpent.toFixed(0)} spent | ${p.status.toUpperCase()}`;
+    return `${i + 1}. [${p.id}] ${p.token} — $${p.amountPerBuy} every ${intervalLabel} | ${p.completedBuys}/${p.totalBuys} buys | $${p.totalSpent.toFixed(2)} spent | ${p.status.toUpperCase()}`;
   }).join('\n');
 
   const text = await generateLLMResponse(userMsg, context, history);
@@ -953,13 +953,13 @@ async function handleCopyManager(params: Record<string, any>, userMsg: string, h
 
   const configsCtx = configs.map((c, i) => {
     const addr = `${c.walletAddress.slice(0, 6)}...${c.walletAddress.slice(-4)}`;
-    return `${i + 1}. ${c.walletName || addr} — ${c.enabled ? 'ACTIVE' : 'PAUSED'} | ${c.buyMode} $${c.buyAmount} | Sell: ${c.sellMethod} | Copied: $${c.totalCopied.toFixed(0)}`;
+    return `${i + 1}. ${c.walletName || addr} — ${c.enabled ? 'ACTIVE' : 'PAUSED'} | ${c.buyMode} $${c.buyAmount} | Sell: ${c.sellMethod} | Copied: $${c.totalCopied.toFixed(2)}`;
   }).join('\n');
 
   const actCtx = activities.length > 0
     ? '\n\nRecent activity:\n' + activities.slice(0, 5).map(a => {
         const txLink = a.txUrl ? ` → ${a.txUrl}` : '';
-        return `• ${a.side.toUpperCase()} ${a.tokenSymbol} ($${a.copyAmountUsd.toFixed(0)}) — ${a.status.toUpperCase()}${a.skipReason ? ` (${a.skipReason})` : ''}${txLink}`;
+        return `• ${a.side.toUpperCase()} ${a.tokenSymbol} ($${a.copyAmountUsd.toFixed(2)}) — ${a.status.toUpperCase()}${a.skipReason ? ` (${a.skipReason})` : ''}${txLink}`;
       }).join('\n')
     : '';
 
