@@ -140,12 +140,26 @@ export async function tradeRoutes(app: FastifyInstance) {
           const exactLamports = Math.floor(sellableSol * (sellPercentage / 100) * LAMPORTS_PER_SOL);
           _pendingSellRaw = Math.max(0, exactLamports - 5000);
         } else {
-          const tok = onChain.tokens.find((t: any) =>
-            t.symbol?.toUpperCase() === symbol.toUpperCase() ||
-            t.mint?.toLowerCase() === symbol.toLowerCase() ||
-            // also allow partial prefix match (e.g. if user typed first 6 chars)
-            (symbol.length >= 6 && t.mint?.toLowerCase().startsWith(symbol.toLowerCase().replace(/\.+$/, ''))),
-          );
+          const findTok = (id: string) => {
+            const clean = id.replace(/\.+$/, '').toLowerCase();
+            return onChain.tokens.find((t: any) =>
+              t.symbol?.toUpperCase() === id.toUpperCase() ||
+              t.mint?.toLowerCase() === clean ||
+              (clean.length >= 6 && t.mint?.toLowerCase().startsWith(clean)),
+            );
+          };
+
+          let tok = findTok(symbol);
+
+          // If not found by ticker, look up the mint via DexScreener and retry
+          if (!tok && !isMintAddress(symbol)) {
+            const lookedUp = await getMetrics(symbol);
+            if (lookedUp?.address) {
+              tok = findTok(lookedUp.address);
+              if (tok) symbol = lookedUp.address; // normalise to mint
+            }
+          }
+
           if (!tok) {
             const held = onChain.tokens.map((t: any) => t.symbol ?? t.mint?.slice(0, 8)).join(', ');
             reply.code(400).send({ error: `Token "${symbol}" not found in on-chain wallet. Holdings: ${held || 'none'}` });

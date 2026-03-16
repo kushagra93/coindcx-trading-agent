@@ -3,6 +3,7 @@ import {
   screenBySymbol,
   screenByAddress,
   getTokenBySymbol,
+  getTokenByAddress,
   fetchTrending,
   fetchNewPairs,
   fetchTopTraders,
@@ -385,12 +386,31 @@ async function handleSellFromPortfolio(token: string, amountUsd: number | undefi
   // Check on-chain wallet — strip trailing "..." in case a truncated display name was sent
   const tokenClean = token.replace(/\.+$/, '').toLowerCase();
   const walletTokens: any[] = portfolio.wallet?.tokens ?? [];
-  const heldOnChain = walletTokens.some((t: any) =>
-    t.symbol?.toUpperCase() === token.toUpperCase() ||
-    t.mint?.toLowerCase() === tokenClean ||
-    (tokenClean.length >= 6 && t.mint?.toLowerCase().startsWith(tokenClean))
-  );
 
+  const findInWallet = (id: string) => {
+    const clean = id.replace(/\.+$/, '').toLowerCase();
+    return walletTokens.find((t: any) =>
+      t.symbol?.toUpperCase() === id.toUpperCase() ||
+      t.mint?.toLowerCase() === clean ||
+      (clean.length >= 6 && t.mint?.toLowerCase().startsWith(clean))
+    );
+  };
+
+  let walletMatch = findInWallet(token);
+
+  // If not found by the token string directly, resolve the ticker → mint via DexScreener
+  // so "BRAINROT" → "9gycPg..." can match a wallet entry stored as mint address
+  const SOLANA_MINT_RE = /^[1-9A-HJ-NP-Za-km-z]{32,44}$/;
+  if (!walletMatch && !SOLANA_MINT_RE.test(tokenClean)) {
+    const metrics = await getTokenBySymbol(token);
+    if (metrics?.address) {
+      walletMatch = findInWallet(metrics.address);
+      // If found, substitute the mint as the identifier so trade route resolves it correctly
+      if (walletMatch) token = metrics.address;
+    }
+  }
+
+  const heldOnChain = !!walletMatch;
   const solOnChain = token.toUpperCase() === 'SOL' && (portfolio.wallet?.sol ?? 0) > 0.001;
 
   if (heldInSession.length === 0 && !heldOnChain && !solOnChain) {
