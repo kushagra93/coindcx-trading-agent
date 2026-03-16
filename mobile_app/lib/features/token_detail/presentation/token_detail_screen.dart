@@ -83,7 +83,7 @@ class _TokenDetailScreenState extends ConsumerState<TokenDetailScreen> {
                 child: ClipRRect(
                   borderRadius: BorderRadius.circular(14),
                   child: Image.network(
-                    'http://localhost:3000/api/v1/proxy/image?url=${Uri.encodeComponent(token.imageUrl!)}',
+                    'http://coindcx-staging-815408101.us-east-1.elb.amazonaws.com/api/v1/proxy/image?url=${Uri.encodeComponent(token.imageUrl!)}',
                     width: 28, height: 28, fit: BoxFit.cover,
                     errorBuilder: (_, __, ___) => const SizedBox.shrink(),
                   ),
