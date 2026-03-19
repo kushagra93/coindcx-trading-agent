@@ -39,8 +39,8 @@ class _TokenDetailScreenState extends ConsumerState<TokenDetailScreen> {
         final body = jsonDecode(response.body) as Map<String, dynamic>;
         final txUrl = body['txUrl'] as String?;
         final msg = txUrl != null
-            ? 'Bought \$${amountUsd.toStringAsFixed(0)} of ${token.symbol.toUpperCase()} — $txUrl'
-            : 'Bought \$${amountUsd.toStringAsFixed(0)} of ${token.symbol.toUpperCase()}';
+            ? 'Bought \$${amountUsd.toStringAsFixed(2)} of ${token.symbol.toUpperCase()} — $txUrl'
+            : 'Bought \$${amountUsd.toStringAsFixed(2)} of ${token.symbol.toUpperCase()}';
         setState(() => _buyResult = msg);
         ref.invalidate(portfolioProvider);
       } else {
@@ -605,32 +605,173 @@ class _TokenDetailScreenState extends ConsumerState<TokenDetailScreen> {
     final gradeColor = result.isSafe ? colors.positiveBackgroundPrimary
         : result.isDangerous ? colors.negativeBackgroundPrimary
         : colors.alertBackgroundPrimary;
+    final m = result.metrics;
+    final allFlags = [...result.flags, ...result.warnings];
+
+    Widget statCell(String label, String value, Color valueColor) {
+      return Expanded(
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(label, style: CoinDCXTypography.caption.copyWith(
+              color: colors.generalForegroundTertiary, fontSize: 8, letterSpacing: 0.3)),
+            const SizedBox(height: 1),
+            Text(value, style: CoinDCXTypography.numberSm.copyWith(
+              color: valueColor, fontSize: 11, fontWeight: FontWeight.w700)),
+          ],
+        ),
+      );
+    }
 
     return Container(
       padding: const EdgeInsets.all(CoinDCXSpacing.md),
       decoration: BoxDecoration(
         color: colors.generalBackgroundBgL2,
         borderRadius: BorderRadius.circular(CoinDCXSpacing.radiusMd),
-        border: Border.all(color: colors.generalStrokeL1),
+        border: Border.all(color: gradeColor.withValues(alpha: 0.3)),
       ),
-      child: Row(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Container(
-            width: 40, height: 40,
-            decoration: BoxDecoration(color: gradeColor.withValues(alpha: 0.15), borderRadius: BorderRadius.circular(8)),
-            child: Center(child: Text(result.verdict, style: CoinDCXTypography.heading3.copyWith(color: gradeColor))),
+          // Header: grade badge + score
+          Row(
+            children: [
+              Container(
+                width: 40, height: 40,
+                decoration: BoxDecoration(color: gradeColor.withValues(alpha: 0.15), borderRadius: BorderRadius.circular(8)),
+                child: Center(child: Text(result.verdict, style: CoinDCXTypography.heading3.copyWith(color: gradeColor))),
+              ),
+              const SizedBox(width: CoinDCXSpacing.sm),
+              Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text('Safety Grade', style: CoinDCXTypography.buttonSm.copyWith(color: colors.generalForegroundPrimary)),
+                  Text('Score: ${result.score}/100',
+                    style: CoinDCXTypography.bodySmall.copyWith(color: colors.generalForegroundSecondary, fontSize: 11)),
+                ],
+              ),
+              const Spacer(),
+              if (result.rugProbability != null)
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                  decoration: BoxDecoration(
+                    color: (result.rugProbability! > 60
+                      ? colors.negativeBackgroundPrimary
+                      : result.rugProbability! > 30
+                        ? colors.alertBackgroundPrimary
+                        : colors.positiveBackgroundPrimary).withValues(alpha: 0.15),
+                    borderRadius: BorderRadius.circular(6),
+                  ),
+                  child: Text('Rug ${(result.rugProbability! * 100).toStringAsFixed(0)}%',
+                    style: CoinDCXTypography.caption.copyWith(
+                      color: result.rugProbability! > 60
+                        ? colors.negativeBackgroundPrimary
+                        : result.rugProbability! > 30
+                          ? colors.alertBackgroundPrimary
+                          : colors.positiveBackgroundPrimary,
+                      fontSize: 10, fontWeight: FontWeight.w700)),
+                ),
+            ],
           ),
-          const SizedBox(width: CoinDCXSpacing.md),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text('Safety Grade', style: CoinDCXTypography.buttonSm.copyWith(color: colors.generalForegroundPrimary)),
-                Text('Score: ${result.score}/100',
-                  style: CoinDCXTypography.bodySmall.copyWith(color: colors.generalForegroundSecondary)),
-              ],
+
+          // Stats grid from metrics
+          if (m.top10HolderPct != null || m.holders != null || m.rugScore != null || m.lpLockPct != null
+              || m.noMint != null || m.noFreeze != null || m.liquidity != null || m.marketCap != null) ...[
+            const SizedBox(height: CoinDCXSpacing.sm),
+            Container(
+              padding: const EdgeInsets.all(10),
+              decoration: BoxDecoration(
+                color: colors.generalBackgroundBgL1,
+                borderRadius: BorderRadius.circular(8),
+              ),
+              child: Column(
+                children: [
+                  Row(
+                    children: [
+                      if (m.top10HolderPct != null)
+                        statCell('Top 10',
+                          '${m.top10HolderPct!.toStringAsFixed(1)}%',
+                          m.top10HolderPct! > 50
+                            ? colors.negativeBackgroundPrimary
+                            : m.top10HolderPct! > 30
+                              ? colors.alertBackgroundPrimary
+                              : colors.positiveBackgroundPrimary),
+                      if (m.holders != null)
+                        statCell('Holders',
+                          _fmtCompact(m.holders!.toDouble()),
+                          colors.generalForegroundPrimary),
+                      if (m.rugScore != null)
+                        statCell('Safety',
+                          '${m.rugScore!.toStringAsFixed(0)}/100',
+                          m.rugScore! >= 60
+                            ? colors.positiveBackgroundPrimary
+                            : m.rugScore! >= 30
+                              ? colors.alertBackgroundPrimary
+                              : colors.negativeBackgroundPrimary),
+                      if (m.lpLockPct != null || m.lpLocked != null)
+                        statCell('LP Lock',
+                          m.lpLockPct != null ? '${m.lpLockPct!.toStringAsFixed(0)}%' : (m.lpLocked! ? 'YES' : 'NO'),
+                          (m.lpLockPct ?? 0) >= 80 || (m.lpLocked == true)
+                            ? colors.positiveBackgroundPrimary
+                            : colors.negativeBackgroundPrimary),
+                    ],
+                  ),
+                  if (m.noMint != null || m.noFreeze != null || m.liquidity != null || m.marketCap != null) ...[
+                    const SizedBox(height: 8),
+                    Row(
+                      children: [
+                        if (m.noMint != null)
+                          statCell('NoMint',
+                            m.noMint! ? '✓ YES' : '✗ NO',
+                            m.noMint! ? colors.positiveBackgroundPrimary : colors.negativeBackgroundPrimary),
+                        if (m.noFreeze != null)
+                          statCell('NoFreeze',
+                            m.noFreeze! ? '✓ YES' : '✗ NO',
+                            m.noFreeze! ? colors.positiveBackgroundPrimary : colors.negativeBackgroundPrimary),
+                        if (m.liquidity != null)
+                          statCell('Liquidity',
+                            _fmtLargeNum(m.liquidity!),
+                            m.liquidity! >= 50000
+                              ? colors.positiveBackgroundPrimary
+                              : m.liquidity! >= 10000
+                                ? colors.alertBackgroundPrimary
+                                : colors.negativeBackgroundPrimary),
+                        if (m.marketCap != null)
+                          statCell('Market Cap',
+                            _fmtLargeNum(m.marketCap!),
+                            colors.generalForegroundPrimary),
+                      ],
+                    ),
+                  ],
+                ],
+              ),
             ),
-          ),
+          ],
+
+          // Flags and warnings
+          if (allFlags.isNotEmpty) ...[
+            const SizedBox(height: CoinDCXSpacing.sm),
+            ...allFlags.take(5).map((f) {
+              final isReason = result.flags.contains(f);
+              return Padding(
+                padding: const EdgeInsets.only(bottom: 3),
+                child: Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Icon(
+                      isReason ? Icons.warning_amber_rounded : Icons.info_outline_rounded,
+                      size: 13,
+                      color: isReason ? colors.negativeBackgroundPrimary : colors.alertBackgroundPrimary,
+                    ),
+                    const SizedBox(width: 6),
+                    Expanded(child: Text(f,
+                      style: CoinDCXTypography.bodySmall.copyWith(
+                        color: colors.generalForegroundSecondary, fontSize: 11))),
+                  ],
+                ),
+              );
+            }),
+          ],
         ],
       ),
     );

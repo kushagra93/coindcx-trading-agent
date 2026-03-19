@@ -17,6 +17,15 @@ class TokenMetrics {
   final int? boosts;
   final int? txnsBuys24h;
   final int? txnsSells24h;
+  // Security / audit fields (present when backend enriches via RugCheck/GoPlus)
+  final double? rugScore;
+  final double? topHolderPct;
+  final double? top10HolderPct;
+  final int? holders;
+  final double? lpLockPct;
+  final bool? lpLocked;
+  final bool? noMint;
+  final bool? noFreeze;
 
   const TokenMetrics({
     required this.symbol,
@@ -37,6 +46,14 @@ class TokenMetrics {
     this.boosts,
     this.txnsBuys24h,
     this.txnsSells24h,
+    this.rugScore,
+    this.topHolderPct,
+    this.top10HolderPct,
+    this.holders,
+    this.lpLockPct,
+    this.lpLocked,
+    this.noMint,
+    this.noFreeze,
   });
 
   factory TokenMetrics.fromJson(Map<String, dynamic> json) {
@@ -62,6 +79,14 @@ class TokenMetrics {
       boosts: (json['boosts'] as num?)?.toInt(),
       txnsBuys24h: (json['txnsBuys24h'] as num?)?.toInt(),
       txnsSells24h: (json['txnsSells24h'] as num?)?.toInt(),
+      rugScore: (json['rugScore'] as num?)?.toDouble(),
+      topHolderPct: (json['topHolderPct'] as num?)?.toDouble(),
+      top10HolderPct: (json['top10HolderPct'] as num?)?.toDouble(),
+      holders: (json['holders'] as num?)?.toInt(),
+      lpLockPct: (json['lpLockPct'] as num?)?.toDouble(),
+      lpLocked: json['lpLocked'] as bool?,
+      noMint: json['noMint'] as bool?,
+      noFreeze: json['noFreeze'] as bool?,
     );
   }
 }
@@ -132,16 +157,20 @@ class ScreeningResult {
   final String verdict;
   final int score;
   final List<String> flags;
+  final List<String> warnings;
   final Map<String, dynamic>? security;
   final TokenAudit? audit;
+  final double? rugProbability;
 
   const ScreeningResult({
     required this.metrics,
     required this.verdict,
     required this.score,
     required this.flags,
+    this.warnings = const [],
     this.security,
     this.audit,
+    this.rugProbability,
   });
 
   factory ScreeningResult.fromJson(Map<String, dynamic> json) {
@@ -158,16 +187,19 @@ class ScreeningResult {
     final reasons = (json['flags'] as List<dynamic>?)?.cast<String>()
         ?? (json['reasons'] as List<dynamic>?)?.cast<String>()
         ?? [];
+    final warnings = (json['warnings'] as List<dynamic>?)?.cast<String>() ?? [];
 
     return ScreeningResult(
       metrics: TokenMetrics.fromJson(tokenData),
       verdict: grade,
       score: confidence,
       flags: reasons,
+      warnings: warnings,
       security: json['security'] as Map<String, dynamic>?,
       audit: json['audit'] != null
           ? TokenAudit.fromJson(json['audit'] as Map<String, dynamic>)
           : null,
+      rugProbability: (json['rugProbability'] as num?)?.toDouble(),
     );
   }
 

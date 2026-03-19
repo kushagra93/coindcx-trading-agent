@@ -827,6 +827,95 @@ export async function fetchBirdeyeOverview(mintAddress: string): Promise<{
   }
 }
 
+// ─── Solana RPC — free holder distribution (no API key needed) ────────
+
+export async function fetchSolanaRPCHolders(mintAddress: string): Promise<{
+  holderCount: number | null;
+  topHolderPct: number;
+  top10HolderPct: number;
+  topHolders: Array<{ address: string; pct: number }>;
+} | null> {
+  const rpcUrl = process.env.SOLANA_RPC_URL ?? 'https://api.mainnet-beta.solana.com';
+  try {
+    const [largestRes, supplyRes] = await Promise.all([
+      fetch(rpcUrl, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'getTokenLargestAccounts', params: [mintAddress] }),
+      }),
+      fetch(rpcUrl, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ jsonrpc: '2.0', id: 2, method: 'getTokenSupply', params: [mintAddress] }),
+      }),
+    ]);
+
+    if (!largestRes.ok || !supplyRes.ok) return null;
+
+    const [largestData, supplyData] = await Promise.all([
+      largestRes.json() as Promise<{ result?: { value?: Array<{ address: string; uiAmount: number; amount: string }> } }>,
+      supplyRes.json() as Promise<{ result?: { value?: { uiAmount: number; amount: string } } }>,
+    ]);
+
+    const accounts = largestData.result?.value ?? [];
+    const totalSupply = parseFloat(supplyData.result?.value?.amount ?? '0');
+    if (totalSupply === 0 || accounts.length === 0) return null;
+
+    const topHolders = accounts.slice(0, 20).map(a => ({
+      address: a.address,
+      pct: Math.round((parseFloat(a.amount) / totalSupply) * 10000) / 100,
+    }));
+    const top10Pct = topHolders.slice(0, 10).reduce((s, h) => s + h.pct, 0);
+
+    return {
+      holderCount: null, // RPC doesn't give total count, only top 20
+      topHolderPct: topHolders[0]?.pct ?? 0,
+      top10HolderPct: Math.round(top10Pct * 100) / 100,
+      topHolders,
+    };
+  } catch (e) {
+    log.warn({ err: e, mintAddress }, 'Solana RPC holder fetch failed');
+    return null;
+  }
+}
+
+// ─── pump.fun public API — holder counts for pump tokens ──────────────
+
+export async function fetchPumpFunData(mintAddress: string): Promise<{
+  holderCount: number;
+  marketCap: number;
+  bondingCurve: number; // % complete before graduation
+  graduated: boolean;
+} | null> {
+  // Only attempt for pump.fun tokens (ending in 'pump')
+  if (!mintAddress.toLowerCase().endsWith('pump')) return null;
+  try {
+    const res = await fetch(`https://frontend-api.pump.fun/coins/${mintAddress}`, {
+      headers: { 'User-Agent': 'Mozilla/5.0', 'Accept': 'application/json' },
+      signal: AbortSignal.timeout(5000),
+    });
+    if (!res.ok) return null;
+    const d = await res.json() as {
+      holder_count?: number;
+      usd_market_cap?: number;
+      market_cap?: number;
+      king_of_the_hill_timestamp?: number;
+      complete?: boolean;
+      bonding_curve_percentage?: number;
+    };
+
+    return {
+      holderCount: d.holder_count ?? 0,
+      marketCap: d.usd_market_cap ?? d.market_cap ?? 0,
+      bondingCurve: d.bonding_curve_percentage ?? 0,
+      graduated: d.complete ?? !!d.king_of_the_hill_timestamp,
+    };
+  } catch (e) {
+    log.warn({ err: e, mintAddress }, 'pump.fun API fetch failed');
+    return null;
+  }
+}
+
 // ─── Helius (Solana token holders via DAS) ────────────────────────────
 
 export async function fetchHeliusHolders(mintAddress: string): Promise<{
@@ -886,11 +975,13 @@ async function enrichWithSecurity(metrics: TokenMetrics, contractAddress: string
 
   if (metrics.chain === 'solana') {
     // Fire all Solana data sources in parallel
-    const [rugData, birdeyeHolders, birdeyeOverview, heliusHolders] = await Promise.all([
+    const [rugData, birdeyeHolders, birdeyeOverview, heliusHolders, rpcHolders, pumpFunData] = await Promise.all([
       fetchRugCheck(contractAddress),
       fetchBirdeyeHolders(contractAddress),
       fetchBirdeyeOverview(contractAddress),
       fetchHeliusHolders(contractAddress),
+      fetchSolanaRPCHolders(contractAddress),
+      fetchPumpFunData(contractAddress),
     ]);
 
     if (rugData) {
@@ -925,6 +1016,41 @@ async function enrichWithSecurity(metrics: TokenMetrics, contractAddress: string
     if (heliusHolders) {
       if (heliusHolders.holderCount > enriched.holders) enriched.holders = heliusHolders.holderCount;
       enriched.topHolders = heliusHolders.topHolders;
+    }
+
+    // Solana RPC: free holder distribution (top 20 via getTokenLargestAccounts)
+    // Use for top holder % when other sources are missing data
+    if (rpcHolders) {
+      if (!enriched.topHolders || enriched.topHolders.length === 0) {
+        enriched.topHolders = rpcHolders.topHolders;
+      }
+      if ((enriched.topHolderPct ?? 0) === 0 && rpcHolders.topHolderPct > 0) {
+        enriched.topHolderPct = rpcHolders.topHolderPct;
+      }
+      if ((enriched.top10HolderPct ?? 0) === 0 && rpcHolders.top10HolderPct > 0) {
+        enriched.top10HolderPct = rpcHolders.top10HolderPct;
+      }
+      // Propagate into audit if it exists but is missing top10 data
+      if (enriched._audit && enriched._audit.top10HolderPct === 0 && rpcHolders.top10HolderPct > 0) {
+        enriched._audit = { ...enriched._audit, top10HolderPct: rpcHolders.top10HolderPct };
+      }
+    }
+
+    // pump.fun API: holder count + market cap for pump tokens
+    if (pumpFunData) {
+      if (pumpFunData.holderCount > (enriched.holders ?? 0)) {
+        enriched.holders = pumpFunData.holderCount;
+        // Also update audit if it exists
+        if (enriched._audit) {
+          enriched._audit = { ...enriched._audit, totalHolders: pumpFunData.holderCount };
+        }
+      }
+      if (pumpFunData.marketCap > 0 && enriched.marketCap === 0) {
+        enriched.marketCap = pumpFunData.marketCap;
+      }
+      // Store graduation status
+      enriched.pumpGraduated = pumpFunData.graduated;
+      enriched.pumpBondingCurve = pumpFunData.bondingCurve;
     }
 
     // Final reconciliation: audit totalHolders is often the most accurate
@@ -1014,9 +1140,12 @@ export function screenToken(metrics: TokenMetrics): ScreeningResult {
   else if (metrics.volume24h >= 10_000) score += 5;
   else { warnings.push(`Low volume: $${metrics.volume24h.toLocaleString()}`); }
 
-  // ── Holder concentration (non-audit path) ──
+  // ── Holder concentration (non-audit path, also uses RPC top10 fallback) ──
+  const top10Pct = (metrics as any).top10HolderPct as number | undefined;
   if (!audit) {
-    if (metrics.topHolderPct > 20) { reasons.push(`Top holder owns ${metrics.topHolderPct.toFixed(1)}%`); score -= 10; }
+    if (top10Pct && top10Pct > 50) { reasons.push(`Top 10 holders own ${top10Pct.toFixed(1)}%`); score -= 15; }
+    else if (top10Pct && top10Pct > 30) { warnings.push(`Top 10 holders own ${top10Pct.toFixed(1)}%`); score -= 5; }
+    else if (metrics.topHolderPct > 20) { reasons.push(`Top holder owns ${metrics.topHolderPct.toFixed(1)}%`); score -= 10; }
     else if (metrics.topHolderPct > 10) { warnings.push(`Top holder owns ${metrics.topHolderPct.toFixed(1)}%`); }
   }
 
@@ -1039,6 +1168,22 @@ export function screenToken(metrics: TokenMetrics): ScreeningResult {
     value: hasSecurityData ? `Safety ${metrics.rugScore}/100` : 'No data',
     verdict: !hasSecurityData ? 'warn' : metrics.rugScore >= 60 ? 'safe' : metrics.rugScore >= 30 ? 'warn' : 'danger',
   });
+  if ((metrics as any).pumpGraduated !== undefined) {
+    const grad = (metrics as any).pumpGraduated as boolean;
+    const curve = (metrics as any).pumpBondingCurve as number;
+    dataSources.push({
+      name: 'pump.fun',
+      value: grad ? 'Graduated → PumpSwap' : `Bonding curve ${curve.toFixed(0)}%`,
+      verdict: grad ? 'safe' : curve > 80 ? 'warn' : 'safe',
+    });
+  }
+  if ((metrics as any).topHolders) {
+    dataSources.push({
+      name: 'Solana RPC',
+      value: top10Pct ? `Top 10: ${top10Pct.toFixed(1)}%` : 'Holder data',
+      verdict: !top10Pct ? 'warn' : top10Pct > 50 ? 'danger' : top10Pct > 30 ? 'warn' : 'safe',
+    });
+  }
 
   score = Math.max(0, Math.min(100, score));
 

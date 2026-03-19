@@ -493,11 +493,44 @@ class _ChatScreenState extends ConsumerState<ChatScreen> with TickerProviderStat
     final symbol = token['symbol'] as String? ?? '';
     final imageUrl = token['imageUrl'] as String?;
 
+    // Audit fields
+    final audit = data['audit'] as Map<String, dynamic>?;
+    final top10Pct = (audit?['top10HolderPct'] as num?)?.toDouble()
+        ?? (token['top10HolderPct'] as num?)?.toDouble();
+    final insiders = (audit?['insidersDetected'] as num?)?.toInt()
+        ?? (token['insidersDetected'] as num?)?.toInt();
+    final noMint = audit?['noMint'] as bool? ?? token['noMint'] as bool?;
+    final noFreeze = audit?['noFreeze'] as bool? ?? token['noFreeze'] as bool?;
+    final burnt = (audit?['burnt'] as num?)?.toInt();
+    final lpLockedPct = (audit?['lpLockedPct'] as num?)?.toDouble()
+        ?? (token['lpLockPct'] as num?)?.toDouble();
+    final rugProb = (data['rugProbability'] as num?)?.toDouble();
+    final holders = (token['holders'] as num?)?.toInt() ?? (audit?['totalHolders'] as num?)?.toInt();
+    final mcap = (token['marketCap'] as num?)?.toDouble();
+    final liquidity = (token['liquidity'] as num?)?.toDouble();
+
     final gradeColor = grade == 'A' || grade == 'B'
         ? colors.positiveBackgroundPrimary
         : grade == 'C'
             ? colors.alertBackgroundPrimary
             : colors.negativeBackgroundPrimary;
+
+    // Helper for GMGN-style stat cell
+    Widget auditCell(String label, String value, {Color? valueColor, bool? isBool}) {
+      final col = valueColor ?? colors.generalForegroundPrimary;
+      return Expanded(
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(label, style: CoinDCXTypography.caption.copyWith(
+              color: colors.generalForegroundTertiary, fontSize: 8, letterSpacing: 0.3)),
+            const SizedBox(height: 1),
+            Text(value, style: CoinDCXTypography.numberSm.copyWith(
+              color: col, fontSize: 11, fontWeight: FontWeight.w700)),
+          ],
+        ),
+      );
+    }
 
     return Container(
       width: double.infinity,
@@ -511,36 +544,43 @@ class _ChatScreenState extends ConsumerState<ChatScreen> with TickerProviderStat
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
+          // Header row: icon + grade + passed/failed + score
           Row(
             children: [
               _buildMiniIcon(symbol, imageUrl, colors),
               const SizedBox(width: CoinDCXSpacing.xs),
+              Text(symbol, style: CoinDCXTypography.buttonSm.copyWith(
+                color: colors.generalForegroundPrimary, fontWeight: FontWeight.w700)),
+              const SizedBox(width: CoinDCXSpacing.xs),
               Container(
-                padding: const EdgeInsets.symmetric(horizontal: CoinDCXSpacing.sm, vertical: CoinDCXSpacing.xxxs),
+                padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
                 decoration: BoxDecoration(
                   color: gradeColor.withValues(alpha: 0.15),
                   borderRadius: BorderRadius.circular(CoinDCXSpacing.radiusFull),
                 ),
-                child: Text('Grade $grade', style: CoinDCXTypography.buttonSm.copyWith(color: gradeColor)),
+                child: Text('Grade $grade', style: CoinDCXTypography.buttonSm.copyWith(color: gradeColor, fontSize: 11)),
               ),
-              const SizedBox(width: CoinDCXSpacing.xs),
+              const SizedBox(width: 4),
               Container(
-                padding: const EdgeInsets.symmetric(horizontal: CoinDCXSpacing.xs, vertical: CoinDCXSpacing.xxxs),
+                padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
                 decoration: BoxDecoration(
                   color: passed ? colors.positiveBackgroundSecondary : colors.negativeBackgroundSecondary,
                   borderRadius: BorderRadius.circular(CoinDCXSpacing.radiusFull),
                 ),
-                child: Text(passed ? 'PASSED' : 'FAILED',
+                child: Text(passed ? 'SAFE' : 'RISKY',
                   style: CoinDCXTypography.caption.copyWith(
                     color: passed ? colors.positiveBackgroundPrimary : colors.negativeBackgroundPrimary,
-                    fontWeight: FontWeight.w700)),
+                    fontWeight: FontWeight.w700, fontSize: 10)),
               ),
               const Spacer(),
-              Text('$score/100', style: CoinDCXTypography.numberSm.copyWith(color: colors.generalForegroundSecondary)),
+              Text('$score/100', style: CoinDCXTypography.numberSm.copyWith(
+                color: colors.generalForegroundSecondary, fontSize: 11)),
             ],
           ),
+
+          // CA copy row
           if (token['address'] != null && (token['address'] as String).isNotEmpty) ...[
-            const SizedBox(height: CoinDCXSpacing.xxs),
+            const SizedBox(height: 4),
             GestureDetector(
               onTap: () {
                 Clipboard.setData(ClipboardData(text: token['address'] as String));
@@ -559,9 +599,111 @@ class _ChatScreenState extends ConsumerState<ChatScreen> with TickerProviderStat
               ),
             ),
           ],
+
+          // GMGN-style audit grid
+          if (top10Pct != null || insiders != null || noMint != null || burnt != null || rugProb != null || holders != null) ...[
+            const SizedBox(height: CoinDCXSpacing.xs),
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.all(8),
+              decoration: BoxDecoration(
+                color: colors.generalBackgroundBgL1,
+                borderRadius: BorderRadius.circular(6),
+              ),
+              child: Column(
+                children: [
+                  // Row 1: Top 10, Holders, Insiders, Rug %
+                  Row(
+                    children: [
+                      if (top10Pct != null)
+                        auditCell('Top 10',
+                          '${top10Pct.toStringAsFixed(1)}%',
+                          valueColor: top10Pct > 30
+                            ? colors.negativeBackgroundPrimary
+                            : top10Pct > 20
+                              ? colors.alertBackgroundPrimary
+                              : colors.positiveBackgroundPrimary),
+                      if (holders != null)
+                        auditCell('Holders', _formatLargeNum(holders.toDouble()).replaceAll('\$', ''),
+                          valueColor: colors.generalForegroundPrimary),
+                      if (insiders != null)
+                        auditCell('Insiders',
+                          insiders == 0 ? '0%' : '$insiders',
+                          valueColor: insiders == 0
+                            ? colors.positiveBackgroundPrimary
+                            : colors.negativeBackgroundPrimary),
+                      if (rugProb != null)
+                        auditCell('Rug %',
+                          '${(rugProb * 100).toStringAsFixed(0)}%',
+                          valueColor: rugProb < 0.3
+                            ? colors.positiveBackgroundPrimary
+                            : rugProb < 0.6
+                              ? colors.alertBackgroundPrimary
+                              : colors.negativeBackgroundPrimary),
+                    ],
+                  ),
+                  if (noMint != null || noFreeze != null || burnt != null || lpLockedPct != null || mcap != null || liquidity != null) ...[
+                    const SizedBox(height: 8),
+                    // Row 2: NoMint, NoFreeze/Blacklist, Burnt, LP Locked
+                    Row(
+                      children: [
+                        if (noMint != null)
+                          auditCell('NoMint',
+                            noMint! ? '✓ YES' : '✗ NO',
+                            valueColor: noMint!
+                              ? colors.positiveBackgroundPrimary
+                              : colors.negativeBackgroundPrimary),
+                        if (noFreeze != null)
+                          auditCell('NoFreeze',
+                            noFreeze! ? '✓ YES' : '✗ NO',
+                            valueColor: noFreeze!
+                              ? colors.positiveBackgroundPrimary
+                              : colors.negativeBackgroundPrimary),
+                        if (burnt != null)
+                          auditCell('Burnt',
+                            '🔥 $burnt%',
+                            valueColor: burnt! >= 80
+                              ? colors.positiveBackgroundPrimary
+                              : colors.alertBackgroundPrimary),
+                        if (lpLockedPct != null)
+                          auditCell('LP Lock',
+                            '${lpLockedPct.toStringAsFixed(0)}%',
+                            valueColor: lpLockedPct >= 80
+                              ? colors.positiveBackgroundPrimary
+                              : lpLockedPct > 0
+                                ? colors.alertBackgroundPrimary
+                                : colors.negativeBackgroundPrimary),
+                      ],
+                    ),
+                  ],
+                  if (mcap != null || liquidity != null) ...[
+                    const SizedBox(height: 8),
+                    Row(
+                      children: [
+                        if (mcap != null)
+                          auditCell('Market Cap', _formatLargeNum(mcap),
+                            valueColor: colors.generalForegroundPrimary),
+                        if (liquidity != null)
+                          auditCell('Liquidity', _formatLargeNum(liquidity),
+                            valueColor: liquidity >= 50000
+                              ? colors.positiveBackgroundPrimary
+                              : liquidity >= 10000
+                                ? colors.alertBackgroundPrimary
+                                : colors.negativeBackgroundPrimary),
+                        const Expanded(child: SizedBox()),
+                        const Expanded(child: SizedBox()),
+                      ],
+                    ),
+                  ],
+                ],
+              ),
+            ),
+          ],
+
+          // Flags / warnings
           if (allFlags.isNotEmpty) ...[
             const SizedBox(height: CoinDCXSpacing.xs),
-            ...allFlags.take(4).map((r) {
+            ...allFlags.take(5).map((r) {
               final isReason = reasons.contains(r);
               return Padding(
                 padding: const EdgeInsets.only(bottom: 2),
@@ -572,7 +714,8 @@ class _ChatScreenState extends ConsumerState<ChatScreen> with TickerProviderStat
                       size: 12, color: isReason ? colors.negativeBackgroundPrimary : colors.alertBackgroundPrimary),
                     const SizedBox(width: CoinDCXSpacing.xxs),
                     Expanded(child: Text(r,
-                      style: CoinDCXTypography.caption.copyWith(color: colors.generalForegroundSecondary, fontSize: 10))),
+                      style: CoinDCXTypography.caption.copyWith(
+                        color: colors.generalForegroundSecondary, fontSize: 10))),
                   ],
                 ),
               );
