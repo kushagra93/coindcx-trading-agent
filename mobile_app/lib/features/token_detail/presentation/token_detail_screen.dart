@@ -180,57 +180,167 @@ class _TokenDetailScreenState extends ConsumerState<TokenDetailScreen> {
     );
   }
 
-  // GMGN-style top audit grid: Top 10, DEV, Holders, Snipers row
+  // GMGN-style full audit panel
   Widget _buildAuditGrid(TokenAudit audit, CoinDCXColorScheme colors) {
-    return Container(
-      padding: const EdgeInsets.all(CoinDCXSpacing.md),
-      decoration: BoxDecoration(
-        color: colors.generalBackgroundBgL2,
-        borderRadius: BorderRadius.circular(CoinDCXSpacing.radiusMd),
-        border: Border.all(color: colors.generalStrokeL1),
-      ),
-      child: Column(
-        children: [
-          // Row 1: Top 10, DEV, Holders
-          Row(
+    // Prefer enriched token data over audit for fields like holders, dev%, topHoldersList
+    final top10 = audit.top10HolderPct > 0
+        ? audit.top10HolderPct
+        : (token.top10HolderPct ?? 0);
+    final holderCount = audit.totalHolders > 0
+        ? audit.totalHolders
+        : (token.holders ?? 0);
+    final devPct = token.devPct;
+    final topList = token.topHoldersList ?? [];
+
+    return Column(
+      children: [
+        // ── Row 1: Top 10, DEV, Holders, Insiders ──────────────────────
+        Container(
+          padding: const EdgeInsets.all(CoinDCXSpacing.md),
+          decoration: BoxDecoration(
+            color: colors.generalBackgroundBgL2,
+            borderRadius: BorderRadius.circular(CoinDCXSpacing.radiusMd),
+            border: Border.all(color: colors.generalStrokeL1),
+          ),
+          child: Column(
             children: [
-              _auditStat(
-                'Top 10',
-                '${audit.top10HolderPct.toStringAsFixed(1)}%',
-                audit.top10HolderPct > 50 ? colors.negativeBackgroundPrimary : colors.positiveBackgroundPrimary,
-                audit.top10HolderPct > 50 ? Icons.cancel_rounded : Icons.check_circle_rounded,
-                colors,
+              Row(
+                children: [
+                  _auditStat('Top 10',
+                    top10 > 0 ? '${top10.toStringAsFixed(1)}%' : '—',
+                    top10 > 50 ? colors.negativeBackgroundPrimary
+                      : top10 > 30 ? colors.alertBackgroundPrimary
+                      : colors.positiveBackgroundPrimary,
+                    top10 > 50 ? Icons.cancel_rounded : Icons.check_circle_rounded,
+                    colors),
+                  _auditStat('DEV',
+                    devPct != null ? '${devPct.toStringAsFixed(1)}%' : '0%',
+                    (devPct ?? 0) > 5 ? colors.alertBackgroundPrimary : colors.positiveBackgroundPrimary,
+                    null, colors),
+                  _auditStat('Holders',
+                    holderCount > 0 ? _fmtCompact(holderCount.toDouble()) : '—',
+                    colors.generalForegroundPrimary, null, colors),
+                  _auditStat('Insiders',
+                    audit.insidersDetected > 0 ? '${audit.insidersDetected}' : '0',
+                    audit.insidersDetected > 0 ? colors.negativeBackgroundPrimary : colors.positiveBackgroundPrimary,
+                    null, colors),
+                ],
               ),
-              _auditStat(
-                'Holders',
-                _fmtCompact(audit.totalHolders.toDouble()),
-                colors.generalForegroundPrimary,
-                null,
-                colors,
-              ),
-              _auditStat(
-                'Insiders',
-                '${audit.insidersDetected}',
-                audit.insidersDetected > 0 ? colors.negativeBackgroundPrimary : colors.positiveBackgroundPrimary,
-                null,
-                colors,
+              const SizedBox(height: CoinDCXSpacing.sm),
+              Divider(height: 1, color: colors.generalStrokeL1),
+              const SizedBox(height: CoinDCXSpacing.sm),
+              // ── Row 2: NoMint, No Blacklist, Burnt, LP Lock ─────────
+              Row(
+                children: [
+                  _auditCheck('NoMint', audit.noMint, colors),
+                  _auditCheck('No Blacklist', audit.noFreeze, colors),
+                  _auditCheck('Burnt', audit.burnt > 90, colors,
+                    subtitle: audit.burnt > 0 ? '${audit.burnt}%' : null),
+                  _auditCheck('LP Lock', audit.lpLockedPct > 0, colors,
+                    subtitle: audit.lpLockedPct > 0 ? '${audit.lpLockedPct.toStringAsFixed(0)}%' : null),
+                ],
               ),
             ],
           ),
+        ),
+
+        // ── Top Holders Table ───────────────────────────────────────────
+        if (topList.isNotEmpty) ...[
           const SizedBox(height: CoinDCXSpacing.sm),
-          Divider(height: 1, color: colors.generalStrokeL1),
-          const SizedBox(height: CoinDCXSpacing.sm),
-          // Row 2: NoMint, NoFreeze, Burnt, LP Locked
-          Row(
-            children: [
-              _auditCheck('NoMint', audit.noMint, colors),
-              _auditCheck('No Freeze', audit.noFreeze, colors),
-              _auditCheck('Burnt', audit.burnt > 90, colors, subtitle: '${audit.burnt}%'),
-              _auditCheck('LP Lock', audit.lpLockedPct > 0, colors, subtitle: '${audit.lpLockedPct.toStringAsFixed(0)}%'),
-            ],
+          Container(
+            padding: const EdgeInsets.all(CoinDCXSpacing.sm),
+            decoration: BoxDecoration(
+              color: colors.generalBackgroundBgL2,
+              borderRadius: BorderRadius.circular(CoinDCXSpacing.radiusMd),
+              border: Border.all(color: colors.generalStrokeL1),
+            ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  children: [
+                    Text('Top Holders', style: CoinDCXTypography.buttonSm.copyWith(
+                      color: colors.generalForegroundPrimary, fontSize: 12)),
+                    const Spacer(),
+                    Text('${topList.length} shown', style: CoinDCXTypography.caption.copyWith(
+                      color: colors.generalForegroundTertiary, fontSize: 9)),
+                  ],
+                ),
+                const SizedBox(height: 6),
+                ...topList.take(10).toList().asMap().entries.map((e) {
+                  final i = e.key;
+                  final h = e.value;
+                  final addr = h['address'] as String? ?? '';
+                  final pct = (h['pct'] as num?)?.toDouble() ?? 0;
+                  final label = h['isKnown'] as String?;
+                  final isDev = addr == token.devAddress;
+                  final barColor = isDev
+                    ? colors.alertBackgroundPrimary
+                    : pct > 10
+                      ? colors.negativeBackgroundPrimary
+                      : colors.actionBackgroundPrimary;
+
+                  return Padding(
+                    padding: const EdgeInsets.symmetric(vertical: 2),
+                    child: Row(
+                      children: [
+                        SizedBox(width: 18, child: Text('${i + 1}',
+                          style: CoinDCXTypography.caption.copyWith(
+                            color: colors.generalForegroundTertiary, fontSize: 9))),
+                        Expanded(
+                          child: GestureDetector(
+                            onTap: () {
+                              Clipboard.setData(ClipboardData(text: addr));
+                              ScaffoldMessenger.of(context).showSnackBar(
+                                SnackBar(content: Text('Address copied'), duration: const Duration(seconds: 1),
+                                  behavior: SnackBarBehavior.floating));
+                            },
+                            child: Text(
+                              label ?? (isDev ? '${addr.substring(0, 8)}... (DEV)' : '${addr.substring(0, 8)}...${addr.substring(addr.length - 4)}'),
+                              style: CoinDCXTypography.caption.copyWith(
+                                color: isDev ? colors.alertBackgroundPrimary
+                                  : label != null ? colors.actionBackgroundPrimary
+                                  : colors.generalForegroundSecondary,
+                                fontSize: 9,
+                                fontWeight: (isDev || label != null) ? FontWeight.w700 : FontWeight.normal,
+                              ),
+                            ),
+                          ),
+                        ),
+                        const SizedBox(width: 6),
+                        SizedBox(
+                          width: 80,
+                          child: Stack(
+                            children: [
+                              Container(height: 10, decoration: BoxDecoration(
+                                color: colors.generalStrokeL1,
+                                borderRadius: BorderRadius.circular(5))),
+                              FractionallySizedBox(
+                                widthFactor: (pct / 100).clamp(0.0, 1.0),
+                                child: Container(height: 10, decoration: BoxDecoration(
+                                  color: barColor,
+                                  borderRadius: BorderRadius.circular(5))),
+                              ),
+                            ],
+                          ),
+                        ),
+                        const SizedBox(width: 6),
+                        SizedBox(
+                          width: 38,
+                          child: Text('${pct.toStringAsFixed(1)}%',
+                            textAlign: TextAlign.end,
+                            style: CoinDCXTypography.numberSm.copyWith(
+                              color: barColor, fontSize: 9, fontWeight: FontWeight.w700)),
+                        ),
+                      ],
+                    ),
+                  );
+                }),
+              ],
+            ),
           ),
         ],
-      ),
+      ],
     );
   }
 
@@ -248,7 +358,9 @@ class _TokenDetailScreenState extends ConsumerState<TokenDetailScreen> {
                 Icon(icon, size: 14, color: valueColor),
                 const SizedBox(width: 2),
               ],
-              Text(value, style: CoinDCXTypography.numberSm.copyWith(color: valueColor, fontSize: 13, fontWeight: FontWeight.w600)),
+              Flexible(child: Text(value, style: CoinDCXTypography.numberSm.copyWith(
+                color: valueColor, fontSize: 12, fontWeight: FontWeight.w700),
+                overflow: TextOverflow.ellipsis)),
             ],
           ),
         ],
@@ -268,7 +380,7 @@ class _TokenDetailScreenState extends ConsumerState<TokenDetailScreen> {
             children: [
               Icon(
                 passed ? Icons.check_circle_rounded : Icons.cancel_rounded,
-                size: 16,
+                size: 15,
                 color: passed ? colors.positiveBackgroundPrimary : colors.negativeBackgroundPrimary,
               ),
               if (subtitle != null) ...[

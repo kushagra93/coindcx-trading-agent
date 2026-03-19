@@ -827,34 +827,50 @@ export async function fetchBirdeyeOverview(mintAddress: string): Promise<{
   }
 }
 
-// ─── Solana RPC — free holder distribution (no API key needed) ────────
+// ─── Solana RPC — holder distribution via Helius RPC ─────────────────
+// Uses getTokenLargestAccounts (top 20) + getTokenSupply to calculate
+// holder percentages without any external API key requirement.
 
 export async function fetchSolanaRPCHolders(mintAddress: string): Promise<{
   holderCount: number | null;
   topHolderPct: number;
   top10HolderPct: number;
-  topHolders: Array<{ address: string; pct: number }>;
+  topHolders: Array<{ address: string; pct: number; isKnown?: string }>;
+  devPct?: number;
+  devAddress?: string;
 } | null> {
-  const rpcUrl = process.env.SOLANA_RPC_URL ?? 'https://api.mainnet-beta.solana.com';
+  // Prefer Helius RPC (faster + higher limits), fall back to public mainnet
+  const apiKey = process.env.HELIUS_API_KEY;
+  const rpcUrl = apiKey
+    ? `https://mainnet.helius-rpc.com/?api-key=${apiKey}`
+    : (process.env.SOLANA_RPC_URL ?? 'https://api.mainnet-beta.solana.com');
+
   try {
-    const [largestRes, supplyRes] = await Promise.all([
+    const rpcPost = (method: string, params: unknown[], id: number) =>
       fetch(rpcUrl, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'getTokenLargestAccounts', params: [mintAddress] }),
-      }),
-      fetch(rpcUrl, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ jsonrpc: '2.0', id: 2, method: 'getTokenSupply', params: [mintAddress] }),
-      }),
+        body: JSON.stringify({ jsonrpc: '2.0', id, method, params }),
+        signal: AbortSignal.timeout(8000),
+      });
+
+    const [largestRes, supplyRes, mintInfoRes] = await Promise.all([
+      rpcPost('getTokenLargestAccounts', [mintAddress], 1),
+      rpcPost('getTokenSupply', [mintAddress], 2),
+      // getAccountInfo on the mint itself to find mint/freeze authority (= DEV)
+      rpcPost('getAccountInfo', [mintAddress, { encoding: 'jsonParsed' }], 3),
     ]);
 
     if (!largestRes.ok || !supplyRes.ok) return null;
 
-    const [largestData, supplyData] = await Promise.all([
-      largestRes.json() as Promise<{ result?: { value?: Array<{ address: string; uiAmount: number; amount: string }> } }>,
-      supplyRes.json() as Promise<{ result?: { value?: { uiAmount: number; amount: string } } }>,
+    type LargestResult = { result?: { value?: Array<{ address: string; uiAmount: number; amount: string }> } };
+    type SupplyResult  = { result?: { value?: { uiAmount: number; amount: string } } };
+    type MintResult    = { result?: { value?: { data?: { parsed?: { info?: { mintAuthority?: string; freezeAuthority?: string } } } } } };
+
+    const [largestData, supplyData, mintData] = await Promise.all([
+      largestRes.json() as Promise<LargestResult>,
+      supplyRes.json() as Promise<SupplyResult>,
+      mintInfoRes.ok ? mintInfoRes.json() as Promise<MintResult> : Promise.resolve({}),
     ]);
 
     const accounts = largestData.result?.value ?? [];
@@ -867,11 +883,34 @@ export async function fetchSolanaRPCHolders(mintAddress: string): Promise<{
     }));
     const top10Pct = topHolders.slice(0, 10).reduce((s, h) => s + h.pct, 0);
 
+    // Identify dev wallet: check if mintAuthority/freezeAuthority appears in top holders
+    const mintInfo = (mintData as MintResult).result?.value?.data?.parsed?.info;
+    const devAddress = mintInfo?.mintAuthority ?? mintInfo?.freezeAuthority ?? undefined;
+    let devPct: number | undefined;
+    if (devAddress) {
+      // Sum all top-holder accounts owned by the dev address
+      const devMatch = topHolders.find(h => h.address === devAddress);
+      if (devMatch) devPct = devMatch.pct;
+    }
+
+    // Known wallet labels (expand as needed)
+    const KNOWN_LABELS: Record<string, string> = {
+      '5Q544fKrFoe6tsEbD7S8EmxGTJYAKtTVhAW5Q5pge4j1': 'Raydium',
+      'GThUX1Atko4tqhN2NaiTazWSeFWMuiUvfFnyJyUghFMJ': 'Pump AMM',
+      '6EF8rrecthR5Dkzon8Nwu78hRvfCKubJ14M5uBEwF6P': 'pump.fun',
+    };
+    const labeledHolders = topHolders.map(h => ({
+      ...h,
+      isKnown: KNOWN_LABELS[h.address],
+    }));
+
     return {
-      holderCount: null, // RPC doesn't give total count, only top 20
+      holderCount: null,
       topHolderPct: topHolders[0]?.pct ?? 0,
       top10HolderPct: Math.round(top10Pct * 100) / 100,
-      topHolders,
+      topHolders: labeledHolders,
+      devPct,
+      devAddress,
     };
   } catch (e) {
     log.warn({ err: e, mintAddress }, 'Solana RPC holder fetch failed');
@@ -879,39 +918,58 @@ export async function fetchSolanaRPCHolders(mintAddress: string): Promise<{
   }
 }
 
-// ─── pump.fun public API — holder counts for pump tokens ──────────────
+// ─── pump.fun public API — tries frontend API then DexScreener fallback ──
 
 export async function fetchPumpFunData(mintAddress: string): Promise<{
   holderCount: number;
   marketCap: number;
-  bondingCurve: number; // % complete before graduation
+  bondingCurve: number;
   graduated: boolean;
 } | null> {
-  // Only attempt for pump.fun tokens (ending in 'pump')
   if (!mintAddress.toLowerCase().endsWith('pump')) return null;
   try {
+    // Try the pump.fun frontend API - may be Cloudflare-blocked
     const res = await fetch(`https://frontend-api.pump.fun/coins/${mintAddress}`, {
-      headers: { 'User-Agent': 'Mozilla/5.0', 'Accept': 'application/json' },
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36',
+        'Accept': 'application/json',
+        'Origin': 'https://pump.fun',
+        'Referer': 'https://pump.fun/',
+      },
       signal: AbortSignal.timeout(5000),
     });
-    if (!res.ok) return null;
-    const d = await res.json() as {
-      holder_count?: number;
-      usd_market_cap?: number;
-      market_cap?: number;
-      king_of_the_hill_timestamp?: number;
-      complete?: boolean;
-      bonding_curve_percentage?: number;
-    };
+    if (res.ok) {
+      const d = await res.json() as {
+        holder_count?: number;
+        usd_market_cap?: number;
+        market_cap?: number;
+        king_of_the_hill_timestamp?: number;
+        complete?: boolean;
+        bonding_curve_percentage?: number;
+      };
+      return {
+        holderCount: d.holder_count ?? 0,
+        marketCap: d.usd_market_cap ?? d.market_cap ?? 0,
+        bondingCurve: d.bonding_curve_percentage ?? 0,
+        graduated: d.complete ?? !!d.king_of_the_hill_timestamp,
+      };
+    }
+  } catch { /* fall through to DexScreener */ }
 
-    return {
-      holderCount: d.holder_count ?? 0,
-      marketCap: d.usd_market_cap ?? d.market_cap ?? 0,
-      bondingCurve: d.bonding_curve_percentage ?? 0,
-      graduated: d.complete ?? !!d.king_of_the_hill_timestamp,
-    };
+  // Fallback: DexScreener pair data can tell us if graduated (pumpswap pairs exist)
+  try {
+    const res = await fetch(
+      `https://api.dexscreener.com/tokens/v1/solana/${mintAddress}`,
+      { signal: AbortSignal.timeout(5000) }
+    );
+    if (!res.ok) return null;
+    const pairs = await res.json() as Array<{ dexId?: string; marketCap?: number }>;
+    if (!Array.isArray(pairs) || pairs.length === 0) return null;
+    const graduated = pairs.some(p => p.dexId === 'pumpswap' || p.dexId === 'raydium');
+    const mcap = pairs[0]?.marketCap ?? 0;
+    return { holderCount: 0, marketCap: mcap, bondingCurve: graduated ? 100 : 0, graduated };
   } catch (e) {
-    log.warn({ err: e, mintAddress }, 'pump.fun API fetch failed');
+    log.warn({ err: e, mintAddress }, 'pump.fun + DexScreener fallback failed');
     return null;
   }
 }
@@ -1018,12 +1076,11 @@ async function enrichWithSecurity(metrics: TokenMetrics, contractAddress: string
       enriched.topHolders = heliusHolders.topHolders;
     }
 
-    // Solana RPC: free holder distribution (top 20 via getTokenLargestAccounts)
-    // Use for top holder % when other sources are missing data
+    // Solana RPC: holder distribution (top 20 via getTokenLargestAccounts via Helius RPC)
     if (rpcHolders) {
-      if (!enriched.topHolders || enriched.topHolders.length === 0) {
-        enriched.topHolders = rpcHolders.topHolders;
-      }
+      // Always use RPC top holders list — it's real on-chain data
+      enriched.topHolders = rpcHolders.topHolders;
+
       if ((enriched.topHolderPct ?? 0) === 0 && rpcHolders.topHolderPct > 0) {
         enriched.topHolderPct = rpcHolders.topHolderPct;
       }
@@ -1034,6 +1091,9 @@ async function enrichWithSecurity(metrics: TokenMetrics, contractAddress: string
       if (enriched._audit && enriched._audit.top10HolderPct === 0 && rpcHolders.top10HolderPct > 0) {
         enriched._audit = { ...enriched._audit, top10HolderPct: rpcHolders.top10HolderPct };
       }
+      // Store dev wallet info
+      if (rpcHolders.devPct !== undefined) enriched.devPct = rpcHolders.devPct;
+      if (rpcHolders.devAddress) enriched.devAddress = rpcHolders.devAddress;
     }
 
     // pump.fun API: holder count + market cap for pump tokens

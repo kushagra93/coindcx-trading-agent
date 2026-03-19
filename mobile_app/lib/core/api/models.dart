@@ -17,7 +17,7 @@ class TokenMetrics {
   final int? boosts;
   final int? txnsBuys24h;
   final int? txnsSells24h;
-  // Security / audit fields (present when backend enriches via RugCheck/GoPlus)
+  // Security / audit fields (present when backend enriches via RugCheck/GoPlus/RPC)
   final double? rugScore;
   final double? topHolderPct;
   final double? top10HolderPct;
@@ -26,6 +26,9 @@ class TokenMetrics {
   final bool? lpLocked;
   final bool? noMint;
   final bool? noFreeze;
+  final double? devPct;
+  final String? devAddress;
+  final List<Map<String, dynamic>>? topHoldersList;
 
   const TokenMetrics({
     required this.symbol,
@@ -54,6 +57,9 @@ class TokenMetrics {
     this.lpLocked,
     this.noMint,
     this.noFreeze,
+    this.devPct,
+    this.devAddress,
+    this.topHoldersList,
   });
 
   factory TokenMetrics.fromJson(Map<String, dynamic> json) {
@@ -87,6 +93,11 @@ class TokenMetrics {
       lpLocked: json['lpLocked'] as bool?,
       noMint: json['noMint'] as bool?,
       noFreeze: json['noFreeze'] as bool?,
+      devPct: (json['devPct'] as num?)?.toDouble(),
+      devAddress: json['devAddress'] as String?,
+      topHoldersList: (json['topHolders'] as List<dynamic>?)
+          ?.map((h) => h as Map<String, dynamic>)
+          .toList(),
     );
   }
 }
