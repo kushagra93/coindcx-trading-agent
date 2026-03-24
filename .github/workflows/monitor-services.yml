@@ -1,0 +1,52 @@
+name: Monitor Services
+
+on:
+  schedule:
+    - cron: '*/15 * * * *'
+  workflow_dispatch: {}
+
+jobs:
+  health-check:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check Vercel API trending endpoint
+        run: |
+          response=$(curl -s -w "\n%{http_code}\n%{time_total}" "https://vercel-api-zeta-eosin.vercel.app/api/trending")
+          body=$(echo "$response" | head -1)
+          http_code=$(echo "$response" | sed -n '2p')
+          latency=$(echo "$response" | tail -1)
+          token_count=$(echo "$body" | python3 -c "import sys,json; print(json.load(sys.stdin).get('total',0))" 2>/dev/null || echo "0")
+          echo "### Trending API" >> $GITHUB_STEP_SUMMARY
+          echo "- Status: $http_code" >> $GITHUB_STEP_SUMMARY
+          echo "- Tokens: $token_count" >> $GITHUB_STEP_SUMMARY
+          echo "- Latency: ${latency}s" >> $GITHUB_STEP_SUMMARY
+          if [ "$http_code" != "200" ] || [ "$token_count" = "0" ]; then
+            echo "::error::Trending API returned $http_code with $token_count tokens"
+            exit 1
+          fi
+          echo "Trending API: $token_count tokens in ${latency}s"
+
+      - name: Check health endpoint
+        run: |
+          response=$(curl -s "https://vercel-api-zeta-eosin.vercel.app/api/health")
+          healthy=$(echo "$response" | python3 -c "import sys,json; print(json.load(sys.stdin).get('healthy',False))" 2>/dev/null || echo "False")
+          dex_status=$(echo "$response" | python3 -c "import sys,json; print(json.load(sys.stdin).get('dexscreener',{}).get('status','?'))" 2>/dev/null || echo "?")
+          tg_status=$(echo "$response" | python3 -c "import sys,json; print(json.load(sys.stdin).get('telegram',{}).get('status','?'))" 2>/dev/null || echo "?")
+          echo "### Health Check" >> $GITHUB_STEP_SUMMARY
+          echo "- Healthy: $healthy" >> $GITHUB_STEP_SUMMARY
+          echo "- DexScreener: $dex_status" >> $GITHUB_STEP_SUMMARY
+          echo "- Telegram: $tg_status" >> $GITHUB_STEP_SUMMARY
+          if [ "$healthy" != "True" ]; then
+            echo "::warning::Health check unhealthy"
+          fi
+          echo "Health: DexScreener=$dex_status, Telegram=$tg_status"
+
+      - name: Verify Telegram alerts flowing
+        run: |
+          response=$(curl -s "https://vercel-api-zeta-eosin.vercel.app/api/cron/notify")
+          sent=$(echo "$response" | python3 -c "import sys,json; print(json.load(sys.stdin).get('sent',0))" 2>/dev/null || echo "0")
+          hot=$(echo "$response" | python3 -c "import sys,json; print(json.load(sys.stdin).get('hot',0))" 2>/dev/null || echo "0")
+          echo "### Telegram Notify" >> $GITHUB_STEP_SUMMARY
+          echo "- Sent: $sent alerts" >> $GITHUB_STEP_SUMMARY
+          echo "- Hot tokens: $hot" >> $GITHUB_STEP_SUMMARY
+          echo "Notify: sent=$sent, hot=$hot"
