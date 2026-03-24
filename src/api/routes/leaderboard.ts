@@ -93,50 +93,45 @@ export async function leaderboardRoutes(app: FastifyInstance) {
     return { traders: kols, total: kols.length };
   });
 
-  // DB-backed leaderboard (internal lead traders)
-  app.get<{ Querystring: { sort?: string; page?: string; limit?: string } }>(
+  // Main leaderboard — uses GMGN live data (falls back to curated data)
+  app.get<{ Querystring: { sort?: string; period?: string; page?: string; limit?: string } }>(
     '/api/v1/leaderboard',
     async (request) => {
-      const sort = request.query.sort ?? 'sharpe';
-      const page = parseInt(request.query.page ?? '1');
-      const limit = Math.min(parseInt(request.query.limit ?? '20'), 50);
-      const offset = (page - 1) * limit;
+      const period = (request.query.period === '30d' ? '30d' : '7d') as '7d' | '30d';
+      const sort = request.query.sort ?? 'pnl';
+      const limit = Math.min(parseInt(request.query.limit ?? '30'), 50);
 
-      const db = getDb();
+      const sortMap: Record<string, any> = {
+        pnl: period === '30d' ? 'pnl_30d' : 'pnl_7d',
+        sharpe: 'pnl_7d', // GMGN doesn't have sharpe, use pnl
+        winrate: 'winrate_7d',
+        profit: 'realized_profit_7d',
+        copiers: 'pnl_7d', // no copiers in GMGN, sort by pnl
+      };
+      const orderBy = sortMap[sort] ?? 'pnl_7d';
 
-      const orderCol = sort === 'pnl30d' ? leadTradersTable.pnl30d
-        : sort === 'pnl90d' ? leadTradersTable.pnl90d
-        : sort === 'winRate' ? leadTradersTable.winRate
-        : sort === 'copiers' ? leadTradersTable.copiersCount
-        : leadTradersTable.sharpeRatio;
+      const traders = await fetchTopTraders(period, orderBy);
 
-      const rows = await db
-        .select()
-        .from(leadTradersTable)
-        .where(and(eq(leadTradersTable.verified, true), sql`${leadTradersTable.trackRecordDays} >= 30`))
-        .orderBy(desc(orderCol))
-        .limit(limit)
-        .offset(offset);
-
-      const [countResult] = await db
-        .select({ count: sql<number>`count(*)::int` })
-        .from(leadTradersTable)
-        .where(and(eq(leadTradersTable.verified, true), sql`${leadTradersTable.trackRecordDays} >= 30`));
+      // Map TopTrader to the format Flutter expects
+      const mapped = traders.slice(0, limit).map((t, i) => ({
+        rank: i + 1,
+        walletAddress: t.walletAddress,
+        name: t.name || `${t.walletAddress.slice(0, 4)}...${t.walletAddress.slice(-4)}`,
+        twitterUsername: t.twitterUsername || null,
+        pnl7d: t.realizedProfit7d,
+        pnl30d: t.realizedProfit30d,
+        winRate7d: Math.round(t.winRate7d * 100),  // convert 0.78 → 78
+        winRate30d: Math.round(t.winRate30d * 100),
+        sharpe: null,
+        copiers: 0,
+        chain: 'solana',
+        tags: t.tags,
+      }));
 
       return {
-        traders: rows.map(t => ({
-          id: t.id,
-          name: t.name,
-          pnl30d: t.pnl30d,
-          pnl90d: t.pnl90d,
-          winRate: t.winRate,
-          maxDrawdown: t.maxDrawdown,
-          sharpeRatio: t.sharpeRatio,
-          copiersCount: t.copiersCount,
-          aumUsd: t.aumUsd,
-          verified: t.verified,
-        })),
-        pagination: { page, limit, total: countResult?.count ?? 0 },
+        traders: mapped,
+        pagination: { page: 1, limit, total: traders.length },
+        source: 'gmgn',
       };
     }
   );

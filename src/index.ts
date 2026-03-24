@@ -104,6 +104,11 @@ async function startApiMode() {
   log.info('Starting in API mode');
   const app = await startServer();
   registerShutdown(() => app.close());
+
+  // Start Telegram hot-token notifier if configured
+  const { startHotTokenNotifier, stopHotTokenNotifier } = await import('./notifications/telegram-hot-tokens.js');
+  startHotTokenNotifier();
+  registerShutdown(async () => stopHotTokenNotifier());
 }
 
 async function startDataIngestionMode() {
