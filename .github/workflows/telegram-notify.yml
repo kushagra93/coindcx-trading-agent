@@ -1,0 +1,21 @@
+name: Telegram Hot Token Alerts
+
+on:
+  schedule:
+    - cron: '*/5 * * * *'  # Every 5 minutes
+  workflow_dispatch: {}     # Manual trigger
+
+jobs:
+  notify:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Trigger hot token notification
+        run: |
+          response=$(curl -s -w "\n%{http_code}" "https://vercel-api-zeta-eosin.vercel.app/api/cron/notify")
+          http_code=$(echo "$response" | tail -1)
+          body=$(echo "$response" | head -1)
+          echo "Status: $http_code"
+          echo "Response: $body"
+          if [ "$http_code" != "200" ]; then
+            echo "::warning::Notify endpoint returned $http_code"
+          fi
