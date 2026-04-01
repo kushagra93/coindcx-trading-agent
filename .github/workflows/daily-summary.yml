@@ -1,0 +1,19 @@
+name: Daily Summary Digest
+
+on:
+  schedule:
+    - cron: '0 4 * * *'   # 9:30 AM IST (morning summary)
+    - cron: '0 13 * * *'  # 6:30 PM IST (evening summary)
+  workflow_dispatch: {}
+
+jobs:
+  summary:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Trigger daily summary
+        run: |
+          response=$(curl -s -w "\n%{http_code}" "https://vercel-api-zeta-eosin.vercel.app/api/cron/summary")
+          http_code=$(echo "$response" | tail -1)
+          body=$(echo "$response" | head -1)
+          echo "Status: $http_code"
+          echo "Response: $body"
